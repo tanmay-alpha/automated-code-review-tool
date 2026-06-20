@@ -1,0 +1,28 @@
+# =====================================================
+# CodeLens — ml-worker runtime dependencies (inference)
+# =====================================================
+# Used by apps/ml-worker/Dockerfile and local inference runs.
+# Training-only extras live in requirements-train.txt.
+#
+# Versions chosen for reproducibility and to match Section 7
+# of ENGINEERING_PLAN.md (training pipeline uses the same pins).
+# =====================================================
+
+# --- Web framework ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+
+# --- ML core (CodeBERT inference + future fine-tune) ---
+torch==2.3.0
+transformers==4.41.0
+datasets==2.19.0
+
+# --- Data + numerics ---
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.5.0
+
+# --- Schemas + config ---
+pydantic==2.8.2
+pydantic-settings==2.4.0
+python-dotenv==1.0.1

@@ -68,7 +68,7 @@ The immediate task (this session) is to scaffold the monorepo structure, env exa
 Pulled from Section 14 of the plan. Do not change the order.
 
 ### Milestone 1: ML Foundation (Week 1–2)
-- [ ] **#1** Download and inspect CodeReviewer dataset
+- [x] **#1** Download and inspect CodeReviewer dataset
 - [ ] **#2** Implement label mapper with taxonomy
 - [ ] **#3** Manual verification of 500 samples
 - [ ] **#4** Train/val/test split by PR ID
@@ -122,7 +122,8 @@ These are locked. No deviation without an explicit change request and written re
 
 | Date | What happened |
 |------|---------------|
-| 2026-06-21 | Initial scaffold session. Created `CONTEXT.md`, full monorepo structure per Section 1 of plan (apps/ml-worker, apps/api, apps/web, apps/vscode-ext, github-action, infra, scripts, .github/workflows), `.gitignore` (Java+Python+Node+env), `.env.example` with all Section 10 vars. All 8 commits pushed to `origin/main`. No real code written yet — structure only. Issue #1 (download dataset) is next. |
+| 2026-06-21 | Initial scaffold session. Created `CONTEXT.md`, full monorepo structure per Section 1 of plan (apps/ml-worker, apps/api, apps/web, apps/vscode-ext, github-action, infra, scripts, .github/workflows), `.gitignore` (Java+Python+Node+env), `.env.example` with all Section 10 vars. All 8 commits pushed to `origin/main`. No real code written yet — structure only. |
+| 2026-06-21 | Issue #1 — Download and inspect CodeReviewer dataset. On branch `feat/issue-1-dataset`. Added `scripts/download-dataset.sh` (clones microsoft/CodeBERT shallow, copies `CodeReviewer/code-review-data` to `apps/ml-worker/training/data/raw/`), `apps/ml-worker/training/dataset.py` (loads JSON files, prints 5 random examples + total/avg/median counts + label distribution), `apps/ml-worker/requirements.txt` (FastAPI + torch/transformers/datasets + numpy/pandas/sklearn + pydantic — versions match Section 7 plan pins), `apps/ml-worker/requirements-train.txt` (accelerate, evaluate, tensorboard). 4 commits on the feature branch. Dataset download + inspection run still to be executed locally by the engineer; `dataset_stats.md` to be authored from the script's output as part of Issue #1 acceptance. |
 
 ---
 

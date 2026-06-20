@@ -1,0 +1,16 @@
+# =====================================================
+# CodeLens — ml-worker training-only dependencies
+# =====================================================
+# Install on top of requirements.txt when running training
+# (Google Colab Pro T4 environment).
+#
+# These are heavier deps and are NOT needed for inference —
+# keep them out of the inference container.
+# =====================================================
+
+# Training accelerators / utilities
+accelerate==0.30.0
+evaluate==0.4.2
+
+# Experiment tracking / visualization
+tensorboard==2.16.2
