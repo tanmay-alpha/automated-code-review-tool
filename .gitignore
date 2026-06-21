@@ -145,12 +145,18 @@ hf_cache/
 data/raw/
 data/filtered/
 data/labeled/
-apps/ml-worker/training/data/raw/
-apps/ml-worker/training/data/filtered/
-apps/ml-worker/training/data/labeled/
+apps/ml-worker/training/data/raw/*
+apps/ml-worker/training/data/filtered/*
+apps/ml-worker/training/data/labeled/*
+!apps/ml-worker/training/data/raw/.gitkeep
+!apps/ml-worker/training/data/filtered/.gitkeep
+!apps/ml-worker/training/data/labeled/.gitkeep
 apps/ml-worker/training/data/train.json
 apps/ml-worker/training/data/val.json
 # NOTE: test.json is intentionally NOT ignored — committed but never opened until final eval
+#
+# Keep the data/ subdirectories themselves tracked (so .gitkeep placeholders
+# inside them can be committed), but ignore the actual data files.
 
 # MLflow / Weights & Biases
 mlruns/
