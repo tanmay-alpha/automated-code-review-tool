@@ -62,7 +62,7 @@ public class MlWorkerService {
         // applied at the Reactor Netty HttpClient layer.
         reactor.netty.http.client.HttpClient httpClient =
                 reactor.netty.http.client.HttpClient.create()
-                        .option(reactor.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS,
+                        .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS,
                                 (int) CONNECT_TIMEOUT.toMillis())
                         .responseTimeout(REQUEST_TIMEOUT);
         this.client = builder
