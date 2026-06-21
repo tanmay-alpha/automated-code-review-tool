@@ -171,7 +171,7 @@ Days 28-30 │  Build the GitHub Action + deploy + demo video
 
 ---
 
-## Status (June 2026)
+## Status 
 
 - ✅ Repo scaffolded — folder structure, env, gitignore
 - ✅ Issue #1 in progress — dataset download + inspection script
