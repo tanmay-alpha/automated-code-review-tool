@@ -1,15 +1,11 @@
 package com.codelens.service;
 
 import com.codelens.dto.MlFinding;
-import com.codelens.dto.MlReviewResponse;
-import com.codelens.entity.Finding;
+import com.codelens.dto.ReviewResult;
 import com.codelens.entity.PullRequestEntity;
-import com.codelens.entity.QualityMetric;
 import com.codelens.entity.Repository;
 import com.codelens.entity.User;
-import com.codelens.repository.FindingRepository;
 import com.codelens.repository.PullRequestRepository;
-import com.codelens.repository.QualityMetricRepository;
 import com.codelens.repository.RepositoryRepository;
 import com.codelens.repository.UserRepository;
 import com.codelens.security.EncryptionService;
@@ -21,9 +17,6 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -35,9 +28,15 @@ import java.util.Optional;
  * {@code @Async("taskExecutor")}. The controller returns 200 to GitHub
  * immediately; this method runs in the background pool.</p>
  *
- * <p>All exceptions are caught: failures are persisted as
- * {@code status="failed"} + {@code error_message}, never re-thrown.
- * We don't want a worker hiccup to be visible to GitHub.</p>
+ * <p>The actual review work (ML call + DB writes) is delegated to
+ * {@link ReviewService}. This class is responsible for:</p>
+ * <ul>
+ *   <li>Idempotency check (don't re-review the same head SHA)</li>
+ *   <li>GitHub token decryption + diff fetch</li>
+ *   <li>Posting the GitHub comment</li>
+ *   <li>Top-level error handling — failures are persisted as
+ *       {@code status="failed"} + {@code error_message}, never re-thrown</li>
+ * </ul>
  */
 @Service
 public class WebhookService {
@@ -51,28 +50,22 @@ public class WebhookService {
     private final RepositoryRepository repositoryRepository;
     private final UserRepository userRepository;
     private final PullRequestRepository pullRequestRepository;
-    private final FindingRepository findingRepository;
-    private final QualityMetricRepository qualityMetricRepository;
     private final EncryptionService encryptionService;
     private final GitHubService githubService;
-    private final MlWorkerService mlWorkerService;
+    private final ReviewService reviewService;
 
     public WebhookService(RepositoryRepository repositoryRepository,
                           UserRepository userRepository,
                           PullRequestRepository pullRequestRepository,
-                          FindingRepository findingRepository,
-                          QualityMetricRepository qualityMetricRepository,
                           EncryptionService encryptionService,
                           GitHubService githubService,
-                          MlWorkerService mlWorkerService) {
+                          ReviewService reviewService) {
         this.repositoryRepository = repositoryRepository;
         this.userRepository = userRepository;
         this.pullRequestRepository = pullRequestRepository;
-        this.findingRepository = findingRepository;
-        this.qualityMetricRepository = qualityMetricRepository;
         this.encryptionService = encryptionService;
         this.githubService = githubService;
-        this.mlWorkerService = mlWorkerService;
+        this.reviewService = reviewService;
     }
 
     @Async("taskExecutor")
@@ -108,7 +101,6 @@ public class WebhookService {
             User owner = repo.getOwner() == null
                     ? userRepository.findById(repo.getOwner() == null ? null : repo.getOwner().getId()).orElse(null)
                     : repo.getOwner();
-            // The above is awkward; simplify: if owner is set, use it; else try DB.
             if (owner == null) {
                 log.warn("Repository {} has no owner; cannot fetch GitHub token", repo.getFullName());
             }
@@ -119,49 +111,18 @@ public class WebhookService {
             String diff = (decryptedToken == null)
                     ? ""
                     : githubService.getFileDiff(decryptedToken, repo.getFullName(), pr.getGithubPrNumber());
-            String language = detectLanguage(diff);
 
-            MlReviewResponse review = mlWorkerService.review(diff, language);
+            // -- Delegate the ML + DB writes to ReviewService ----------------
+            ReviewResult result = reviewService.orchestrateReview(pr, diff);
 
-            // Replace previous findings for this PR — old findings would otherwise
-            // stack up across re-reviews of the same PR.
-            findingRepository.findAll().stream()
-                    .filter(f -> f.getPullRequest() != null
-                            && f.getPullRequest().getId() != null
-                            && f.getPullRequest().getId().equals(pr.getId()))
-                    .forEach(findingRepository::delete);
-
-            BigDecimal quality = review == null || review.qualityScore() == null
-                    ? BigDecimal.ZERO : review.qualityScore();
-            int critical = 0, major = 0, minor = 0;
-            if (review != null && review.findings() != null) {
-                for (MlFinding ml : review.findings()) {
-                    Finding f = Finding.builder()
-                            .pullRequest(pr)
-                            .filePath("n/a")
-                            .lineStart(ml.lineStart())
-                            .lineEnd(ml.lineEnd())
-                            .antiPattern(ml.antiPattern() == null ? "UNKNOWN" : ml.antiPattern())
-                            .category(ml.category() == null ? "unknown" : ml.category())
-                            .severity(ml.severity() == null ? "minor" : ml.severity())
-                            .confidence(ml.confidence() == null ? BigDecimal.ZERO : ml.confidence())
-                            .explanation(ml.explanation())
-                            .build();
-                    findingRepository.save(f);
-                    if ("critical".equalsIgnoreCase(ml.severity())) critical++;
-                    else if ("major".equalsIgnoreCase(ml.severity())) major++;
-                    else if ("minor".equalsIgnoreCase(ml.severity())) minor++;
-                }
+            if (!result.success()) {
+                // ReviewService already marked PR as failed; no comment to post.
+                return;
             }
 
-            pr.setQualityScore(quality);
-            pr.setStatus(STATUS_REVIEWED);
-            pr.setErrorMessage(null);
-            pr.setReviewedAt(Instant.now());
-            pullRequestRepository.save(pr);
-
-            String markdown = buildComment(review == null ? null : review.findings(),
-                    quality, critical, major, minor);
+            // -- Post the GitHub comment -------------------------------------
+            String markdown = reviewService.formatGithubComment(
+                    result.findings(), result.qualityScore());
 
             if (decryptedToken != null) {
                 try {
@@ -172,8 +133,6 @@ public class WebhookService {
                             pr.getGithubPrNumber(), ex.getMessage());
                 }
             }
-
-            updateQualityMetric(repo, quality, critical, major, minor);
 
         } catch (Exception ex) {
             log.error("Webhook processing failed for repo {}: {}", repoGithubId, ex.getMessage(), ex);
@@ -217,35 +176,10 @@ public class WebhookService {
         }
     }
 
-    private void updateQualityMetric(Repository repo, BigDecimal quality,
-                                     int critical, int major, int minor) {
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        QualityMetric metric = qualityMetricRepository
-                .findByRepoAndDate(repo, today)
-                .orElseGet(() -> QualityMetric.builder()
-                        .repo(repo)
-                        .date(today)
-                        .avgQuality(BigDecimal.ZERO)
-                        .prsReviewed(0)
-                        .criticalCount(0)
-                        .majorCount(0)
-                        .minorCount(0)
-                        .build());
-        int prevCount = metric.getPrsReviewed();
-        BigDecimal prevAvg = metric.getAvgQuality() == null ? BigDecimal.ZERO : metric.getAvgQuality();
-        BigDecimal newAvg = prevCount == 0
-                ? quality
-                : prevAvg.multiply(BigDecimal.valueOf(prevCount))
-                        .add(quality)
-                        .divide(BigDecimal.valueOf(prevCount + 1L), 2, RoundingMode.HALF_UP);
-        metric.setAvgQuality(newAvg);
-        metric.setPrsReviewed(prevCount + 1);
-        metric.setCriticalCount(metric.getCriticalCount() + critical);
-        metric.setMajorCount(metric.getMajorCount() + major);
-        metric.setMinorCount(metric.getMinorCount() + minor);
-        qualityMetricRepository.save(metric);
-    }
-
+    /**
+     * Build the GitHub PR comment markdown. Public-static so
+     * {@link ReviewService} can reuse the exact same format.
+     */
     static String buildComment(List<MlFinding> findings, BigDecimal quality,
                                int critical, int major, int minor) {
         StringBuilder sb = new StringBuilder();
@@ -297,32 +231,4 @@ public class WebhookService {
     }
 
     private static String nullToDash(String s) { return s == null ? "-" : s; }
-
-    /**
-     * Best-effort language detection from the diff. We look at the first
-     * file path mentioned; the worker accepts "unknown" as a fallback.
-     */
-    static String detectLanguage(String diff) {
-        if (diff == null) return "unknown";
-        int idx = diff.indexOf("diff --git a/");
-        if (idx < 0) return "unknown";
-        int slash = diff.indexOf('/', idx + "diff --git a/".length());
-        if (slash < 0) return "unknown";
-        int dot = diff.indexOf('.', slash);
-        if (dot < 0) return "unknown";
-        int end = diff.indexOf(' ', dot);
-        if (end < 0) end = diff.indexOf('\n', dot);
-        if (end < 0) return "unknown";
-        String ext = diff.substring(dot + 1, end).toLowerCase(Locale.ROOT);
-        return switch (ext) {
-            case "py" -> "python";
-            case "js", "jsx", "ts", "tsx" -> "javascript";
-            case "java" -> "java";
-            default -> "unknown";
-        };
-    }
-
-    private static Long parseLong(String s) {
-        try { return Long.parseLong(s); } catch (Exception e) { return null; }
-    }
 }
