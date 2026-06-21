@@ -13,6 +13,7 @@ import java.util.List;
 public record MlReviewResponse(
         @JsonProperty("findings") List<MlFinding> findings,
         @JsonProperty("qualityScore") BigDecimal qualityScore,
-        @JsonProperty("processingTimeMs") Long processingTimeMs
+        @JsonProperty("processingTimeMs") int processingTimeMs,
+        @JsonProperty("windowsProcessed") int windowsProcessed
 ) {
 }
