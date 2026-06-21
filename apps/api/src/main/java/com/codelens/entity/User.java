@@ -31,18 +31,18 @@ public class User {
     @Column(name = "github_id", unique = true, nullable = false)
     private Long githubId;
 
-    @Column(name = "github_username")
+    @Column(name = "github_username", nullable = false, length = 100)
     private String githubUsername;
 
     @Column(name = "avatar_url")
     private String avatarUrl;
 
     /** GitHub OAuth access token, AES-encrypted at rest. */
-    @Column(name = "access_token")
+    @Column(name = "access_token", nullable = false, columnDefinition = "TEXT")
     private String accessToken;
 
     /** SHA-256 hash of the GitHub OAuth refresh token. */
-    @Column(name = "refresh_token_hash")
+    @Column(name = "refresh_token")
     private String refreshTokenHash;
 
     /** SHA-256 hash of the user's CLI / dashboard API key. */
