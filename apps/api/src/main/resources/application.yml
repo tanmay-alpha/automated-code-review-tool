@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: codelens-api
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/codelens}
+    username: ${SPRING_DATASOURCE_USERNAME:codelens}
+    password: ${SPRING_DATASOURCE_PASSWORD:codelens_local}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+  flyway:
+    enabled: true
+
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: 6379
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    access-token-expiry: 900      # 15 minutes
+    refresh-token-expiry: 604800  # 7 days
+
+  github:
+    client-id: ${GITHUB_CLIENT_ID}
+    client-secret: ${GITHUB_CLIENT_SECRET}
+    oauth-redirect-uri: ${APP_BASE_URL:http://localhost:8080}/api/auth/callback
+
+  ml-worker:
+    url: ${ML_WORKER_URL:http://localhost:8000}
+    secret: ${ML_WORKER_SECRET}
+
+  encryption:
+    key: ${ENCRYPTION_KEY}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
