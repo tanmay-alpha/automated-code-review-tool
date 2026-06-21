@@ -14,6 +14,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -62,7 +63,22 @@ public class Finding {
     @Column(name = "code_snippet", columnDefinition = "TEXT")
     private String codeSnippet;
 
+    /**
+     * User disposition: {@code "open"}, {@code "accepted"},
+     * {@code "dismissed"}, {@code "fixed"}.
+     */
+    @Column(name = "status", nullable = false)
+    @Builder.Default
+    private String status = "open";
+
+    @Column(name = "disposition_at")
+    private Instant dispositionAt;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private Instant updatedAt;
 }
