@@ -15,6 +15,7 @@ a stub to avoid loading the real 500 MB checkpoint.
 """
 from __future__ import annotations
 
+import hmac
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -72,11 +73,9 @@ async def verify_secret(request: Request, call_next: Any):
         )
 
     provided = request.headers.get(AUTH_HEADER, "")
-    if provided != settings.ML_WORKER_SECRET:
-        return JSONResponse(
-            status_code=403,
-            content={"detail": "invalid or missing X-ML-Worker-Secret"},
-        )
+    # Constant-time comparison to avoid timing side channels.
+    if not hmac.compare_digest(provided.encode(), settings.ML_WORKER_SECRET.encode()):
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
     return await call_next(request)
 
 
