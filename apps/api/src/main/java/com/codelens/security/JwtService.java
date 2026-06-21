@@ -32,10 +32,10 @@ import java.util.UUID;
 @EnableConfigurationProperties(JwtConfig.class)
 public class JwtService {
 
-    static final String CLAIM_TYPE = "type";
-    static final String CLAIM_USERNAME = "username";
-    static final String TYPE_ACCESS = "access";
-    static final String TYPE_REFRESH = "refresh";
+    public static final String CLAIM_TYPE = "type";
+    public static final String CLAIM_USERNAME = "username";
+    public static final String TYPE_ACCESS = "access";
+    public static final String TYPE_REFRESH = "refresh";
 
     private final JwtConfig config;
     private final SecretKey signingKey;
