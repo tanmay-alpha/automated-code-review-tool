@@ -4,6 +4,7 @@ import com.codelens.entity.ProcessedWebhook;
 import com.codelens.repository.ProcessedWebhookRepository;
 import com.codelens.service.WebhookService;
 import com.codelens.webhook.GitHubWebhookEvent;
+import com.codelens.webhook.HmacVerificationException;
 import com.codelens.webhook.HmacVerifier;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -80,8 +81,14 @@ public class WebhookController {
         }
 
         // 3. HMAC: must match the secret we stored when installing the hook.
-        if (!hmacVerifier.verify(payload, signature, body.repository().id().toString())) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        //    An "unknown repo" (no secret on file) is a 200 — not our hook.
+        try {
+            if (!hmacVerifier.verify(payload, signature, body.repository().id().toString())) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            }
+        } catch (HmacVerificationException ex) {
+            log.debug("Ignoring webhook for unknown repo: {}", ex.getMessage());
+            return ResponseEntity.ok().build();
         }
 
         // 4. Idempotency: skip if we've already processed this delivery.
