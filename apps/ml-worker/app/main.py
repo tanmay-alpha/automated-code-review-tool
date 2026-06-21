@@ -15,6 +15,7 @@ a stub to avoid loading the real 500 MB checkpoint.
 """
 from __future__ import annotations
 
+import hmac
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -28,7 +29,6 @@ from app.schemas import HealthResponse, ReviewRequest, ReviewResponse
 
 AUTH_HEADER = "x-ml-worker-secret"
 HEALTH_PATH = "/ml/health"
-DOCS_PATHS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
 
 # ----------------------------------------------------------------------
@@ -57,10 +57,10 @@ app = FastAPI(
 async def verify_secret(request: Request, call_next: Any):
     """Reject any request missing or mismatching X-ML-Worker-Secret.
 
-    Health and OpenAPI docs are exempt so monitoring + humans can poke
-    at them without holding the secret.
+    Only /ml/health is exempt so monitoring can poll it without holding
+    the secret. OpenAPI docs are protected.
     """
-    if request.url.path in (HEALTH_PATH, *DOCS_PATHS):
+    if request.url.path == HEALTH_PATH:
         return await call_next(request)
 
     # If the server is misconfigured (no secret set), refuse all writes
@@ -72,11 +72,9 @@ async def verify_secret(request: Request, call_next: Any):
         )
 
     provided = request.headers.get(AUTH_HEADER, "")
-    if provided != settings.ML_WORKER_SECRET:
-        return JSONResponse(
-            status_code=403,
-            content={"detail": "invalid or missing X-ML-Worker-Secret"},
-        )
+    # Constant-time comparison to avoid timing side channels.
+    if not hmac.compare_digest(provided.encode(), settings.ML_WORKER_SECRET.encode()):
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
     return await call_next(request)
 
 
