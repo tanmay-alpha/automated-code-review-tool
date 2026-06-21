@@ -69,7 +69,7 @@ Pulled from Section 14 of the plan. Do not change the order.
 
 ### Milestone 1: ML Foundation (Week 1–2)
 - [x] **#1** Download and inspect CodeReviewer dataset
-- [ ] **#2** Implement label mapper with taxonomy
+- [x] **#2** Implement label mapper with taxonomy
 - [ ] **#3** Manual verification of 500 samples
 - [ ] **#4** Train/val/test split by PR ID
 - [ ] **#5** Implement CodeBERT fine-tuning pipeline
@@ -124,6 +124,7 @@ These are locked. No deviation without an explicit change request and written re
 |------|---------------|
 | 2026-06-21 | Initial scaffold session. Created `CONTEXT.md`, full monorepo structure per Section 1 of plan (apps/ml-worker, apps/api, apps/web, apps/vscode-ext, github-action, infra, scripts, .github/workflows), `.gitignore` (Java+Python+Node+env), `.env.example` with all Section 10 vars. All 8 commits pushed to `origin/main`. No real code written yet — structure only. |
 | 2026-06-21 | Issue #1 — Download and inspect CodeReviewer dataset. On branch `feat/issue-1-dataset`. Added `scripts/download-dataset.sh` (clones microsoft/CodeBERT shallow, copies `CodeReviewer/code-review-data` to `apps/ml-worker/training/data/raw/`), `apps/ml-worker/training/dataset.py` (loads JSON files, prints 5 random examples + total/avg/median counts + label distribution), `apps/ml-worker/requirements.txt` (FastAPI + torch/transformers/datasets + numpy/pandas/sklearn + pydantic — versions match Section 7 plan pins), `apps/ml-worker/requirements-train.txt` (accelerate, evaluate, tensorboard). 4 commits on the feature branch. Dataset download + inspection run still to be executed locally by the engineer; `dataset_stats.md` to be authored from the script's output as part of Issue #1 acceptance. |
+| 2026-06-21 | Issue #2 — Implement label mapper with taxonomy. On branch `feat/issue-2-label-mapper`. Added `apps/ml-worker/training/label_mapper.py` with locked 6-category keyword taxonomy (SECURITY, PERFORMANCE, ARCHITECTURE, RELIABILITY, READABILITY, MAINTAINABILITY), `map_comment_to_labels()` returning 6-dim binary vector via case-insensitive substring match, `filter_and_label_dataset()` that drops comments < 20 chars, pure style-nits (length < 80 chars AND tokens ⊆ {nit,typo,rename,spacing,whitespace,format,indent,semicolon}), and zero-label samples. CLI prints raw count, per-filter drop counts, kept total, per-category counts/percentages, avg labels/sample, and 3 random examples. Also added `data/.gitkeep` + `data/raw/.gitkeep` placeholders and fixed a `.gitignore` collision (the previous `data/raw/` rule excluded the directory entirely; switched to `data/raw/*` content-ignore with `!.gitkeep` re-include so placeholder files can be committed). 3 commits on the feature branch. Note: remote main received 2 redundant local merge commits this session (Issue #1 PR was already merged via GitHub UI) — history is consistent but slightly noisy. |
 
 ---
 
