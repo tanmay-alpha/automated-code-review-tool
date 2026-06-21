@@ -70,7 +70,13 @@ public class WebhookService {
 
     @Async("taskExecutor")
     public void processAsync(GitHubWebhookEvent event, String repoGithubId) {
-        Long githubId = parseLong(repoGithubId);
+        Long githubId;
+        try {
+            githubId = Long.parseLong(repoGithubId);
+        } catch (NumberFormatException ex) {
+            log.warn("Webhook called with non-numeric repo id: {}", repoGithubId);
+            return;
+        }
         if (githubId == null || event.pullRequest() == null) {
             log.warn("Webhook processAsync called with missing fields");
             return;
