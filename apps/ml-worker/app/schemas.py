@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 class ReviewRequest(BaseModel):
     """Body for POST /ml/review."""
 
-    diff: str = Field(..., min_length=1, description="Unified diff text to analyze")
+    diff: str = Field(..., min_length=1, max_length=200_000, description="Unified diff text to analyze")
     language: Literal["python", "javascript", "java", "unknown"] = Field(
         "unknown", description="Primary language of the diff"
     )
