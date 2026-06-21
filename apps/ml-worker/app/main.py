@@ -29,7 +29,6 @@ from app.schemas import HealthResponse, ReviewRequest, ReviewResponse
 
 AUTH_HEADER = "x-ml-worker-secret"
 HEALTH_PATH = "/ml/health"
-DOCS_PATHS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
 
 # ----------------------------------------------------------------------
@@ -58,10 +57,10 @@ app = FastAPI(
 async def verify_secret(request: Request, call_next: Any):
     """Reject any request missing or mismatching X-ML-Worker-Secret.
 
-    Health and OpenAPI docs are exempt so monitoring + humans can poke
-    at them without holding the secret.
+    Only /ml/health is exempt so monitoring can poll it without holding
+    the secret. OpenAPI docs are protected.
     """
-    if request.url.path in (HEALTH_PATH, *DOCS_PATHS):
+    if request.url.path == HEALTH_PATH:
         return await call_next(request)
 
     # If the server is misconfigured (no secret set), refuse all writes
