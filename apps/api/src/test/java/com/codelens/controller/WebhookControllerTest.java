@@ -2,8 +2,10 @@ package com.codelens.controller;
 
 import com.codelens.config.SecurityConfig;
 import com.codelens.repository.ProcessedWebhookRepository;
+import com.codelens.security.ApiKeyAuthFilter;
 import com.codelens.security.JwtAuthFilter;
 import com.codelens.security.JwtService;
+import com.codelens.service.ApiKeyService;
 import com.codelens.service.WebhookService;
 import com.codelens.webhook.GitHubWebhookEvent;
 import com.codelens.webhook.HmacVerificationException;
@@ -22,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -54,6 +57,25 @@ class WebhookControllerTest {
     // controller (a Mockito mock filter would do nothing and stall the
     // request).
     @MockBean JwtService jwtService;
+    // SecurityConfig also now requires ApiKeyAuthFilter — mock it so the
+    // MVC slice doesn't try to load Redis / ApiKeyRepository.
+    @MockBean ApiKeyAuthFilter apiKeyAuthFilter;
+    @MockBean ApiKeyService apiKeyService;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubApiKeyFilter() throws Exception {
+        // The mock would otherwise no-op and stall the chain.
+        doAnswer(inv -> {
+            jakarta.servlet.ServletRequest req = inv.getArgument(0);
+            jakarta.servlet.ServletResponse res = inv.getArgument(1);
+            FilterChain chain = inv.getArgument(2);
+            chain.doFilter(req, res);
+            return null;
+        }).when(apiKeyAuthFilter).doFilter(
+                org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletRequest.class),
+                org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletResponse.class),
+                org.mockito.ArgumentMatchers.any(FilterChain.class));
+    }
 
     @org.springframework.boot.test.context.TestConfiguration
     static class StubFilterConfig {
