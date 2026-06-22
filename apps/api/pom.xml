@@ -129,6 +129,22 @@
             <artifactId>mockwebserver</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- H2 for in-memory @SpringBootTest integration tests
+             (e.g. RepoControllerTest). Production uses PostgreSQL via
+             the runtime-scoped driver above. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Spring Security test support (MockMvc request post-processors) -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

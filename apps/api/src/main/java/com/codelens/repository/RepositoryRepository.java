@@ -1,8 +1,10 @@
 package com.codelens.repository;
 
 import com.codelens.entity.Repository;
+import com.codelens.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -15,4 +17,6 @@ import java.util.UUID;
  */
 public interface RepositoryRepository extends JpaRepository<Repository, UUID> {
     Optional<Repository> findByGithubId(Long githubId);
+
+    List<Repository> findAllByOwnerAndIsActiveTrue(User owner);
 }

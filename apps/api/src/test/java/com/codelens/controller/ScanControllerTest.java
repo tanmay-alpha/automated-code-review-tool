@@ -6,7 +6,9 @@ import com.codelens.entity.PullRequestEntity;
 import com.codelens.entity.Repository;
 import com.codelens.entity.User;
 import com.codelens.repository.FindingRepository;
+import com.codelens.service.ApiKeyService;
 import com.codelens.service.MlWorkerService;
+import com.codelens.security.ApiKeyAuthFilter;
 import com.codelens.security.JwtAuthFilter;
 import com.codelens.security.JwtService;
 import jakarta.servlet.FilterChain;
@@ -31,6 +33,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -96,6 +99,27 @@ class ScanControllerTest {
     @MockBean FindingRepository findingRepository;
     @MockBean MlWorkerService mlWorkerService;
     @MockBean JwtService jwtService;
+    // SecurityConfig now also requires ApiKeyAuthFilter — mock it so the
+    // MVC slice doesn't try to wire Redis / ApiKeyRepository.
+    @MockBean ApiKeyAuthFilter apiKeyAuthFilter;
+    @MockBean ApiKeyService apiKeyService;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubApiKeyFilter() throws Exception {
+        // The ApiKeyAuthFilter mock would otherwise do nothing
+        // (Mockito returns null for unstubbed void-returning methods)
+        // and stall the security chain. Make it a pass-through.
+        doAnswer(inv -> {
+            jakarta.servlet.ServletRequest req = inv.getArgument(0);
+            jakarta.servlet.ServletResponse res = inv.getArgument(1);
+            FilterChain chain = inv.getArgument(2);
+            chain.doFilter(req, res);
+            return null;
+        }).when(apiKeyAuthFilter).doFilter(
+                org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletRequest.class),
+                org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletResponse.class),
+                org.mockito.ArgumentMatchers.any(FilterChain.class));
+    }
 
     // --- POST /api/scan/file -------------------------------------------------
 
