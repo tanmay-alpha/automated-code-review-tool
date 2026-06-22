@@ -25,6 +25,11 @@ app:
     secret: ${JWT_SECRET}
     access-token-expiry: 900      # 15 minutes
     refresh-token-expiry: 604800  # 7 days
+  webhook:
+    callback-url: ${WEBHOOK_CALLBACK_URL:http://localhost:8080/api/webhook/github}
+  ratelimit:
+    api-key:
+      requests-per-minute: ${API_KEY_RPM:60}
 
   github:
     client-id: ${GITHUB_CLIENT_ID}
