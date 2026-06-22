@@ -7,6 +7,8 @@ import com.codelens.dto.request.ScanFileRequest;
 import com.codelens.dto.response.FindingActionResponse;
 import com.codelens.dto.response.ScanFileResponse;
 import com.codelens.entity.Finding;
+import com.codelens.entity.PullRequestEntity;
+import com.codelens.entity.Repository;
 import com.codelens.repository.FindingRepository;
 import com.codelens.service.MlWorkerService;
 import jakarta.persistence.EntityNotFoundException;
@@ -14,6 +16,8 @@ import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -38,7 +42,7 @@ import java.util.UUID;
  * </ul>
  *
  * <p>Both endpoints require a valid GitHub access token (handled by
- * the {@code BearerTokenFilter}); they are <b>not</b> publicly callable.</p>
+ * the {@code JwtAuthFilter}); they are <b>not</b> publicly callable.</p>
  */
 @RestController
 @RequestMapping("/api/scan")
@@ -67,7 +71,7 @@ public class ScanController {
     public ResponseEntity<ScanFileResponse> scanFile(
             @Valid @RequestBody ScanFileRequest req) {
 
-        MlReviewResponse ml = mlWorkerService.review(
+        MlReviewResponse ml = mlWorkerService.reviewFile(
                 req.content(),
                 req.language()
         );
@@ -84,12 +88,19 @@ public class ScanController {
      * <p>Records a developer disposition on a finding. Updates
      * {@code status} + {@code disposition_at} on the Finding row.</p>
      *
-     * @return 200 with the applied action; 404 if finding not found;
-     *         400 if action verb is unrecognized.
+     * <p><b>Authorization:</b> the finding must belong to a repository
+     * owned by the authenticated user. If the user does not own the
+     * repository that owns the PR that owns the finding, we return 404
+     * (not 403) to avoid leaking the existence of findings the caller
+     * does not have permission to inspect.</p>
+     *
+     * @return 200 with the applied action; 404 if finding not found or
+     *         not owned by caller; 400 if action verb is unrecognized.
      */
     @PostMapping("/action")
     public ResponseEntity<FindingActionResponse> recordAction(
-            @Valid @RequestBody FindingActionRequest req) {
+            @Valid @RequestBody FindingActionRequest req,
+            @AuthenticationPrincipal UserDetails caller) {
 
         String action = req.action().toLowerCase(Locale.ROOT);
         if (!VALID_ACTIONS.contains(action)) {
@@ -101,13 +112,37 @@ public class ScanController {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "Finding " + req.findingId() + " not found"));
 
+        // Ownership check: the finding -> PR -> repo must belong to the caller.
+        // Use 404 (not 403) so we don't reveal the existence of out-of-scope findings.
+        if (!isOwnedBy(finding, caller)) {
+            throw new EntityNotFoundException(
+                    "Finding " + req.findingId() + " not found");
+        }
+
         finding.setStatus(action);
         finding.setDispositionAt(Instant.now());
         findingRepository.save(finding);
 
-        log.info("Finding {} disposition={}", finding.getId(), action);
+        log.info("Finding {} disposition={} (actor={})",
+                finding.getId(), action, caller == null ? "?" : caller.getUsername());
 
         return ResponseEntity.ok(new FindingActionResponse(
                 finding.getId(), action, finding.getStatus()));
+    }
+
+    /**
+     * Returns true when the given finding's PR's repository's owner
+     * matches the caller's GitHub login. Treats unauthenticated callers
+     * as non-owners (defence in depth — the filter chain should already
+     * have rejected them).
+     */
+    private static boolean isOwnedBy(Finding finding, UserDetails caller) {
+        if (caller == null || caller.getUsername() == null) return false;
+        PullRequestEntity pr = finding.getPullRequest();
+        if (pr == null) return false;
+        Repository repo = pr.getRepo();
+        if (repo == null || repo.getOwner() == null) return false;
+        String ownerLogin = repo.getOwner().getGithubUsername();
+        return caller.getUsername().equalsIgnoreCase(ownerLogin);
     }
 }

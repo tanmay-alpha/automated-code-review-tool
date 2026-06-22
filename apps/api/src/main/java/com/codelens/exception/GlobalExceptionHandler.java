@@ -1,11 +1,16 @@
 package com.codelens.exception;
 
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -48,6 +53,39 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
         return body(HttpStatus.BAD_REQUEST, "BAD_REQUEST", ex.getMessage());
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
+        // Concatenate every field error into a single message so the
+        // caller sees every problem in one response, not just the first.
+        String msg = ex.getBindingResult().getFieldErrors().stream()
+                .map(this::formatFieldError)
+                .reduce((a, b) -> a + "; " + b)
+                .orElse("validation failed");
+        return body(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", msg);
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleConstraint(ConstraintViolationException ex) {
+        String msg = ex.getConstraintViolations().stream()
+                .map(this::formatViolation)
+                .reduce((a, b) -> a + "; " + b)
+                .orElse("constraint violation");
+        return body(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", msg);
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> handleUnreadable(HttpMessageNotReadableException ex) {
+        return body(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "Request body is missing or malformed");
+    }
+
+    private String formatFieldError(FieldError fe) {
+        return fe.getField() + ": " + (fe.getDefaultMessage() == null ? "invalid" : fe.getDefaultMessage());
+    }
+
+    private String formatViolation(ConstraintViolation<?> cv) {
+        return cv.getPropertyPath() + ": " + cv.getMessage();
     }
 
     @ExceptionHandler(Exception.class)
