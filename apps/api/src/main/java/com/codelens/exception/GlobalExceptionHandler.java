@@ -55,6 +55,12 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.BAD_REQUEST, "BAD_REQUEST", ex.getMessage());
     }
 
+    @ExceptionHandler(ConnectRepoException.class)
+    public ResponseEntity<Map<String, Object>> handleConnectRepo(ConnectRepoException ex) {
+        log.warn("Repo connect failed: {}", ex.getMessage());
+        return body(HttpStatus.BAD_REQUEST, "CONNECT_REPO_FAILED", ex.getMessage());
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
         // Concatenate every field error into a single message so the
