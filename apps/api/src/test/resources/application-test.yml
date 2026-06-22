@@ -1,0 +1,34 @@
+# Test profile — used by @SpringBootTest integration tests.
+# Replaces PostgreSQL with H2 in PostgreSQL-compatibility mode so
+# the Flyway migrations run without modification.
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:codelens;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        format_sql: true
+  flyway:
+    enabled: true
+  data:
+    redis:
+      host: localhost
+      port: 0  # disabled — tests that need Redis inject a mock
+
+app:
+  jwt:
+    secret: test-secret-key-32-bytes-long-for-hs256-min
+    access-token-expiry: 900
+    refresh-token-expiry: 604800
+  webhook:
+    callback-url: http://localhost:8080/api/webhook/github
+  ratelimit:
+    api-key:
+      requests-per-minute: 60

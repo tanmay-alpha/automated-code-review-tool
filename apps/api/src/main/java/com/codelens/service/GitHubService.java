@@ -82,6 +82,32 @@ public class GitHubService {
     }
 
     /**
+     * Look up a single repo by {@code owner/repo}. Returns the raw JSON
+     * as a Map so the caller can read any field it needs (id, private,
+     * description, default_branch, …) without us maintaining a DTO.
+     *
+     * <p>Used by {@code RepoService.connect} to verify the user has
+     * visibility on the repo before installing a webhook. A 404 from
+     * GitHub is propagated as a 5xx/empty body — callers should
+     * null-check the return.</p>
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getRepository(String accessToken, String owner, String name) {
+        try {
+            return apiClient.get()
+                    .uri("/repos/{owner}/{name}", owner, name)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block();
+        } catch (Exception ex) {
+            // 404 / 401 / 403 — all manifest as a thrown exception from WebClient
+            log.debug("getRepository failed for {}/{}: {}", owner, name, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Fetch the unified diff for a PR. The {@code .diff} media type asks
      * GitHub to return raw diff text rather than the JSON metadata.
      */
