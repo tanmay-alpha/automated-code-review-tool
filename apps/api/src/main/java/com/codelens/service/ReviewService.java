@@ -131,7 +131,7 @@ public class ReviewService {
      * Inspect the diff and pick the most-represented language by
      * counting the number of lines in files of each extension.
      */
-    String detectLanguage(String diff) {
+    static String detectLanguage(String diff) {
         if (diff == null || diff.isBlank()) return "python";
         int py = 0, js = 0, java = 0;
         String currentFile = null;
