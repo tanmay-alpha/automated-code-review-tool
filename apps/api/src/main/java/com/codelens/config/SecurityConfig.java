@@ -1,6 +1,7 @@
 package com.codelens.config;
 
 import com.codelens.security.ApiKeyAuthFilter;
+import com.codelens.security.AuthRateLimitFilter;
 import com.codelens.security.JwtAuthFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,15 +17,20 @@ import org.springframework.web.reactive.function.client.WebClient;
 /**
  * Stateless security configuration.
  *
- * <p>Two filters protect the API:</p>
+ * <p>Three filters protect the API:</p>
  * <ul>
  *   <li>{@link ApiKeyAuthFilter} — runs first; activates <em>only</em>
  *       for {@code /api/scan/file} (the VS Code extension endpoint).
  *       Authenticates via {@code Authorization: Bearer cl_live_…}
  *       and applies a Redis rate limit.</li>
- *   <li>{@link JwtAuthFilter} — runs for everything else; validates
- *       the {@code accessToken} cookie and binds the {@link java.util.UUID}
- *       user id to the request principal.</li>
+ *   <li>{@link AuthRateLimitFilter} — runs second; activates <em>only</em>
+ *       for the public auth flow endpoints
+ *       ({@code /api/auth/github}, {@code /api/auth/callback},
+ *       {@code /api/auth/refresh}). Caps each client IP at 10 req/min
+ *       so brute-force attempts on the OAuth handshake are shed early.</li>
+ *   <li>{@link JwtAuthFilter} — runs last; validates the {@code accessToken}
+ *       cookie and binds the {@link java.util.UUID} user id to the
+ *       request principal.</li>
  * </ul>
  *
  * <p>CSRF is disabled because the API is stateless and does not use
@@ -36,11 +42,14 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final ApiKeyAuthFilter apiKeyAuthFilter;
+    private final AuthRateLimitFilter authRateLimitFilter;
 
     public SecurityConfig(JwtAuthFilter jwtAuthFilter,
-                          ApiKeyAuthFilter apiKeyAuthFilter) {
+                          ApiKeyAuthFilter apiKeyAuthFilter,
+                          AuthRateLimitFilter authRateLimitFilter) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.apiKeyAuthFilter = apiKeyAuthFilter;
+        this.authRateLimitFilter = authRateLimitFilter;
     }
 
     @Bean
@@ -65,6 +74,9 @@ public class SecurityConfig {
                 // API key filter must run before JWT filter so a key
                 // never falls through to JWT cookie validation.
                 .addFilterBefore(apiKeyAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // Auth rate limit runs before JWT so brute-force attempts
+                // on /api/auth/* are shed before any token work.
+                .addFilterBefore(authRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

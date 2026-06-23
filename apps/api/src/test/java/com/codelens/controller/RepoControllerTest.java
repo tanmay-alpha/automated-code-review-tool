@@ -5,6 +5,7 @@ import com.codelens.entity.User;
 import com.codelens.repository.RepositoryRepository;
 import com.codelens.repository.UserRepository;
 import com.codelens.security.ApiKeyAuthFilter;
+import com.codelens.security.AuthRateLimitFilter;
 import com.codelens.security.JwtAuthFilter;
 import com.codelens.security.EncryptionService;
 import com.codelens.service.ApiKeyService;
@@ -64,6 +65,10 @@ class RepoControllerTest {
     @MockBean GitHubService gitHubService;
     @MockBean ApiKeyAuthFilter apiKeyAuthFilter;
     @MockBean ApiKeyService apiKeyService;
+    // AuthRateLimitFilter also needs Redis (StringRedisTemplate) —
+    // mock it as a pass-through so the security chain still runs
+    // without needing an embedded Redis.
+    @MockBean AuthRateLimitFilter authRateLimitFilter;
     // JwtAuthFilter is mocked as a pass-through: it never validates
     // a cookie, just delegates to the chain. With @MockBean + this
     // stubbed doFilter, the security chain still runs through Spring
@@ -94,6 +99,17 @@ class RepoControllerTest {
             chain.doFilter(req, res);
             return null;
         }).when(apiKeyAuthFilter).doFilter(
+                org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletRequest.class),
+                org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletResponse.class),
+                org.mockito.ArgumentMatchers.any(FilterChain.class));
+
+        org.mockito.Mockito.doAnswer(inv -> {
+            jakarta.servlet.ServletRequest req = inv.getArgument(0);
+            jakarta.servlet.ServletResponse res = inv.getArgument(1);
+            FilterChain chain = inv.getArgument(2);
+            chain.doFilter(req, res);
+            return null;
+        }).when(authRateLimitFilter).doFilter(
                 org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletRequest.class),
                 org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletResponse.class),
                 org.mockito.ArgumentMatchers.any(FilterChain.class));
