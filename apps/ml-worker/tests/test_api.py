@@ -89,7 +89,14 @@ def test_health_returns_ok(client: TestClient):
 def test_review_rejects_missing_secret(client: TestClient):
     r = client.post("/ml/review", json={"diff": "+x = 1", "language": "python"})
     assert r.status_code == 403
-    assert "X-ML-Worker-Secret" in r.json()["detail"]
+    # We deliberately return a generic "Forbidden" detail rather than
+    # telling the unauthenticated caller which header is expected —
+    # leaking header names in 403 bodies is a small but real attack-surface
+    # win (lets adversaries probe auth mechanisms blindly). The test
+    # asserts on status + detail shape, not on the header name.
+    body = r.json()
+    assert "detail" in body
+    assert body["detail"] == "Forbidden"
 
 
 def test_review_rejects_wrong_secret(client: TestClient):
@@ -99,6 +106,7 @@ def test_review_rejects_wrong_secret(client: TestClient):
         json={"diff": "+x = 1", "language": "python"},
     )
     assert r.status_code == 403
+    assert r.json()["detail"] == "Forbidden"
 
 
 def test_review_rejects_empty_diff(client: TestClient):

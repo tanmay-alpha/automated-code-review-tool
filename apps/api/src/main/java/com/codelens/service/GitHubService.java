@@ -3,6 +3,8 @@ package com.codelens.service;
 import com.codelens.config.GitHubConfig;
 import com.codelens.dto.GitHubTokenResponse;
 import com.codelens.dto.GitHubUserInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -24,6 +26,8 @@ import java.util.Map;
 @Service
 @EnableConfigurationProperties(GitHubConfig.class)
 public class GitHubService {
+
+    private static final Logger log = LoggerFactory.getLogger(GitHubService.class);
 
     private static final String OAUTH_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
     private static final String OAUTH_TOKEN_URL = "https://github.com/login/oauth/access_token";

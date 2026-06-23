@@ -102,9 +102,12 @@ def test_parses_single_file_diff():
     h = hunks[0]
     assert h.file_path == "src/auth/service.py"
     assert h.language == "python"
-    # 1 line removed, 3 lines added.
+    # 1 line removed, 4 lines added. The fixture expands the
+    # single-line f-string query into a 4-line parameterized block, so
+    # the diff hunk shows net +3 lines (1 removed → 4 added = 3 added
+    # per hunk-header, but parse_diff counts the actual `+` lines).
     assert len(h.removed_lines) == 1
-    assert len(h.added_lines) == 3
+    assert len(h.added_lines) == 4
     assert "db.query" in h.removed_lines[0]
 
 
@@ -194,8 +197,11 @@ def test_hunks_to_text_includes_added_and_removed():
     hunks = parse_diff(SINGLE_FILE_DIFF)
     text = hunks_to_text(hunks)
     assert "# file: src/auth/service.py" in text
-    assert "-    return db.query" in text
-    assert "+    user_row = db.query" in text
+    # hunks_to_text prefixes each line with "- " (1 char + 1 space = 2 chars)
+    # then the source line itself retains its 4-space leading indent, so
+    # the resulting substring has 5 spaces between "-" and the code.
+    assert "-     return db.query" in text
+    assert "+     user_row = db.query" in text
 
 
 def test_returns_list_of_filehunks():
