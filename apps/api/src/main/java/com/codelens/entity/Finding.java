@@ -33,7 +33,7 @@ public class Finding {
     private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "pull_request_id", nullable = false)
+    @JoinColumn(name = "pr_id", nullable = false)
     private PullRequestEntity pullRequest;
 
     @Column(name = "file_path", nullable = false)

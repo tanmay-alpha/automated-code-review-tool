@@ -17,6 +17,11 @@ spring:
         format_sql: true
   flyway:
     enabled: true
+    # Use the h2/ subfolder of migrations — those are H2-compatible
+    # variants of the same V1/V2/V3 the production Postgres DB uses.
+    # The base db/migration/ files are PostgreSQL-flavored (use
+    # pgcrypto + gen_random_uuid) which H2 doesn't support.
+    locations: classpath:db/migration/h2
   data:
     redis:
       host: localhost
@@ -32,3 +37,16 @@ app:
   ratelimit:
     api-key:
       requests-per-minute: 60
+  encryption:
+    # 32-byte test key, base64-encoded. AES-256-GCM needs 32 raw bytes;
+    # EncryptionService#init() decodes this in base64 mode. This is a
+    # throwaway test value — it only exists to satisfy @Value injection
+    # in the test ApplicationContext. The decoded bytes are 0x01..0x20.
+    key: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
+  github:
+    client-id: test-client-id
+    client-secret: test-client-secret
+    oauth-redirect-uri: http://localhost:8080/api/auth/callback
+  ml-worker:
+    url: http://localhost:0
+    secret: test-ml-secret
