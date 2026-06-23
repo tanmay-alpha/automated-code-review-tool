@@ -4,14 +4,29 @@ import { useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ChevronLeft, ChevronRight, ExternalLink, AlertTriangle } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  AlertTriangle,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+} from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
-import { QualityTrendChart } from "@/components/QualityTrendChart";
+import { QualityChart } from "@/components/QualityChart";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -23,6 +38,7 @@ import {
 import {
   getRepoDetail,
   getRepoPRs,
+  getQualityTrend,
 } from "@/lib/api";
 import {
   qualityScoreColor,
@@ -32,13 +48,13 @@ import {
 import type {
   PaginatedPRResponse,
   PullRequestSummary,
+  QualityTrendResponse,
   RepoDetailResponse,
 } from "@/lib/types";
 
 function RepoDetailContent() {
   const params = useParams<{ repoId: string }>();
   const repoId = params.repoId;
-
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
@@ -54,6 +70,13 @@ function RepoDetailContent() {
     repoId ? ["repo-prs", repoId, page, pageSize] : null,
     () => getRepoPRs(repoId, page, pageSize),
     { keepPreviousData: true },
+  );
+
+  // 30-day trend drives the trend stat ("+8.5 vs last 30d") and the chart.
+  const { data: trend30 } = useSWR<QualityTrendResponse>(
+    repoId ? ["quality-trend", repoId, 30] : null,
+    () => getQualityTrend(repoId, 30),
+    { revalidateOnFocus: false, dedupingInterval: 60_000 },
   );
 
   return (
@@ -91,8 +114,45 @@ function RepoDetailContent() {
 
       <Separator />
 
+      {/* Summary stats (Issue #18) */}
+      <section className="mt-6 grid gap-4 md:grid-cols-4">
+        <SummaryStat
+          label="Current score"
+          value={
+            repo?.latestQualityScore != null
+              ? repo.latestQualityScore.toFixed(0)
+              : "—"
+          }
+          tone={repo?.latestQualityScore ?? null}
+        />
+        <SummaryStat
+          label="Trend (vs prev 30d)"
+          value={
+            trend30
+              ? formatTrendDelta(trend30)
+              : null
+          }
+          tone="neutral"
+          icon={trendIcon(trend30)}
+        />
+        <SummaryStat
+          label="PRs reviewed"
+          value={repo?.totalPrsReviewed ?? "—"}
+          tone="neutral"
+        />
+        <SummaryStat
+          label="Most common anti-pattern"
+          value={
+            trend30?.topAntiPattern
+              ? formatAntiPatternName(trend30.topAntiPattern)
+              : "—"
+          }
+          tone="neutral"
+        />
+      </section>
+
       {/* Two-column body: PR list (left, 2/3) + trend chart (right, 1/3) */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
+      <div className="mt-8 grid gap-6 lg:grid-cols-3">
         <section className="lg:col-span-2">
           <h2 className="mb-3 text-xl font-semibold tracking-tight">
             Pull requests
@@ -126,10 +186,7 @@ function RepoDetailContent() {
                   </TableHeader>
                   <TableBody>
                     {prs.content.map((pr) => (
-                      <TableRow
-                        key={pr.id}
-                        className="cursor-pointer"
-                      >
+                      <TableRow key={pr.id} className="cursor-pointer">
                         <TableCell className="font-mono text-xs text-muted-foreground">
                           #{pr.githubPrNumber}
                         </TableCell>
@@ -168,6 +225,8 @@ function RepoDetailContent() {
                               href={pr.githubPrUrl}
                               target="_blank"
                               rel="noreferrer"
+                              title={`Open PR #${pr.githubPrNumber} on GitHub`}
+                              aria-label={`Open PR #${pr.githubPrNumber} on GitHub`}
                               className="text-muted-foreground hover:text-foreground"
                               onClick={(e) => e.stopPropagation()}
                             >
@@ -221,10 +280,48 @@ function RepoDetailContent() {
         </section>
 
         <aside className="lg:col-span-1">
-          <QualityTrendChart repoId={repoId} days={30} compact />
+          <QualityChart repoId={repoId} initialPeriod="30d" compact />
         </aside>
       </div>
     </div>
+  );
+}
+
+// --------------------------------------------------------------------
+// Summary stat card
+// --------------------------------------------------------------------
+
+function SummaryStat({
+  label,
+  value,
+  tone,
+  icon,
+}: {
+  label: string;
+  value: string | number | null;
+  tone: number | "neutral" | null;
+  icon?: React.ReactNode;
+}) {
+  // Tint the value text using the same green/yellow/red mapping as
+  // the rest of the dashboard — applies only to the numeric score stat.
+  let valueClass = "text-2xl font-bold";
+  if (typeof tone === "number") {
+    if (tone >= 80) valueClass += " text-green-700";
+    else if (tone >= 60) valueClass += " text-yellow-700";
+    else valueClass += " text-red-700";
+  }
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardDescription>{label}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className={valueClass}>
+          {value ?? "—"}
+          {icon ? <span className="ml-2 inline-block">{icon}</span> : null}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -247,6 +344,53 @@ function StatusBadge({ status }: { status: string }) {
     default:
       return <Badge variant="outline">{titleCase(status)}</Badge>;
   }
+}
+
+/**
+ * Compares the average of the first half of the trend window with the
+ * average of the second half. Returns a formatted "+X.X" / "-X.X" delta.
+ * Returns null if there's not enough data.
+ */
+function formatTrendDelta(trend: QualityTrendResponse): string | null {
+  const points = trend.trend.filter((p) => p.avgQuality != null);
+  if (points.length < 4) return null;
+  const half = Math.floor(points.length / 2);
+  const earlier = points.slice(0, half);
+  const later = points.slice(-half);
+  if (earlier.length === 0 || later.length === 0) return null;
+  const avg = (xs: typeof points) =>
+    xs.reduce((s, p) => s + (p.avgQuality ?? 0), 0) / xs.length;
+  const delta = avg(later) - avg(earlier);
+  const sign = delta >= 0 ? "+" : "−";
+  return `${sign}${Math.abs(delta).toFixed(1)}`;
+}
+
+function trendIcon(trend: QualityTrendResponse | undefined) {
+  if (!trend) return null;
+  const points = trend.trend.filter((p) => p.avgQuality != null);
+  if (points.length < 4) return null;
+  const half = Math.floor(points.length / 2);
+  const avg = (xs: typeof points) =>
+    xs.reduce((s, p) => s + (p.avgQuality ?? 0), 0) / xs.length;
+  const delta = avg(points.slice(-half)) - avg(points.slice(0, half));
+  if (delta > 1)
+    return <TrendingUp className="inline h-5 w-5 text-green-600" />;
+  if (delta < -1)
+    return <TrendingDown className="inline h-5 w-5 text-red-600" />;
+  return <Minus className="inline h-5 w-5 text-muted-foreground" />;
+}
+
+function formatAntiPatternName(id: string): string {
+  return id
+    .toLowerCase()
+    .split("_")
+    .map((w, i) =>
+      i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w,
+    )
+    .join(" ")
+    .replace(/\bn\b/g, "N")
+    .replace(/\b1\b/g, "1")
+    .replace(/\bn plus 1\b/g, "N+1");
 }
 
 export default function RepoDetailPage() {
