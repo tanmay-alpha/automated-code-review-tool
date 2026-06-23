@@ -13,18 +13,32 @@ vi.mock("react-diff-viewer-continued", () => {
       oldValue: string;
       newValue: string;
     }) {
-      // Render one <div data-testid="diff-row" data-line="N"> per non-empty
-      // line. This mirrors the contract our component relies on (each row
-      // is keyed by its line number so we can attach findings to it).
+      // Mirrors the DOM shape our DiffViewer effect queries:
+      //   - one <pre> per side (split view) so the effect can find rows
+      //   - inside each <pre>, one <div> row per line
+      //   - each row contains a <td> with the line number as text — the
+      //     effect parses this to derive `data-line` and attach highlights.
+      // We deliberately do NOT pre-set `data-line` ourselves; the
+      // production code is what should be responsible for tagging.
+      // The <td> is wrapped in a <table><tbody><tr> to satisfy HTML
+      // validation (no React DOM-nesting warning in test output).
       const lines = (props.newValue ?? "").split("\n").filter(Boolean);
       return (
         <div data-testid="mock-diff">
-          {lines.map((line, i) => (
-            <div key={i} data-testid="diff-row" data-line={String(i + 1)}>
-              <td>{i + 1}</td>
-              <span>{line}</span>
-            </div>
-          ))}
+          <pre data-testid="mock-diff-pre">
+            {lines.map((line, i) => (
+              <div key={i} data-testid="diff-row">
+                <table>
+                  <tbody>
+                    <tr>
+                      <td>{i + 1}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <span>{line}</span>
+              </div>
+            ))}
+          </pre>
         </div>
       );
     },
