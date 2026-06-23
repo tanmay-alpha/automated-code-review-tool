@@ -39,10 +39,14 @@ jobs:
           --health-retries 5
 
     env:
-      SPRING_PROFILES_ACTIVE: ci
-      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/codelens_test
-      SPRING_DATASOURCE_USERNAME: codelens
-      SPRING_DATASOURCE_PASSWORD: codelens_test
+      # Note: no SPRING_PROFILES_ACTIVE here. The @SpringBootTest
+      # integration tests set @ActiveProfiles("test") which wins over
+      # the env var anyway, and application-test.yml configures an
+      # in-memory H2 datasource with H2-compatible Flyway migrations.
+      # We do NOT pass SPRING_DATASOURCE_URL because the test profile
+      # intentionally uses H2; the Postgres service container defined
+      # above is preserved for any future ad-hoc `mvn` runs against
+      # a real Postgres (e.g. `mvn flyway:migrate`).
       JWT_SECRET: ${{ secrets.JWT_SECRET_TEST || 'ci_test_secret_must_be_at_least_64_bytes_long_for_hs512_aaaa' }}
       ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY_TEST || 'ci_test_encryption_key_32b!' }}
       ML_WORKER_URL: http://localhost:8000
