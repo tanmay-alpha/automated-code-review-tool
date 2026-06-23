@@ -29,13 +29,15 @@ export function FindingCard({
   const interactive = !!scrollToLine;
   const sev = (finding.severity ?? "").toLowerCase();
   const confPct = Math.round(finding.confidence * 100);
-  const hasLine = finding.lineStart != null;
+  const lineStart = finding.lineStart;
+  const lineEnd = finding.lineEnd;
+  const hasLine = lineStart != null;
 
   return (
     <Card
       onClick={() => {
-        if (interactive && hasLine) {
-          scrollToLine?.(finding.lineStart);
+        if (interactive && hasLine && lineStart != null) {
+          scrollToLine?.(lineStart);
         }
       }}
       className={`overflow-hidden border-l-4 ${
@@ -69,11 +71,11 @@ export function FindingCard({
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <FileCode className="h-3 w-3 shrink-0" />
           <span className="truncate font-mono">{finding.filePath}</span>
-          {hasLine ? (
+          {hasLine && lineStart != null ? (
             <span className="shrink-0">
-              · L{finding.lineStart}
-              {finding.lineEnd != null && finding.lineEnd > finding.lineStart
-                ? `–${finding.lineEnd}`
+              · L{lineStart}
+              {lineEnd != null && lineEnd > lineStart
+                ? `–${lineEnd}`
                 : ""}
             </span>
           ) : (

@@ -138,6 +138,13 @@ export interface QualityTrendPoint {
   minorCount: number;
 }
 
+/**
+ * Alias used by the dashboard widgets. Currently identical to
+ * {@link QualityTrendPoint}; kept as a separate name so callers
+ * importing chart components don't have to know about the metrics DTO.
+ */
+export type QualityTrendDataPoint = QualityTrendPoint;
+
 // ---------- /api/auth/api-keys ----------
 
 /** GET /api/auth/api-keys → List<ApiKeyResponse> */
