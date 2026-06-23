@@ -1,0 +1,60 @@
+name: ci-ml-worker
+
+# Run FastAPI tests whenever apps/ml-worker/** changes (or this workflow).
+# 'pytest -m "not slow"' skips tests tagged @pytest.mark.slow — those are
+# the ones that download the full model and run real inference.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/ml-worker/**'
+      - '.github/workflows/ci-ml-worker.yml'
+  pull_request:
+    paths:
+      - 'apps/ml-worker/**'
+      - '.github/workflows/ci-ml-worker.yml'
+
+concurrency:
+  group: ci-ml-worker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (not slow)
+    runs-on: ubuntu-latest
+
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: apps/ml-worker/requirements.txt
+
+      - name: Install dependencies
+        working-directory: apps/ml-worker
+        run: |
+          python -m pip install --upgrade pip
+          # requirements.txt is the runtime deps; tests depend on pytest etc.
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run unit tests (skip @pytest.mark.slow)
+        working-directory: apps/ml-worker
+        run: |
+          pytest -m "not slow" -v --tb=short --color=yes
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-worker-test-results
+          path: apps/ml-worker/tests/.pytest_cache
+          if-no-files-found: ignore
