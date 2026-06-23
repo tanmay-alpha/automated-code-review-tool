@@ -1,0 +1,96 @@
+{
+  "name": "codelens-reviewer",
+  "displayName": "CodeLens — Semantic Code Review",
+  "description": "Catches architectural anti-patterns that linters miss",
+  "version": "1.0.0",
+  "publisher": "tanmay-alpha",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tanmay-alpha/codelens.git",
+    "directory": "apps/vscode-ext"
+  },
+  "bugs": {
+    "url": "https://github.com/tanmay-alpha/codelens/issues"
+  },
+  "icon": "icon.png",
+  "keywords": [
+    "review",
+    "anti-pattern",
+    "linter",
+    "ai",
+    "quality"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:python",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:java",
+    "workspaceContains:**/codelens.config.json"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codelens.scanFile",
+        "title": "CodeLens: Scan Current File",
+        "category": "CodeLens"
+      },
+      {
+        "command": "codelens.scanWorkspace",
+        "title": "CodeLens: Scan All Files in Workspace",
+        "category": "CodeLens"
+      },
+      {
+        "command": "codelens.clear",
+        "title": "CodeLens: Clear Diagnostics",
+        "category": "CodeLens"
+      }
+    ],
+    "configuration": {
+      "title": "CodeLens",
+      "properties": {
+        "codelens.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your CodeLens API key from the dashboard (Settings → API Key)",
+          "markdownDescription": "Your CodeLens API key from the dashboard (**Settings → API Key**). Required for the extension to contact the CodeLens API."
+        },
+        "codelens.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "CodeLens API base URL"
+        },
+        "codelens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable auto-scan on save"
+        },
+        "codelens.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan files automatically when saved"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "echo 'no linter yet'",
+    "test": "echo 'no tests yet'"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.5"
+  }
+}
