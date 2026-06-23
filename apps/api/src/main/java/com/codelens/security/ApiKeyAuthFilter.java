@@ -183,7 +183,11 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     }
 
     private void tooManyRequests(HttpServletResponse res, int retryAfter) throws IOException {
-        res.setStatus(HttpServletResponse.SC_TOO_MANY_REQUESTS);
+        // HTTP 429 (Too Many Requests) is not exposed as a constant on
+        // jakarta.servlet.http.HttpServletResponse in Servlet 5/6 (it
+        // exists on some legacy javax.servlet containers but not on the
+        // Jakarta API). Use the literal RFC 6585 code.
+        res.setStatus(429);
         res.setHeader("Retry-After", String.valueOf(retryAfter));
         res.setContentType("application/json");
         res.getWriter().write(
