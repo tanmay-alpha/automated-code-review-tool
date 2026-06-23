@@ -93,9 +93,11 @@ def test_short_text_returns_one_window(tok):
     assert len(windows) == 1
     assert isinstance(windows[0], dict)
     assert "input_ids" in windows[0] and "attention_mask" in windows[0]
-    # CLS + 5 words + SEP = 7 tokens (no padding because ≤ max_length).
-    assert len(windows[0]["input_ids"]) == 7
-    assert len(windows[0]["attention_mask"]) == 7
+    # whitespace-tokenized: "def foo(): return 42".split() → 4 tokens.
+    # Plus CLS + SEP = 6 input_ids, 6 attention_mask values.
+    # No padding because text length ≤ max_length.
+    assert len(windows[0]["input_ids"]) == 6
+    assert len(windows[0]["attention_mask"]) == 6
     # First and last token are CLS / SEP.
     assert windows[0]["input_ids"][0] == tok.CLS_TOKEN_ID
     assert windows[0]["input_ids"][-1] == tok.SEP_TOKEN_ID
