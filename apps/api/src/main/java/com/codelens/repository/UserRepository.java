@@ -11,5 +11,7 @@ import java.util.UUID;
 public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByGithubId(Long githubId);
 
+    Optional<User> findByGithubUsername(String githubUsername);
+
     Optional<User> findByApiKeyPrefix(String apiKeyPrefix);
 }

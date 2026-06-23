@@ -6,8 +6,8 @@ import com.codelens.repository.RepositoryRepository;
 import com.codelens.repository.UserRepository;
 import com.codelens.security.ApiKeyAuthFilter;
 import com.codelens.security.JwtAuthFilter;
+import com.codelens.security.EncryptionService;
 import com.codelens.service.ApiKeyService;
-import com.codelens.service.EncryptionService;
 import com.codelens.service.GitHubService;
 import com.codelens.service.RepoService;
 import jakarta.servlet.FilterChain;
@@ -26,7 +26,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -201,7 +201,9 @@ class RepoControllerTest {
     @Test
     void get_returns404_whenNotOwnedByCaller() throws Exception {
         User other = userRepository.save(User.builder()
-                .githubUsername("bob").githubId(99L).build());
+                .githubUsername("bob").githubId(99L)
+                .accessToken(encryptionService.encrypt("gh_bob_token"))
+                .build());
         Repository otherRepo = repositoryRepository.save(Repository.builder()
                 .githubId(99L).fullName("bob/x").owner(other)
                 .webhookSecret("enc").webhookId(1L).build());
@@ -239,7 +241,9 @@ class RepoControllerTest {
     @Test
     void disconnect_returns404_whenNotOwned() throws Exception {
         User other = userRepository.save(User.builder()
-                .githubUsername("eve").githubId(33L).build());
+                .githubUsername("eve").githubId(33L)
+                .accessToken(encryptionService.encrypt("gh_eve_token"))
+                .build());
         Repository otherRepo = repositoryRepository.save(Repository.builder()
                 .githubId(33L).fullName("eve/y").owner(other)
                 .webhookSecret("enc").webhookId(1L).build());
@@ -256,8 +260,21 @@ class RepoControllerTest {
                 .content(body));
     }
 
-    /** Attach a User principal so @AuthenticationPrincipal works. */
+    /**
+     * Attach a User principal so {@code @AuthenticationPrincipal User user}
+     * resolves to the test's domain entity. The controller signature
+     * declares {@code User user} (not {@code UserDetails}), so the
+     * principal in the SecurityContext must be the entity itself, not
+     * a Spring Security UserDetails wrapper. We use {@code authentication()}
+     * (instead of {@code user()}) to install a custom
+     * {@link org.springframework.security.core.Authentication} whose
+     * principal is the {@code User} entity.
+     */
     private MockHttpServletRequestBuilder auth(MockHttpServletRequestBuilder builder) {
-        return builder.with(user(testUser));
+        org.springframework.security.core.Authentication auth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                testUser,
+                null,
+                java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_USER")));
+        return builder.with(authentication(auth));
     }
 }
