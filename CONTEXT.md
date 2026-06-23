@@ -93,9 +93,14 @@ Pulled from Section 14 of the plan. Do not change the order.
 - [x] **#17** PR review page with diff viewer + annotations
 - [x] **#18** Quality trend chart + repo detail page
 - [x] **#19** VS Code extension — file scan on save
-- [ ] **#20** GitHub Actions integration
+- [x] **#20** GitHub Actions bot + Docker Compose + CI workflows + README + RESUME
 
 ---
+
+## 5. MVP Status
+
+**All 20 issues complete.** See `RESUME.md` for headline bullets and
+`README.md` for the full project writeup.
 
 ## 5. Non-Negotiable Decisions
 
