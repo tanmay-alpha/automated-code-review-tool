@@ -8,6 +8,7 @@ import com.codelens.entity.User;
 import com.codelens.repository.FindingRepository;
 import com.codelens.repository.PullRequestRepository;
 import com.codelens.security.ApiKeyAuthFilter;
+import com.codelens.security.AuthRateLimitFilter;
 import com.codelens.security.JwtAuthFilter;
 import com.codelens.security.JwtService;
 import com.codelens.service.ApiKeyService;
@@ -82,6 +83,9 @@ class ReviewControllerTest {
     // MVC slice doesn't try to load Redis / ApiKeyRepository.
     @MockBean ApiKeyAuthFilter apiKeyAuthFilter;
     @MockBean ApiKeyService apiKeyService;
+    // SecurityConfig also wires AuthRateLimitFilter (needs Redis) — mock
+    // it as a pass-through alongside ApiKeyAuthFilter.
+    @MockBean AuthRateLimitFilter authRateLimitFilter;
 
     @org.junit.jupiter.api.BeforeEach
     void stubApiKeyFilter() throws Exception {
@@ -94,6 +98,16 @@ class ReviewControllerTest {
             chain.doFilter(req, res);
             return null;
         }).when(apiKeyAuthFilter).doFilter(
+                org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletRequest.class),
+                org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletResponse.class),
+                org.mockito.ArgumentMatchers.any(FilterChain.class));
+        doAnswer(inv -> {
+            jakarta.servlet.ServletRequest req = inv.getArgument(0);
+            jakarta.servlet.ServletResponse res = inv.getArgument(1);
+            FilterChain chain = inv.getArgument(2);
+            chain.doFilter(req, res);
+            return null;
+        }).when(authRateLimitFilter).doFilter(
                 org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletRequest.class),
                 org.mockito.ArgumentMatchers.any(jakarta.servlet.ServletResponse.class),
                 org.mockito.ArgumentMatchers.any(FilterChain.class));
