@@ -1,0 +1,35 @@
+name: 'CodeLens Code Review'
+description: 'Semantic code review that catches anti-patterns linters miss'
+author: 'CodeLens'
+
+inputs:
+  api-url:
+    description: 'CodeLens API URL (e.g. https://api.codelens.dev)'
+    required: true
+  api-key:
+    description: 'CodeLens API key from dashboard (Settings → API Key)'
+    required: true
+  language:
+    description: 'Primary language of the PR (python | javascript | java)'
+    required: false
+    default: 'python'
+  fail-threshold:
+    description: 'Minimum quality score (0-100). Below this the action fails.'
+    required: false
+    default: '60'
+
+outputs:
+  quality-score:
+    description: 'Quality score reported by CodeLens (0-100).'
+  findings-count:
+    description: 'Total number of findings returned.'
+  critical-count:
+    description: 'Number of CRITICAL findings.'
+
+runs:
+  using: 'node20'
+  main: 'index.js'
+
+branding:
+  icon: 'eye'
+  color: 'blue'
