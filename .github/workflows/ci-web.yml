@@ -1,0 +1,48 @@
+name: ci-web
+
+# Run Next.js typecheck + tests whenever apps/web/** changes (or this workflow).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/ci-web.yml'
+  pull_request:
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/ci-web.yml'
+
+concurrency:
+  group: ci-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: typecheck + test
+    runs-on: ubuntu-latest
+
+    env:
+      NEXT_PUBLIC_API_URL: 'http://localhost:8080'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: TypeScript typecheck
+        working-directory: apps/web
+        run: npx tsc --noEmit
+
+      - name: Run vitest
+        working-directory: apps/web
+        run: npm test
