@@ -91,8 +91,8 @@ Pulled from Section 14 of the plan. Do not change the order.
 ### Milestone 4: Frontend + Extensions (Week 5–7)
 - [x] **#16** Next.js auth + dashboard shell
 - [x] **#17** PR review page with diff viewer + annotations
-- [ ] **#18** Quality trend chart + repo detail page
-- [ ] **#19** VS Code extension — file scan on save
+- [x] **#18** Quality trend chart + repo detail page
+- [x] **#19** VS Code extension — file scan on save
 - [ ] **#20** GitHub Actions integration
 
 ---

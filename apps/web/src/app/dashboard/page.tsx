@@ -6,6 +6,7 @@ import { Plus, FolderGit2, GitPullRequest, Award } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
 import { RepoCard } from "@/components/RepoCard";
 import { ConnectRepoModal } from "@/components/ConnectRepoModal";
+import { QualityChart } from "@/components/QualityChart";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -17,17 +18,23 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
-import { getRepos } from "@/lib/api";
-import type { RepoSummaryResponse } from "@/lib/types";
+import { getRepos, getQualityTrend } from "@/lib/api";
+import type {
+  QualityTrendDataPoint,
+  QualityTrendResponse,
+  RepoSummaryResponse,
+} from "@/lib/types";
 
 /**
- * Top-level dashboard. Three sections:
- *   1. Stats bar (repos connected, PRs reviewed, average quality score).
- *   2. "Connect Repository" button → modal.
- *   3. Grid of RepoCard components.
+ * Top-level dashboard (Issue #18 enhancements).
  *
- * Uses SWR for auto-revalidation. The connect modal mutates the cache
- * optimistically so the new repo shows up instantly.
+ *   1. Stats bar — repos / PRs / avg quality.
+ *   2. **Global quality trend chart** — aggregate score across all repos,
+ *      computed client-side from each repo's 30-day trend (no backend
+ *      aggregate endpoint exists; we average the daily points).
+ *   3. "Connect Repository" button → modal.
+ *   4. Grid of RepoCard components. Each card now shows a 7-day
+ *      sparkline in addition to the existing quality badge.
  */
 function DashboardContent() {
   const { data: repos, error, isLoading, mutate } = useSWR<RepoSummaryResponse[]>(
@@ -78,6 +85,11 @@ function DashboardContent() {
         />
       </section>
 
+      {/* Global quality trend (Issue #18) */}
+      <section>
+        <GlobalQualityChart repos={repos} isLoading={isLoading} />
+      </section>
+
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>Couldn’t load repositories</AlertTitle>
@@ -117,7 +129,7 @@ function DashboardContent() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {repos.map((repo) => (
-              <RepoCard key={repo.id} repo={repo} />
+              <RepoCardWithSparkline key={repo.id} repo={repo} />
             ))}
           </div>
         )}
@@ -127,15 +139,34 @@ function DashboardContent() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onSuccess={(newRepo) => {
-          // Optimistic insert; SWR revalidates the list in the background.
           mutate(
-            (current) =>
-              current ? [...current, newRepo] : [newRepo],
+            (current) => (current ? [...current, newRepo] : [newRepo]),
             { revalidate: true },
           );
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Pulls 7-day trends for every repo in parallel and renders a single
+ * sparkline per card. SWR dedupes per (repoId, days) so the global
+ * trend (which also asks for 30d per repo) and the sparkline (7d per
+ * repo) don't double-fetch.
+ */
+function RepoCardWithSparkline({ repo }: { repo: RepoSummaryResponse }) {
+  const { data: trend } = useSWR<QualityTrendResponse>(
+    ["quality-trend", repo.id, 7],
+    () => getQualityTrend(repo.id, 7),
+    { revalidateOnFocus: false, dedupingInterval: 60_000 },
+  );
+
+  return (
+    <RepoCard
+      repo={repo}
+      sparklineData={trend?.trend as QualityTrendDataPoint[] | undefined}
+    />
   );
 }
 
@@ -183,6 +214,110 @@ function computeStats(repos: RepoSummaryResponse[] | undefined) {
       ? scoresWithData.reduce((a, b) => a + b, 0) / scoresWithData.length
       : null;
   return { totalRepos, totalPrs, avgScore };
+}
+
+// --------------------------------------------------------------------
+// Global trend: we don't have a backend aggregate endpoint, so we
+// fetch 30-day trends for every connected repo in parallel, then merge
+// them by date (averaging the quality scores + summing finding counts).
+// --------------------------------------------------------------------
+
+function GlobalQualityChart({
+  repos,
+  isLoading,
+}: {
+  repos: RepoSummaryResponse[] | undefined;
+  isLoading: boolean;
+}) {
+  const ids = (repos ?? []).map((r) => r.id);
+  // SWR fan-out: one key per repo, run in parallel.
+  const { data: perRepo, isLoading: trendsLoading } = useSWR(
+    ids.length > 0 ? ["global-trend", ids.join("|"), 30] : null,
+    async () => {
+      const results = await Promise.all(
+        ids.map((id) =>
+          getQualityTrend(id, 30).catch(() => null),
+        ),
+      );
+      return results.filter((r): r is QualityTrendResponse => r != null);
+    },
+    { revalidateOnFocus: false, dedupingInterval: 60_000 },
+  );
+
+  const merged = mergeGlobalTrend(perRepo);
+  const isStillLoading = isLoading || trendsLoading;
+
+  // When there's no data yet, render a placeholder card so the layout
+  // doesn't jump as repos load in.
+  if (!isStillLoading && merged.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Workspace quality · last 30 days</CardTitle>
+          <CardDescription>
+            Connect a repo and review a PR to populate this view.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  return (
+    <QualityChart
+      trend={merged}
+      title="Workspace quality · last 30 days"
+    />
+  );
+}
+
+function mergeGlobalTrend(
+  perRepo: QualityTrendResponse[] | undefined,
+): QualityTrendDataPoint[] {
+  if (!perRepo || perRepo.length === 0) return [];
+  // Build a map: date -> { sum, count, prs, crit, major, minor }.
+  const acc = new Map<
+    string,
+    {
+      sum: number;
+      count: number;
+      prsReviewed: number;
+      criticalCount: number;
+      majorCount: number;
+      minorCount: number;
+    }
+  >();
+  for (const r of perRepo) {
+    for (const p of r.trend) {
+      const cur =
+        acc.get(p.date) ?? {
+          sum: 0,
+          count: 0,
+          prsReviewed: 0,
+          criticalCount: 0,
+          majorCount: 0,
+          minorCount: 0,
+        };
+      if (p.avgQuality != null) {
+        cur.sum += p.avgQuality;
+        cur.count += 1;
+      }
+      cur.prsReviewed += p.prsReviewed ?? 0;
+      cur.criticalCount += p.criticalCount ?? 0;
+      cur.majorCount += p.majorCount ?? 0;
+      cur.minorCount += p.minorCount ?? 0;
+      acc.set(p.date, cur);
+    }
+  }
+  return Array.from(acc.entries())
+    .map(([date, v]) => ({
+      date,
+      avgQuality: v.count > 0 ? v.sum / v.count : null,
+      prsReviewed: v.prsReviewed,
+      criticalCount: v.criticalCount,
+      majorCount: v.majorCount,
+      minorCount: v.minorCount,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export default function DashboardPage() {
