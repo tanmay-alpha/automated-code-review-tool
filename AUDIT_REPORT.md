@@ -32,7 +32,7 @@ This is a read-only audit. No code was changed. Every item is marked ✅ DONE, �
 | 14 | Root `RESUME.md` | ✅ DONE | 66 lines |
 | 15 | Root `AUDIT.md` | ✅ DONE | 425 lines (from earlier session) |
 | 16 | Root `CONTEXT.md` | ✅ DONE | 157 lines |
-| 17 | Root `ENGINEERING_PLAN.md.md` | ✅ DONE | 1452 lines |
+| 17 | Root `ENGINEERING_PLAN.md` | ✅ DONE | 1452 lines |
 
 ---
 

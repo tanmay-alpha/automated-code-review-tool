@@ -1,6 +1,6 @@
 # CodeLens — Comprehensive Audit (2026-06-23)
 
-> Read this with `CONTEXT.md` and `ENGINEERING_PLAN.md.md`. The plan is the spec,
+> Read this with `CONTEXT.md` and `ENGINEERING_PLAN.md`. The plan is the spec,
 > CONTEXT is the memory, this is the reality check.
 >
 > **Scope of this audit:** everything on disk in `apps/api`, `apps/ml-worker`,
@@ -19,7 +19,7 @@
 
 | Layer | Health | Verdict |
 |---|---|---|
-| **Spec docs** (`ENGINEERING_PLAN.md.md`, `CONTEXT.md`, `DOCS_DRAFT.md`) | 🟢 Excellent | Detailed, internally consistent, locked decisions. |
+| **Spec docs** (`ENGINEERING_PLAN.md`, `CONTEXT.md`, `DOCS_DRAFT.md`) | 🟢 Excellent | Detailed, internally consistent, locked decisions. |
 | **Migrations** (`V1__initial_schema.sql`, `h2/V1-V3`) | 🟢 Strong | Postgres V1 is verbatim from the plan. H2 variants exist for CI. |
 | **API config** (`SecurityConfig`, `AppConfig`, `JwtConfig`, `GitHubConfig`, `AsyncConfig`, `application.yml`) | 🟢 Solid | Clean separation, env-driven, fail-fast on missing secrets. |
 | **API entities** (User, Repository, PullRequestEntity, Finding, ApiKey, ProcessedWebhook, QualityMetric) | 🟢 Correct | Column names match SQL, @JoinColumns match FK names, Lombok done right. |
@@ -53,7 +53,7 @@ Files claimed by the GitHub UI or `CONTEXT.md` that I cannot find on this disk:
 | CONTEXT §6 + GitHub UI | `github-action/action.yml`, `index.js`, `package.json` | ❌ (only `.gitkeep`) |
 | CONTEXT §6 + GitHub UI | `infra/docker-compose.yml`, `infra/docker-compose.dev.yml` | ❌ |
 | CONTEXT §6 | `RESUME.md` | ❌ |
-| GitHub UI | `README.md` (project root) | ❌ (only `DOCS_DRAFT.md` and `ENGINEERING_PLAN.md.md`) |
+| GitHub UI | `README.md` (project root) | ❌ (only `DOCS_DRAFT.md` and `ENGINEERING_PLAN.md`) |
 | GitHub UI commit `24481b0` | H2 schema + 7 files modified | Partially on disk (the `db/migration/h2/*.sql` files exist, but the entity/repo test fixes from that commit can't be verified because I don't have the diff) |
 | GitHub UI commit `9f08ac8` | CI env-var removal | Need to re-read `ci-api.yml` against the screenshot to confirm — current `ci-api.yml` on disk still has `SPRING_PROFILES_ACTIVE: ci` and `SPRING_DATASOURCE_URL` (lines 42, 43). |
 
@@ -70,7 +70,7 @@ verify `origin/main` is what the screenshot shows, then re-audit if not.**
 
 ---
 
-## 3. Spec Compliance — `ENGINEERING_PLAN.md.md` vs Disk
+## 3. Spec Compliance — `ENGINEERING_PLAN.md` vs Disk
 
 ### 3.1 Plan §3 Tech Stack — versions in use vs spec
 
@@ -271,7 +271,7 @@ break all existing tokens. Document or enforce one form.
 
 ### 🟢 LOW (nits)
 
-**L1. Plan filename is `ENGINEERING_PLAN.md.md`** (double `.md`).
+**L1. Plan filename is `ENGINEERING_PLAN.md`** (double `.md`).
 Documented since v1, never fixed. References in `CONTEXT.md` and
 `DOCS_DRAFT.md` use this name. Renaming now breaks every cross-reference.
 Keep it.
@@ -375,7 +375,7 @@ on disk but claimed done.**
 7. **Build the Next.js dashboard** (Issue #16). This is the missing
    50% of user-visible surface.
 8. **VS Code extension** (Issue #19) and **GitHub Action** (Issue #20).
-9. **Update `ENGINEERING_PLAN.md.md`** to reflect the `/api/auth/api-keys`
+9. **Update `ENGINEERING_PLAN.md`** to reflect the `/api/auth/api-keys`
    change (replacing `/api/auth/api-key/regenerate`) and the H2-vs-Testcontainers
    decision.
 10. **Add `RESUME.md` and `README.md`** at the repo root if missing.
@@ -403,7 +403,7 @@ I read these files on disk before writing this report:
 - `JwtService`, `JwtAuthFilter`, `EncryptionService`, `ApiKeyAuthFilter` (security)
 - `MlWorkerService`, `MlFinding`, `MlReviewRequest`, `MlReviewResponse` (DTOs + client)
 - `ScanController`, `app/main.py`, `app/config.py`, `app/schemas.py` (cross-service)
-- `CONTEXT.md`, `ENGINEERING_PLAN.md.md` (spec)
+- `CONTEXT.md`, `ENGINEERING_PLAN.md` (spec)
 
 I cross-referenced these against:
 - The 3 CI workflow YAML files (read previously).

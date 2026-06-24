@@ -5,7 +5,7 @@ This document covers every HTTP endpoint in the system.
 - **Spring Boot REST API** (`apps/api`, port `8080`) — 12 endpoints, public.
 - **FastAPI ML worker** (`apps/ml-worker`, port `8000`) — 2 endpoints, internal-only.
 
-Source: [ENGINEERING_PLAN.md](../ENGINEERING_PLAN.md.md) Section 4.
+Source: [ENGINEERING_PLAN.md](../ENGINEERING_PLAN.md) Section 4.
 
 ---
 

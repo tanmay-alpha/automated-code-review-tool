@@ -2,7 +2,7 @@
 
 > **An AI bot that reviews your GitHub Pull Requests and points out common code problems before you merge.**
 >
-> Deep technical spec: [ENGINEERING_PLAN.md.md](./ENGINEERING_PLAN.md.md) · Project memory: [CONTEXT.md](./CONTEXT.md)
+> Deep technical spec: [ENGINEERING_PLAN.md](./ENGINEERING_PLAN.md) · Project memory: [CONTEXT.md](./CONTEXT.md)
 
 ---
 
