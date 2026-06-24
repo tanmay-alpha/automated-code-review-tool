@@ -1,7 +1,7 @@
 # CodeLens — Project Context
 
 > Living project context. Read this before doing anything.
-> Source of truth: [ENGINEERING_PLAN.md.md](./ENGINEERING_PLAN.md.md)
+> Source of truth: [ENGINEERING_PLAN.md](./ENGINEERING_PLAN.md)
 > This file is the project memory — the plan is the spec.
 
 ---
@@ -10,7 +10,7 @@
 
 We are at **pre-implementation / repo scaffold phase**.
 
-- The engineering plan ([ENGINEERING_PLAN.md.md](./ENGINEERING_PLAN.md.md)) is committed and is final law.
+- The engineering plan ([ENGINEERING_PLAN.md](./ENGINEERING_PLAN.md)) is committed and is final law.
 - The monorepo is empty except for the plan document.
 - No real code has been written yet.
 - The 30-day implementation order (Section 15 of the plan) begins with Issue #1 (download dataset) and ends with deployment + demo video on Day 30.
@@ -151,7 +151,7 @@ These are locked. No deviation without an explicit change request and written re
 
 ## 7. How to Use This File
 
-- New session? Read this file first, then re-read [ENGINEERING_PLAN.md.md](./ENGINEERING_PLAN.md.md) Section relevant to your current issue.
+- New session? Read this file first, then re-read [ENGINEERING_PLAN.md](./ENGINEERING_PLAN.md) Section relevant to your current issue.
 - Starting an issue? Update the checkbox in Section 4.
 - Making a non-trivial decision? Add it to Section 5 only after asking the principal engineer.
 - Finished a session? Add a row to Section 6 with the date and a one-line summary.
