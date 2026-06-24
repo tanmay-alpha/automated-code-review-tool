@@ -1,0 +1,59 @@
+# docker-compose.dev.yml — local development overrides for the CodeLens MVP.
+#
+# Start with dev overrides:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up
+#
+# This file overrides/extends the base `infra/docker-compose.yml` for an
+# iterative dev workflow:
+#   - Source code is bind-mounted into containers so edits on the host are
+#     picked up immediately (hot-reload).
+#   - ml-worker uses Uvicorn's --reload flag.
+#   - api uses Spring Boot DevTools (livereload + restart on classpath change).
+#   - web uses `npm run dev` (Next.js dev server).
+#   - postgres exposes 5432:5432 to the host for direct DB access from your IDE.
+#   - All services run with LOG_LEVEL=DEBUG for verbose local logs.
+#
+# Tear down (keep data): docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml down
+# Tear down (wipe data): docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml down -v
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+    environment:
+      LOG_LEVEL: DEBUG
+
+  redis:
+    environment:
+      LOG_LEVEL: DEBUG
+
+  ml-worker:
+    volumes:
+      - ../apps/ml-worker:/app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      LOG_LEVEL: DEBUG
+
+  api:
+    volumes:
+      - ../apps/api:/app
+      # Spring DevTools picks up changes on the classpath and triggers a fast restart.
+      # The /tmp volume lets DevTools store its restart artifacts across restarts.
+      - /tmp
+    environment:
+      SPRING_DEVTOOLS_LIVERELOAD_ENABLED: "true"
+      SPRING_DEVTOOLS_RESTART_ENABLED: "true"
+      LOG_LEVEL: DEBUG
+
+  web:
+    volumes:
+      - ../apps/web:/app
+      # node_modules and .next should live inside the container — exclude them
+      # from the bind mount so the host's view of those paths doesn't shadow
+      # what was installed at image-build time.
+      - /app/node_modules
+      - /app/.next
+    command: ["npm", "run", "dev"]
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: DEBUG
