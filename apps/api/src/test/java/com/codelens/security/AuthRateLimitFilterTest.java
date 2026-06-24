@@ -3,7 +3,12 @@ package com.codelens.security;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -12,12 +17,14 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.springframework.data.redis.RedisConnectionFailureException;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -34,16 +41,16 @@ import static org.mockito.Mockito.when;
  *       contamination).</li>
  * </ul>
  */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class AuthRateLimitFilterTest {
 
-    private StringRedisTemplate redis;
-    private ValueOperations<String, String> valueOps;
+    @Mock private StringRedisTemplate redis;
+    @Mock private ValueOperations<String, String> valueOps;
     private AuthRateLimitFilter filter;
 
     @BeforeEach
     void setUp() {
-        redis = mock(StringRedisTemplate.class);
-        valueOps = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(valueOps);
 
         filter = new AuthRateLimitFilter(redis, 10);
@@ -139,5 +146,89 @@ class AuthRateLimitFilterTest {
         // Each call hit its own key — no cross-contamination.
         verify(valueOps).increment(AuthRateLimitFilter.RATE_LIMIT_KEY_PREFIX + "1.1.1.1");
         verify(valueOps).increment(AuthRateLimitFilter.RATE_LIMIT_KEY_PREFIX + "2.2.2.2");
+    }
+
+    // ---- testRequestUnderLimitPassesThrough -------------------------------
+
+    @Test
+    void requestUnderLimitPassesThrough() throws Exception {
+        // count=5 is well under the 10/min limit → chain must run.
+        when(valueOps.increment(AuthRateLimitFilter.RATE_LIMIT_KEY_PREFIX + "1.2.3.4"))
+                .thenReturn(5L);
+
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/auth/github");
+        req.setRemoteAddr("1.2.3.4");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        AtomicReference<String> downstream = new AtomicReference<>();
+        FilterChain chain = (request, response) -> downstream.set("hit");
+
+        filter.doFilter(req, res, chain);
+
+        assertThat(downstream.get()).isEqualTo("hit");
+        assertThat(res.getStatus()).isEqualTo(200);
+    }
+
+    // ---- testRequestOverLimitReturns429 -----------------------------------
+
+    @Test
+    void requestOverLimitReturns429() throws Exception {
+        // count=11 → over the 10/min limit → 429 + spec JSON body.
+        when(valueOps.increment(AuthRateLimitFilter.RATE_LIMIT_KEY_PREFIX + "1.2.3.4"))
+                .thenReturn(11L);
+
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/auth/callback");
+        req.setRemoteAddr("1.2.3.4");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        AtomicReference<String> downstream = new AtomicReference<>();
+        FilterChain chain = (request, response) -> downstream.set("should-not-fire");
+
+        filter.doFilter(req, res, chain);
+
+        assertThat(res.getStatus()).isEqualTo(429);
+        assertThat(res.getContentAsString())
+                .isEqualTo("{\"error\":\"RATE_LIMIT_EXCEEDED\",\"retryAfter\":60}");
+        assertThat(downstream.get()).isNull();
+    }
+
+    // ---- testNonAuthPathSkipsFilter ---------------------------------------
+
+    @Test
+    void nonAuthPathSkipsFilter() throws Exception {
+        // /api/repos is NOT in PROTECTED_PATHS — shouldNotFilter must
+        // short-circuit so doFilterInternal never runs. No Redis call,
+        // chain always invoked regardless of any "limit" we might imagine.
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/repos");
+        req.setRemoteAddr("1.2.3.4");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        AtomicReference<String> downstream = new AtomicReference<>();
+        FilterChain chain = (request, response) -> downstream.set("hit");
+
+        filter.doFilter(req, res, chain);
+
+        assertThat(downstream.get()).isEqualTo("hit");
+        assertThat(res.getStatus()).isEqualTo(200);
+        verifyNoInteractions(valueOps);
+        verify(redis, never()).expire(anyString(), any(Duration.class));
+    }
+
+    // ---- testRedisDownAllowsRequest ---------------------------------------
+
+    @Test
+    void redisDownAllowsRequest() throws Exception {
+        // Redis unreachable → INCR throws → filter must fail open so a
+        // Redis outage doesn't lock every user out of the OAuth flow.
+        when(valueOps.increment(AuthRateLimitFilter.RATE_LIMIT_KEY_PREFIX + "1.2.3.4"))
+                .thenThrow(new RedisConnectionFailureException("redis down"));
+
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/auth/refresh");
+        req.setRemoteAddr("1.2.3.4");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        AtomicReference<String> downstream = new AtomicReference<>();
+        FilterChain chain = (request, response) -> downstream.set("hit");
+
+        filter.doFilter(req, res, chain);
+
+        assertThat(downstream.get()).isEqualTo("hit");
+        assertThat(res.getStatus()).isEqualTo(200);
     }
 }
