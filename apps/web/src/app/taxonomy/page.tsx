@@ -22,7 +22,7 @@ import { severityClasses } from "@/lib/utils";
 /**
  * Static page enumerating the 13 anti-patterns the ML model was trained
  * to detect. No API calls — the content is hard-coded from the plan
- * (ENGINEERING_PLAN.md.md §3 — label taxonomy).
+ * (ENGINEERING_PLAN.md §3 — label taxonomy).
  *
  * This page is the canonical reference for what CodeLens can catch; we
  * embed code snippets directly so the dashboard works offline and the
@@ -208,7 +208,7 @@ function TaxonomyContent() {
         <p className="mt-2 text-muted-foreground">
           The {PATTERNS.length} anti-patterns the CodeLens model was trained
           to detect. Severity ratings follow{" "}
-          <span className="font-mono">ENGINEERING_PLAN.md.md §3</span>.
+          <span className="font-mono">ENGINEERING_PLAN.md §3</span>.
         </p>
       </header>
 

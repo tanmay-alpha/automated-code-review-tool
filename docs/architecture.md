@@ -1,7 +1,7 @@
 # CodeLens — Architecture
 
 This document is the authoritative reference for how CodeLens is wired together.
-Source of truth: [ENGINEERING_PLAN.md](../ENGINEERING_PLAN.md.md).
+Source of truth: [ENGINEERING_PLAN.md](../ENGINEERING_PLAN.md).
 
 ---
 

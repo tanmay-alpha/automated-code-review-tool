@@ -2,7 +2,7 @@
 
 > Step-by-step guide to: download the dataset, label it, verify the labels, split by PR, fine-tune CodeBERT on Colab, and evaluate on the held-out test set.
 >
-> Source plan: [ENGINEERING_PLAN.md.md](../../../ENGINEERING_PLAN.md.md) (Sections 6, 7).
+> Source plan: [ENGINEERING_PLAN.md](../../../ENGINEERING_PLAN.md) (Sections 6, 7).
 > Issues: #1 → #6 (Milestone 1 of the 30-day plan).
 
 ---
