@@ -5,71 +5,16 @@ Uses FastAPI's TestClient and a fake `app.state.model` so the tests
 run without loading the real CodeBERT checkpoint (~500 MB).
 
 Run from the repo root:
-    cd apps/ml-worker && ML_WORKER_SECRET=test-secret pytest tests/test_api.py -v
+    cd apps/ml-worker && python -m pytest tests/test_api.py -v
 """
 from __future__ import annotations
 
-import os
-import sys
-from pathlib import Path
-from typing import Any
-
-import pytest
 from fastapi.testclient import TestClient
 
-# Set the secret BEFORE importing app.main — Settings() reads it at
-# instantiation.
-os.environ.setdefault("ML_WORKER_SECRET", "test-secret")
-
-_HERE = Path(__file__).resolve().parent
-_ML_WORKER = _HERE.parent
-sys.path.insert(0, str(_ML_WORKER))
-
-from app import main as app_main  # noqa: E402
-from app.main import app  # noqa: E402
-from app.schemas import Finding  # noqa: E402
+from app.schemas import Finding
 
 
-# ----------------------------------------------------------------------
-# Fake model — replaces CodeLensModel in app.state
-# ----------------------------------------------------------------------
-class FakeCodeLensModel:
-    """Stub that returns a configurable list of findings."""
-
-    def __init__(self, findings: list[Finding] | None = None) -> None:
-        self.findings = findings if findings is not None else []
-        self.last_windows_processed = 1
-        self.model_name = "fake/codelens-test"
-        self.device = "cpu"
-
-    def predict(self, text: str, language: str) -> list[Finding]:
-        return list(self.findings)
-
-
-@pytest.fixture
-def client() -> TestClient:
-    """A TestClient whose app.state.model is a FakeCodeLensModel.
-
-    We bypass the lifespan by setting `app.state.model` manually
-    *before* TestClient starts, so no real model is ever loaded.
-    """
-    fake = FakeCodeLensModel()
-    app.state.model = fake
-    with TestClient(app) as c:
-        yield c
-    # Clear so a later test can set its own fake.
-    app.state.model = None
-
-
-@pytest.fixture
-def client_no_model() -> TestClient:
-    """A TestClient where the model is missing (lifespan disabled)."""
-    app.state.model = None
-    with TestClient(app) as c:
-        yield c
-
-
-SECRET_HEADER = {"X-ML-Worker-Secret": "test-secret"}
+SECRET_HEADER = {"X-ML-Worker-Secret": "testsecret"}
 
 
 # ----------------------------------------------------------------------
@@ -77,6 +22,8 @@ SECRET_HEADER = {"X-ML-Worker-Secret": "test-secret"}
 # ----------------------------------------------------------------------
 def test_health_returns_ok(client: TestClient):
     """No auth required; returns 200 with the expected envelope."""
+    client.app.state.model.model_name = "fake/codelens-test"
+    client.app.state.model.device = "cpu"
     r = client.get("/ml/health")
     assert r.status_code == 200
     body = r.json()
@@ -131,7 +78,7 @@ def test_review_rejects_invalid_language(client: TestClient):
 def test_review_accepts_valid_diff(client: TestClient):
     """A real-looking diff returns a clean envelope with the mock's findings."""
     # Configure the fake to return one N+1 finding.
-    client.app.state.model.findings = [
+    client.app.state.model.predict.return_value = [
         Finding(
             antiPattern="PERFORMANCE_N_PLUS_1",
             category="PERFORMANCE",
