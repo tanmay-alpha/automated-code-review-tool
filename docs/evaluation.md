@@ -4,7 +4,7 @@ This document describes how the fine-tuned CodeBERT model is evaluated against
 baselines, the dataset it is trained and tested on, and the exact commands
 required to reproduce the numbers.
 
-Source: [ENGINEERING_PLAN.md](../ENGINEERING_PLAN.md.md) Section 6 (data pipeline)
+Source: [ENGINEERING_PLAN.md](../ENGINEERING_PLAN.md) Section 6 (data pipeline)
 and Section 7 (ML pipeline).
 
 ---

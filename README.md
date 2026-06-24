@@ -219,7 +219,7 @@ curl -X POST http://localhost:8080/api/auth/api-key/regenerate \
 # → { "apiKey": "cl_live_..." }
 ```
 
-Full reference: see [ENGINEERING_PLAN.md §4](ENGINEERING_PLAN.md.md#4-api-contract).
+Full reference: see [ENGINEERING_PLAN.md §4](ENGINEERING_PLAN.md#4-api-contract).
 
 ---
 
@@ -230,7 +230,7 @@ Full reference: see [ENGINEERING_PLAN.md §4](ENGINEERING_PLAN.md.md#4-api-contr
   [`scripts/download-dataset.sh`](scripts/download-dataset.sh).)
 - **Model card:** [tanmay-alpha/codelens-codebert](https://huggingface.co/tanmay-alpha/codelens-codebert)
   — full training config, eval split, and class-by-class metrics.
-- **Pipeline:** [ENGINEERING_PLAN.md §6–7](ENGINEERING_PLAN.md.md) — data
+- **Pipeline:** [ENGINEERING_PLAN.md §6–7](ENGINEERING_PLAN.md) — data
   preparation + training loop in [apps/ml-worker/training/](apps/ml-worker/training/).
 
 ---
