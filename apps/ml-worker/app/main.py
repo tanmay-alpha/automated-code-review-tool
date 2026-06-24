@@ -16,6 +16,7 @@ a stub to avoid loading the real 500 MB checkpoint.
 from __future__ import annotations
 
 import hmac
+import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -29,6 +30,7 @@ from app.schemas import HealthResponse, ReviewRequest, ReviewResponse
 
 AUTH_HEADER = "x-ml-worker-secret"
 HEALTH_PATH = "/ml/health"
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------
@@ -36,10 +38,16 @@ HEALTH_PATH = "/ml/health"
 # ----------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load the model on startup; tests may override before this runs."""
-    # In tests, TestClient may have already set app.state.model; respect it.
-    if not hasattr(app.state, "model") or app.state.model is None:
-        app.state.model = CodeLensModel()
+    """Load the model on startup when a real model is configured."""
+    model_name = settings.MODEL_NAME
+    if not model_name or model_name.strip().lower() in {"test", "none"}:
+        app.state.model = None
+    else:
+        try:
+            app.state.model = CodeLensModel()
+        except Exception:
+            logger.warning("Failed to load model %s", model_name, exc_info=True)
+            app.state.model = None
     yield
 
 
@@ -99,8 +107,7 @@ async def health() -> HealthResponse:
 async def review(req: ReviewRequest) -> ReviewResponse:
     model: CodeLensModel | None = getattr(app.state, "model", None)
     if model is None:
-        # Should not happen because lifespan loads it, but fail loud if so.
-        raise HTTPException(status_code=503, detail="model not loaded")
+        raise HTTPException(status_code=503, detail="Model not loaded")
 
     started = time.perf_counter()
     findings = model.predict(req.diff, req.language)
