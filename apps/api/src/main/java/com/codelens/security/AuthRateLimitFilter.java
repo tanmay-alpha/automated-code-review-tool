@@ -88,20 +88,37 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
      *
      * <p>Worst-case race: two requests both read count=10, both accept.
      * That's acceptable for a 10-RPM auth limit.</p>
+     *
+     * <p>If Redis is unreachable (any exception from INCR/EXPIRE) we
+     * fail open and allow the request through — auth availability
+     * matters more than enforcing the limit when the limiter itself
+     * is down.</p>
      */
     private boolean isRateLimited(String clientIp) {
         String key = RATE_LIMIT_KEY_PREFIX + clientIp;
-        Long count = redis.opsForValue().increment(key);
-        if (count == null) {
-            // Redis down — fail open so a Redis outage doesn't lock
-            // every user out of the OAuth flow.
-            log.warn("Redis INCR returned null for {}; failing open", key);
+        try {
+            Long count = redis.opsForValue().increment(key);
+            if (count == null) {
+                log.warn("Redis INCR returned null for {}; failing open", key);
+                return false;
+            }
+            if (count == 1L) {
+                try {
+                    redis.expire(key, Duration.ofSeconds(60));
+                } catch (Exception expireEx) {
+                    // EXPIRE is best-effort — the count above is the
+                    // authority, and we'd rather risk a 60s+ window
+                    // than fail open after INCR succeeded.
+                    log.warn("Redis EXPIRE failed for {} ({}); continuing",
+                            key, expireEx.getMessage());
+                }
+            }
+            return count > requestsPerMinute;
+        } catch (Exception ex) {
+            log.warn("Redis rate-limit call failed for {} ({}); failing open",
+                    key, ex.getMessage());
             return false;
         }
-        if (count == 1L) {
-            redis.expire(key, Duration.ofSeconds(60));
-        }
-        return count > requestsPerMinute;
     }
 
     /**
