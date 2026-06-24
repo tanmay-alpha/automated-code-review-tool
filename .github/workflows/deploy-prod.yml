@@ -1,0 +1,201 @@
+name: deploy-prod
+
+# ----------------------------------------------------------------------
+# REQUIRED GITHUB SECRETS
+# ----------------------------------------------------------------------
+# This workflow fires Railway deploy hooks and a Vercel deploy hook.
+# Configure these in: GitHub repo → Settings → Secrets and variables → Actions
+#
+#   RAILWAY_ML_WORKER_WEBHOOK   Full Railway deploy hook URL for the
+#                               ml-worker service. Get it from
+#                               Railway dashboard → ml-worker service →
+#                               Settings → Deploy Hooks.
+#
+#   RAILWAY_API_WEBHOOK         Full Railway deploy hook URL for the
+#                               api service. Get it from
+#                               Railway dashboard → api service →
+#                               Settings → Deploy Hooks.
+#
+#   VERCEL_DEPLOY_HOOK          Full Vercel deploy hook URL for the web
+#                               project. Get it from Vercel dashboard →
+#                               Project → Settings → Git → Deploy Hooks.
+# ----------------------------------------------------------------------
+
+# Trigger ONLY on push to main — never on pull_request. Production
+# should only update from a merged commit on main.
+on:
+  push:
+    branches: [main]
+    # Don't fire on docs-only / workflow-only changes; only run deploys
+    # when the apps themselves (or this workflow) actually changed.
+    paths:
+      - 'apps/api/**'
+      - 'apps/ml-worker/**'
+      - 'apps/web/**'
+      - '.github/workflows/deploy-prod.yml'
+
+# Don't pile up redeploys on a fast-fire main branch.
+concurrency:
+  group: deploy-prod-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1. test-all — fan out the test commands for all three apps.
+  # ------------------------------------------------------------------
+  test-all:
+    name: test-all
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: codelens_test
+          POSTGRES_USER: codelens
+          POSTGRES_PASSWORD: codelens_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U codelens"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      NEXT_PUBLIC_API_URL: 'http://localhost:8080'
+      # Test-only secrets; the api test profile uses H2 (see
+      # apps/api/src/test/resources/application-test.yml), so the
+      # postgres service is preserved for any future ad-hoc runs
+      # but the suite is self-contained.
+      JWT_SECRET: ${{ secrets.JWT_SECRET_TEST || 'ci_test_secret_must_be_at_least_64_bytes_long_for_hs512_aaaa' }}
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY_TEST || 'ci_test_encryption_key_32b!' }}
+      ML_WORKER_URL: http://localhost:8000
+      ML_WORKER_SECRET: ci_test_ml_worker_secret
+      GITHUB_CLIENT_ID: ci_test_client_id
+      GITHUB_CLIENT_SECRET: ci_test_client_secret
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- API: mvn test -----------------------------------------------
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('apps/api/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+            ${{ runner.os }}-
+
+      - name: Run API tests (mvn test)
+        working-directory: apps/api
+        run: mvn -B -ntp test
+
+      # ---- ML worker: pytest -m "not slow" -----------------------------
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: apps/ml-worker/requirements.txt
+
+      - name: Install ML worker dependencies
+        working-directory: apps/ml-worker
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run ML worker tests (pytest -m "not slow")
+        working-directory: apps/ml-worker
+        run: pytest -m "not slow" -v --tb=short --color=yes
+
+      # ---- Web: tsc --noEmit -------------------------------------------
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Run web typecheck (tsc --noEmit)
+        working-directory: apps/web
+        run: npx tsc --noEmit
+
+  # ------------------------------------------------------------------
+  # 2. deploy-ml-worker — fires the Railway deploy hook for the
+  #    ml-worker service. Railway's deploy hook is a single POST;
+  #    the URL itself is the credential.
+  # ------------------------------------------------------------------
+  deploy-ml-worker:
+    name: deploy-ml-worker (Railway)
+    runs-on: ubuntu-latest
+    needs: test-all
+
+    steps:
+      - name: Trigger Railway deploy hook (ml-worker)
+        if: ${{ secrets.RAILWAY_ML_WORKER_WEBHOOK != '' }}
+        env:
+          RAILWAY_ML_WORKER_WEBHOOK: ${{ secrets.RAILWAY_ML_WORKER_WEBHOOK }}
+        run: |
+          set -euo pipefail
+          echo "Triggering Railway deploy for ml-worker..."
+          # -fsSL: fail on HTTP error, silent on progress, follow redirects.
+          # -X POST: explicit method; Railway deploy hooks accept POST.
+          curl -fsSL -X POST "$RAILWAY_ML_WORKER_WEBHOOK"
+          echo
+          echo "Railway ml-worker redeploy triggered."
+
+  # ------------------------------------------------------------------
+  # 3. deploy-api — same pattern as ml-worker, different secret.
+  # ------------------------------------------------------------------
+  deploy-api:
+    name: deploy-api (Railway)
+    runs-on: ubuntu-latest
+    needs: test-all
+
+    steps:
+      - name: Trigger Railway deploy hook (api)
+        if: ${{ secrets.RAILWAY_API_WEBHOOK != '' }}
+        env:
+          RAILWAY_API_WEBHOOK: ${{ secrets.RAILWAY_API_WEBHOOK }}
+        run: |
+          set -euo pipefail
+          echo "Triggering Railway deploy for api..."
+          curl -fsSL -X POST "$RAILWAY_API_WEBHOOK"
+          echo
+          echo "Railway api redeploy triggered."
+
+  # ------------------------------------------------------------------
+  # 4. deploy-web — Vercel deploy hook. Like Railway's, the URL is
+  #    the credential; a single POST is enough to kick a redeploy.
+  # ------------------------------------------------------------------
+  deploy-web:
+    name: deploy-web (Vercel)
+    runs-on: ubuntu-latest
+    needs: test-all
+
+    steps:
+      - name: Trigger Vercel deploy hook
+        if: ${{ secrets.VERCEL_DEPLOY_HOOK != '' }}
+        env:
+          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          set -euo pipefail
+          echo "Triggering Vercel deploy for web..."
+          curl -fsSL -X POST "$VERCEL_DEPLOY_HOOK"
+          echo
+          echo "Vercel web redeploy triggered."
