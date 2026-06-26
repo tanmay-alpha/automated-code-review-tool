@@ -23,7 +23,7 @@ class GitHubServiceTest {
 
         assertThat(URI.create(url)).isNotNull();
         assertThat(url).contains("client_id=test-client");
-        assertThat(url).contains("redirect_uri=http://localhost:8080/api/auth/callback");
-        assertThat(url).contains("scope=read:user%20repo");
+        assertThat(url).contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fapi%2Fauth%2Fcallback");
+        assertThat(url).contains("scope=read%3Auser+repo");
     }
 }

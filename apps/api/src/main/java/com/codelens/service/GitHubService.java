@@ -13,6 +13,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -51,10 +53,9 @@ public class GitHubService {
     public String getOAuthRedirectUrl() {
         return UriComponentsBuilder.fromHttpUrl(OAUTH_AUTHORIZE_URL)
                 .queryParam("client_id", config.getClientId())
-                .queryParam("redirect_uri", config.getOauthRedirectUri())
-                .queryParam("scope", "read:user repo")
-                .build(true)   // strict encoding — encodes query param VALUES (colons, slashes, spaces)
-                .encode()
+                .queryParam("redirect_uri", URLEncoder.encode(config.getOauthRedirectUri(), StandardCharsets.UTF_8))
+                .queryParam("scope", URLEncoder.encode("read:user repo", StandardCharsets.UTF_8))
+                .build()
                 .toUriString();
     }
 
