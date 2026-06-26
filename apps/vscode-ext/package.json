@@ -31,7 +31,9 @@
   "activationEvents": [
     "onLanguage:python",
     "onLanguage:javascript",
+    "onLanguage:javascriptreact",
     "onLanguage:typescript",
+    "onLanguage:typescriptreact",
     "onLanguage:java",
     "workspaceContains:**/codelens.config.json"
   ],
@@ -84,6 +86,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
+    "package": "vsce package --no-dependencies",
     "watch": "tsc -watch -p ./",
     "lint": "echo 'no linter yet'",
     "test": "echo 'no tests yet'"
@@ -91,6 +94,7 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.9.2",
     "typescript": "^5.4.5"
   }
 }

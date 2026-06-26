@@ -13,11 +13,22 @@ public class AppConfig {
     /** Where to send the browser after a successful OAuth login. */
     private String frontendUrl = "http://localhost:3000";
 
+    /** Keep authentication cookies HTTPS-only outside local development. */
+    private boolean cookieSecure = true;
+
     public String getFrontendUrl() {
         return frontendUrl;
     }
 
     public void setFrontendUrl(String frontendUrl) {
         this.frontendUrl = frontendUrl;
+    }
+
+    public boolean isCookieSecure() {
+        return cookieSecure;
+    }
+
+    public void setCookieSecure(boolean cookieSecure) {
+        this.cookieSecure = cookieSecure;
     }
 }

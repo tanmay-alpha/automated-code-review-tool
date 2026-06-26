@@ -2,7 +2,7 @@
 -- Each key is bound to a user; only the lookup prefix is stored in cleartext,
 -- the full key is bcrypt-hashed.
 --
--- H2 test variant: PostgreSQL's `TIMESTAMPTZ` type is not recognized
+-- H2 test-only variant: PostgreSQL's `TIMESTAMPTZ` type is not recognized
 -- by H2 2.x in PG-compat mode — the canonical equivalent is
 -- `TIMESTAMP WITH TIME ZONE`. The H2 dialect stores this as the
 -- same value Postgres would, so application reads/writes via

@@ -8,8 +8,6 @@
 # Environment variables are loaded from .env at the repo root. See
 # ENGINEERING_PLAN.md §10 for a list of every variable.
 
-version: '3.9'
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -24,7 +22,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       # Optional: seed sample data on first run (only runs when the data
       # volume is empty — i.e. the very first time you bring up the stack).
-      - ./scripts/seed-db.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+      - ../scripts/seed-db.sql:/docker-entrypoint-initdb.d/seed.sql:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "codelens"]
       interval: 5s
@@ -49,7 +47,7 @@ services:
 
   ml-worker:
     build:
-      context: ./apps/ml-worker
+      context: ../apps/ml-worker
       dockerfile: Dockerfile
     container_name: codelens-ml-worker
     environment:
@@ -61,7 +59,7 @@ services:
     # NOTE: First startup is slow — model downloads ~500MB from HuggingFace.
     # After first run, model is cached in Docker volume.
     volumes:
-      - hf_cache:/root/.cache/huggingface
+      - hf_cache:/home/codelens/.cache/huggingface
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ml/health', timeout=2).status==200 else 1)"]
       interval: 30s
@@ -72,7 +70,7 @@ services:
 
   api:
     build:
-      context: ./apps/api
+      context: ../apps/api
       dockerfile: Dockerfile
     container_name: codelens-api
     environment:
@@ -88,6 +86,10 @@ services:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - ML_WORKER_URL=http://ml-worker:8000
       - ML_WORKER_SECRET=${ML_WORKER_SECRET}
+      - FRONTEND_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - COOKIE_SECURE=false
+      - APP_BASE_URL=${APP_BASE_URL:-http://localhost:8080}
+      - WEBHOOK_CALLBACK_URL=${WEBHOOK_CALLBACK_URL:-http://localhost:8080/api/webhook/github}
     ports:
       - "8080:8080"
     depends_on:
@@ -107,12 +109,14 @@ services:
 
   web:
     build:
-      context: ./apps/web
+      context: ../apps/web
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
     container_name: codelens-web
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
     ports:

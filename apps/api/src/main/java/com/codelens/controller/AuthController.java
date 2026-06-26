@@ -159,23 +159,24 @@ public class AuthController {
 
     // --- helpers -----------------------------------------------------------
 
-    private static ResponseCookie buildCookie(String name, String value, long maxAgeSeconds) {
-        // Secure=true so the browser only sends the cookie over HTTPS in prod.
+    private ResponseCookie buildCookie(String name, String value, long maxAgeSeconds) {
+        // Secure is configurable so local HTTP development can authenticate,
+        // while production keeps cookies restricted to HTTPS.
         // httpOnly=true so JS can't read it (XSS-resistant). SameSite=Lax so
         // top-level GET navigations (the OAuth callback) still work.
         return ResponseCookie.from(name, value)
                 .httpOnly(true)
-                .secure(true)
+                .secure(appConfig.isCookieSecure())
                 .sameSite("Lax")
                 .path("/")
                 .maxAge(Duration.ofSeconds(maxAgeSeconds))
                 .build();
     }
 
-    private static ResponseCookie clearCookie(String name) {
+    private ResponseCookie clearCookie(String name) {
         return ResponseCookie.from(name, "")
                 .httpOnly(true)
-                .secure(true)
+                .secure(appConfig.isCookieSecure())
                 .sameSite("Lax")
                 .path("/")
                 .maxAge(Duration.ZERO)
