@@ -52,6 +52,10 @@
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
 
         <!-- HTTP client (calls FastAPI ML worker) -->
         <dependency>
@@ -148,6 +152,7 @@
     </dependencies>
 
     <build>
+        <finalName>codelens-api</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

@@ -1,4 +1,4 @@
--- V2: add user-disposition tracking to findings (H2 test variant)
+-- V2: add user-disposition tracking to findings (H2 test-only variant)
 --
 -- Mirror of V2__findings_disposition.sql. The Postgres multi-column
 -- `ALTER TABLE ... ADD COLUMN IF NOT EXISTS (col1, col2, col3)`

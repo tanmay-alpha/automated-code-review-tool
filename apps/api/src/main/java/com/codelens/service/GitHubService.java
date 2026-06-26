@@ -54,6 +54,7 @@ public class GitHubService {
                 .queryParam("redirect_uri", config.getOauthRedirectUri())
                 .queryParam("scope", "read:user repo")
                 .build()
+                .encode()
                 .toUriString();
     }
 
