@@ -53,7 +53,7 @@ public class GitHubService {
                 .queryParam("client_id", config.getClientId())
                 .queryParam("redirect_uri", config.getOauthRedirectUri())
                 .queryParam("scope", "read:user repo")
-                .build()
+                .build(true)   // strict encoding — encodes query param VALUES (colons, slashes, spaces)
                 .encode()
                 .toUriString();
     }
