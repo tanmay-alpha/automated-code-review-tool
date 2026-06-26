@@ -11,6 +11,9 @@
 # Training accelerators / utilities
 accelerate==0.30.0
 evaluate==0.4.2
+datasets==2.19.0
+pandas==2.2.2
+scikit-learn==1.5.0
 
 # Experiment tracking / visualization
 tensorboard==2.16.2

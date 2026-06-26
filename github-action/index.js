@@ -1,81 +1,89 @@
 /**
  * CodeLens GitHub Action entrypoint.
  *
- * Flow:
- *   1. Read inputs (api-url, api-key, language, fail-threshold)
- *   2. Validate event is pull_request
- *   3. Fetch the diff via Octokit
- *   4. POST to ${apiUrl}/api/scan/action
- *   5. Surface findings as `core.warning` annotations
- *   6. Emit outputs and optionally fail the check
- *
- * No external test framework dependencies — runs in the GitHub-hosted
- * runner with Node 20+ and `@actions/*` already on the npm cache.
+ * Fetches the pull-request diff, submits it to the ad-hoc file scan API,
+ * emits annotations and outputs, and enforces the configured quality gate.
  */
 
-const core = require('@actions/core');
-const github = require('@actions/github');
+import * as core from '@actions/core';
+import * as github from '@actions/github';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** @typedef {{antiPattern:string,severity:string,confidence:number,explanation:string,filePath?:string,lineStart?:number|null,lineEnd?:number|null,category?:string}} FindingDto */
 
-async function run() {
-  try {
-    const apiUrl = (core.getInput('api-url') || '').trim().replace(/\/+$/, '');
-    const apiKey = (core.getInput('api-key') || '').trim();
-    const language = (core.getInput('language') || 'python').trim();
-    const failThreshold = Number.parseInt(core.getInput('fail-threshold') || '60', 10);
+async function run(deps = {}) {
+  const coreApi = deps.core || core;
+  const githubApi = deps.github || github;
+  const fetchApi = deps.fetch || fetch;
 
-    if (!apiUrl) return core.setFailed('Missing required input: api-url');
-    if (!apiKey) return core.setFailed('Missing required input: api-key');
+  try {
+    const apiUrl = (coreApi.getInput('api-url') || '').trim().replace(/\/+$/, '');
+    const apiKey = (coreApi.getInput('api-key') || '').trim();
+    const language = (coreApi.getInput('language') || 'python').trim();
+    const failThreshold = Number.parseInt(
+      coreApi.getInput('fail-threshold') || '60',
+      10,
+    );
+
+    if (!apiUrl) return coreApi.setFailed('Missing required input: api-url');
+    if (!apiKey) return coreApi.setFailed('Missing required input: api-key');
     if (Number.isNaN(failThreshold) || failThreshold < 0 || failThreshold > 100) {
-      return core.setFailed(`Invalid fail-threshold: must be 0-100, got ${failThreshold}`);
+      return coreApi.setFailed(
+        `Invalid fail-threshold: must be 0-100, got ${failThreshold}`,
+      );
     }
     if (!/^https?:\/\//i.test(apiUrl)) {
-      return core.setFailed(`api-url must start with http(s):// — got: ${apiUrl}`);
+      return coreApi.setFailed(`api-url must start with http(s)://; got: ${apiUrl}`);
     }
 
-    const context = github.context;
+    const context = githubApi.context;
     if (context.eventName !== 'pull_request') {
-      core.info(`Event is "${context.eventName}" — CodeLens only runs on pull_request. Skipping.`);
+      coreApi.info(
+        `Event is "${context.eventName}"; CodeLens only runs on pull_request. Skipping.`,
+      );
       return;
     }
 
     const prNumber = context.payload.pull_request?.number;
     if (!prNumber) {
-      return core.setFailed('Could not read pull_request.number from event payload');
+      return coreApi.setFailed('Could not read pull_request.number from event payload');
     }
+
     const repoFullName = `${context.repo.owner}/${context.repo.repo}`;
-    const githubToken = process.env.GITHUB_TOKEN;
+    coreApi.info(
+      `CodeLens: scanning ${repoFullName}#${prNumber} (language=${language})`,
+    );
 
-    core.info(`CodeLens: scanning ${repoFullName}#${prNumber} (language=${language})`);
-
-    // 1. Pull the diff from GitHub.
-    const octokit = github.getOctokit(githubToken);
+    const octokit = githubApi.getOctokit(process.env.GITHUB_TOKEN);
     const { data: diff } = await octokit.rest.pulls.get({
       owner: context.repo.owner,
       repo: context.repo.repo,
       pull_number: prNumber,
       mediaType: { format: 'diff' },
     });
-    if (!diff || typeof diff !== 'string' || diff.length === 0) {
-      core.warning('Empty diff returned from GitHub — nothing to scan.');
+    if (!diff || typeof diff !== 'string') {
+      coreApi.warning('Empty diff returned from GitHub; nothing to scan.');
       return;
     }
 
-    // 2. Call the CodeLens API.
-    const response = await fetch(`${apiUrl}/api/scan/action`, {
+    const response = await fetchApi(`${apiUrl}/api/scan/file`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({ diff, repoFullName, prNumber, language }),
+      body: JSON.stringify({
+        content: diff,
+        language,
+        filePath: `${repoFullName}#${prNumber}`,
+      }),
     });
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      return core.setFailed(
+      return coreApi.setFailed(
         `CodeLens API returned HTTP ${response.status}: ${text.slice(0, 500)}`,
       );
     }
@@ -86,64 +94,63 @@ async function run() {
     const qualityScore =
       typeof result.qualityScore === 'number' ? result.qualityScore : null;
 
-    // 3. Emit findings as GitHub annotations.
     let criticalCount = 0;
     let majorCount = 0;
     let minorCount = 0;
-    for (const f of findings) {
-      const sev = (f.severity || '').toLowerCase();
-      if (sev === 'critical') criticalCount++;
-      else if (sev === 'major') majorCount++;
-      else if (sev === 'minor') minorCount++;
+    for (const finding of findings) {
+      const severity = (finding.severity || '').toLowerCase();
+      if (severity === 'critical') criticalCount++;
+      else if (severity === 'major') majorCount++;
+      else if (severity === 'minor') minorCount++;
 
-      const title = `${f.antiPattern || 'Anti-pattern'} (${sev || 'unknown'})`;
+      const title = `${finding.antiPattern || 'Anti-pattern'} (${severity || 'unknown'})`;
       const body = [
-        f.explanation || '',
-        `confidence: ${Math.round((f.confidence || 0) * 100)}%`,
+        finding.explanation || '',
+        `confidence: ${Math.round((finding.confidence || 0) * 100)}%`,
       ]
         .filter(Boolean)
         .join('\n');
 
-      if (f.lineStart) {
-        // Inline annotation on the diff.
-        const annotationProps = {
-          file: f.filePath || '',
-          startLine: f.lineStart,
-          endLine: f.lineEnd || f.lineStart,
+      if (finding.lineStart) {
+        const annotation = {
+          file: finding.filePath || '',
+          startLine: finding.lineStart,
+          endLine: finding.lineEnd || finding.lineStart,
           title,
         };
-        if (sev === 'critical') core.error(body, annotationProps);
-        else if (sev === 'major') core.warning(body, annotationProps);
-        else core.notice(body, annotationProps);
+        if (severity === 'critical') coreApi.error(body, annotation);
+        else if (severity === 'major') coreApi.warning(body, annotation);
+        else coreApi.notice(body, annotation);
+      } else if (severity === 'critical') {
+        coreApi.error(`${title}\n${body}`);
       } else {
-        // File-level annotation (no line info).
-        if (sev === 'critical') core.error(`${title}\n${body}`);
-        else core.warning(`${title}\n${body}`);
+        coreApi.warning(`${title}\n${body}`);
       }
     }
 
-    // 4. Set outputs.
-    core.setOutput('quality-score', qualityScore == null ? '' : String(qualityScore));
-    core.setOutput('findings-count', String(findings.length));
-    core.setOutput('critical-count', String(criticalCount));
+    coreApi.setOutput('quality-score', qualityScore == null ? '' : String(qualityScore));
+    coreApi.setOutput('findings-count', String(findings.length));
+    coreApi.setOutput('critical-count', String(criticalCount));
+    coreApi.info(
+      [
+        `CodeLens complete: ${repoFullName}#${prNumber}`,
+        `Quality score: ${qualityScore == null ? 'n/a' : `${qualityScore}/100`}`,
+        `Findings: ${findings.length} total (${criticalCount} critical, ${majorCount} major, ${minorCount} minor)`,
+      ].join('\n'),
+    );
 
-    const summary = [
-      `CodeLens complete: ${repoFullName}#${prNumber}`,
-      `Quality score: ${qualityScore == null ? 'n/a' : `${qualityScore}/100`}`,
-      `Findings: ${findings.length} total (${criticalCount} critical, ${majorCount} major, ${minorCount} minor)`,
-    ].join('\n');
-    core.info(summary);
-
-    // 5. Optional failure.
     if (qualityScore != null && qualityScore < failThreshold) {
-      core.setFailed(
+      coreApi.setFailed(
         `Quality score ${qualityScore}/100 is below threshold ${failThreshold}/100`,
       );
     }
   } catch (err) {
-    // @actions/core's setFailed is itself safe to call from anywhere.
-    core.setFailed(err instanceof Error ? err.message : String(err));
+    coreApi.setFailed(err instanceof Error ? err.message : String(err));
   }
 }
 
-run();
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  void run();
+}
+
+export { run };

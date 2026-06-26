@@ -181,6 +181,13 @@ next-env.d.ts
 dist/
 build/
 *.tsbuildinfo
+*.vsix
+
+# The GitHub Action must commit its self-contained runtime bundle.
+!github-action/dist/
+!github-action/dist/index.js
+!github-action/dist/licenses.txt
+!github-action/dist/package.json
 
 # Coverage
 coverage/

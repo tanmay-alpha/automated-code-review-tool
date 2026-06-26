@@ -19,7 +19,9 @@ import { scanOnSave } from "./config";
 const SUPPORTED_LANGUAGES = new Set<string>([
   "python",
   "javascript",
+  "javascriptreact",
   "typescript",
+  "typescriptreact",
   "java",
 ]);
 
@@ -54,6 +56,25 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       await scanFile(editor.document, diagnosticCollection);
+    }),
+  );
+
+  // Workspace scan command advertised in package.json.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codelens.scanWorkspace", async () => {
+      const files = await vscode.workspace.findFiles(
+        "**/*.{py,js,jsx,ts,tsx,java}",
+        "**/{.git,node_modules,out,dist,build}/**",
+      );
+      for (const uri of files) {
+        const doc = await vscode.workspace.openTextDocument(uri);
+        if (SUPPORTED_LANGUAGES.has(doc.languageId)) {
+          await scanFile(doc, diagnosticCollection);
+        }
+      }
+      void vscode.window.showInformationMessage(
+        `CodeLens: scanned ${files.length} workspace file${files.length === 1 ? "" : "s"}.`,
+      );
     }),
   );
 

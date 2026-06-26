@@ -5,14 +5,19 @@ import com.codelens.security.AuthRateLimitFilter;
 import com.codelens.security.JwtAuthFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 /**
  * Stateless security configuration.
@@ -38,23 +43,28 @@ import org.springframework.web.reactive.function.client.WebClient;
  */
 @Configuration
 @EnableWebSecurity
+@EnableConfigurationProperties(AppConfig.class)
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final ApiKeyAuthFilter apiKeyAuthFilter;
     private final AuthRateLimitFilter authRateLimitFilter;
+    private final AppConfig appConfig;
 
     public SecurityConfig(JwtAuthFilter jwtAuthFilter,
                           ApiKeyAuthFilter apiKeyAuthFilter,
-                          AuthRateLimitFilter authRateLimitFilter) {
+                          AuthRateLimitFilter authRateLimitFilter,
+                          AppConfig appConfig) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.apiKeyAuthFilter = apiKeyAuthFilter;
         this.authRateLimitFilter = authRateLimitFilter;
+        this.appConfig = appConfig;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+                .cors(Customizer.withDefaults())
                 .csrf(csrf -> csrf.disable())
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())
@@ -82,8 +92,16 @@ public class SecurityConfig {
     }
 
     @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(List.of(appConfig.getFrontendUrl()));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept"));
+        configuration.setAllowCredentials(true);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
     }
 
     @Bean

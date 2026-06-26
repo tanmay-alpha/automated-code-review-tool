@@ -36,15 +36,17 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
-          cache-dependency-path: apps/ml-worker/requirements.txt
+          cache-dependency-path: |
+            apps/ml-worker/requirements.txt
+            apps/ml-worker/requirements-test.txt
 
       - name: Install dependencies
         working-directory: apps/ml-worker
         run: |
           python -m pip install --upgrade pip
-          # requirements.txt is the runtime deps; tests depend on pytest etc.
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx
+          # Install the CPU-only torch wheel before the complete test set.
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1+cpu
+          pip install -r requirements-test.txt
 
       - name: Run unit tests (skip @pytest.mark.slow)
         working-directory: apps/ml-worker
