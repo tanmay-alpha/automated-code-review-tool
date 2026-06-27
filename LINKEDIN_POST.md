@@ -22,7 +22,7 @@ What I built:
 
 Tech stack: Java · Python · TypeScript · Spring Boot · FastAPI · PostgreSQL · Redis · HuggingFace · Docker
 
-119+ commits. 20 GitHub issues. 8 weeks of engineering.
+137 commits. 20 GitHub issues. 8 weeks of engineering.
 
 → GitHub: github.com/tanmay-alpha/codelens
 
