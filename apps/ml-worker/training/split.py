@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import random
 import sys
+import hashlib
 from collections import defaultdict
 from pathlib import Path
 
@@ -217,6 +218,22 @@ def main() -> int:
         print("No samples found. Run scripts/download-dataset.sh first.")
         return 1
     print(f"Loaded {len(rows)} raw samples (with PR IDs).")
+
+    # Content-based deduplication to prevent train/test leakage
+    dedup_rows = []
+    seen = set()
+    dup_count = 0
+    for pr_id, sample in rows:
+        # Create a hash of the content (diff + comment)
+        content = (sample.get("diff") or "") + (sample.get("comment") or "")
+        h = hashlib.md5(content.encode("utf-8")).hexdigest()
+        if h in seen:
+            dup_count += 1
+            continue
+        seen.add(h)
+        dedup_rows.append((pr_id, sample))
+    print(f"Deduplicated {dup_count} duplicate samples. Unique samples: {len(dedup_rows)}")
+    rows = dedup_rows
 
     # Group by PR and split at PR level.
     grouped = _group_by_pr(rows)

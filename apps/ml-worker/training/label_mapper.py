@@ -173,6 +173,10 @@ def _load_raw_samples(raw_data_dir: str | Path) -> list[dict]:
     return samples
 
 
+class LabeledList(list):
+    """Custom list subclass that allows stashing stats attributes."""
+    pass
+
 def filter_and_label_dataset(raw_data_dir: str) -> list[dict]:
     """
     Load raw data, filter, label, and return list[dict] of:
@@ -185,7 +189,7 @@ def filter_and_label_dataset(raw_data_dir: str) -> list[dict]:
     """
     raw_samples = _load_raw_samples(raw_data_dir)
 
-    filtered: list[dict] = []
+    filtered = LabeledList()
     drop_short = 0
     drop_nit = 0
     drop_unlabeled = 0
