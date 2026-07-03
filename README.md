@@ -30,23 +30,23 @@ These aren't syntax problems — they're *semantic* problems. CodeLens learns fr
                          ┌──────────────────────────┐
                          │       User Surfaces      │
                          ├──────────────────────────┤
-                         │  Next.js Dashboard│
+                         │  Next.js Dashboard       │
                          │  VS Code Extension       │
                          │  GitHub Action           │
                          └────────────┬─────────────┘
                                       │ HTTPS
                                       ▼
                          ┌──────────────────────────┐
-                         │   Spring Boot API │
+                         │   Spring Boot API        │
                          │  Java 21 · JWT · JPA     │
                          │  GitHub OAuth · Webhooks │
                          └────┬───────────────┬─────┘
                               │               │
-                       JPA   │               │ HTTP (internal)
+                       JPA    │               │ HTTP (internal)
                               ▼               ▼
                     ┌──────────────────┐  ┌──────────────────┐
                     │  PostgreSQL 16   │  │  FastAPI ML      │
-                    │  Redis 7 cache   │  │  Worker   │
+                    │  Redis 7 cache   │  │  Worker          │
                     └──────────────────┘  │  CodeBERT model  │
                                          └────────┬─────────┘
                                                   │ HTTPS
@@ -56,6 +56,75 @@ These aren't syntax problems — they're *semantic* problems. CodeLens learns fr
                                          │  (model storage) │
                                          └──────────────────┘
 ```
+
+### 📐 System Topology
+
+```mermaid
+graph TD
+    UserSurface["User Surfaces (Dashboard / VS Code / GitHub Action)"]
+    Gateway["Spring Boot Gateway (Java 21)"]
+    DB[(PostgreSQL 16)]
+    Cache[(Redis 7)]
+    MLWorker["FastAPI ML Worker (Python 3.11)"]
+    HFRepo[("HuggingFace Model Hub")]
+
+    UserSurface -->|HTTPS API Requests / cookies / API Keys| Gateway
+    Gateway -->|JPA Persistence| DB
+    Gateway -->|Rate Limits & RTR Sessions| Cache
+    Gateway -->|HTTP REST Client| MLWorker
+    MLWorker -->|Pulls model checkpoint| HFRepo
+```
+
+---
+
+## 🛡️ Webhook Review & ML Pipeline Workflow
+
+Here is the end-to-end event sequence when a developer triggers a review (e.g. by opening a Pull Request on a monitored GitHub repository):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Developer
+    participant GitHub as GitHub Webhook
+    participant Gateway as Spring Boot API
+    participant DB as Postgres & Redis
+    participant MLWorker as FastAPI ML Worker
+    participant Model as CodeBERT Classifier
+
+    Developer->>GitHub: Pushes code / Opens PR
+    GitHub->>Gateway: POST /api/webhook/github (HMAC Signature + Delivery ID)
+    rect rgb(240, 248, 255)
+        Note over Gateway,DB: Check Signature & Idempotency
+        Gateway->>Gateway: Verify SHA-256 HMAC Signature
+        Gateway->>DB: Query processed_webhooks (exists check)
+        DB-->>Gateway: Exists (Skip) or Not Exists (Save & Proceed)
+    end
+    Gateway-->>GitHub: HTTP 200 OK (Immediate response)
+    
+    rect rgb(255, 240, 245)
+        Note over Gateway,MLWorker: Asynchronous PR Scanning (ThreadPoolTaskExecutor)
+        Gateway->>GitHub: GET PR Diff file (using decrypted OAuth Token)
+        GitHub-->>Gateway: Code Diff Payload
+        Gateway->>MLWorker: POST /ml/predict (Raw Diff Content)
+        MLWorker->>MLWorker: Parse Diff into segments
+        MLWorker->>MLWorker: Tokenize with Overlapping Sliding Window (512 tokens)
+        MLWorker->>Model: Forward pass / Logits extraction
+        Model-->>MLWorker: Sigmoid Probabilities per category
+        MLWorker-->>Gateway: Categories & Confidence Scores
+    end
+
+    Gateway->>DB: Save Scan PullRequestEntity & MlFindings
+    Gateway->>GitHub: POST /repos/{repo}/issues/{number}/comments (Quality Report)
+```
+
+### 🔍 Pipeline Stages Explained
+
+1. **Authentication & HMAC signature validation:** Every GitHub webhook is verified using constant-time SHA-256 HMAC comparisons (combating timing side-channel attacks) against the repository's registered secret.
+2. **Stateful Idempotency:** Webhook event deliveries are tracked in Redis and PostgreSQL (`processed_webhooks`) using the unique `X-GitHub-Delivery` ID to completely eliminate replay attacks and redundant model runs.
+3. **Asynchronous Dispatch:** To prevent GitHub timeout errors, the API immediately returns `200 OK`. The actual PR diff retrieval and ML worker orchestration are dispatched to a configured Spring Boot `ThreadPoolTaskExecutor` thread pool.
+4. **Diff Segmentation & Sliding Window:** Large PR diffs are segmented in python. Because CodeBERT has a 512-token sequence limit, CodeLens implements an overlapping stride window tokenization loop on CPU.
+5. **Model Inference:** The FastAPI worker hosts the fine-tuned CodeBERT model (binary-classification heads for 6 categories: `SECURITY`, `PERFORMANCE`, `ARCHITECTURE`, `RELIABILITY`, `READABILITY`, and `MAINTAINABILITY`).
+6. **Reporting:** Results are aggregated, quality scores are calculated using severity multipliers, and comments are posted directly to the PR issues page.
 
 ---
 
