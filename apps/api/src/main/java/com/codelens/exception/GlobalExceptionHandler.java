@@ -94,6 +94,11 @@ public class GlobalExceptionHandler {
         return cv.getPropertyPath() + ": " + cv.getMessage();
     }
 
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleResponseStatus(org.springframework.web.server.ResponseStatusException ex) {
+        return body(HttpStatus.valueOf(ex.getStatusCode().value()), "UNAUTHORIZED", ex.getReason());
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleAll(Exception ex) {
         log.error("Unhandled exception", ex);

@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.net.URI;
 import java.time.Duration;
@@ -54,17 +55,20 @@ public class AuthController {
     private final JwtService jwtService;
     private final AppConfig appConfig;
     private final JwtConfig jwtConfig;
+    private final StringRedisTemplate redis;
 
     public AuthController(GitHubService githubService,
                           UserService userService,
                           JwtService jwtService,
                           AppConfig appConfig,
-                          JwtConfig jwtConfig) {
+                          JwtConfig jwtConfig,
+                          StringRedisTemplate redis) {
         this.githubService = githubService;
         this.userService = userService;
         this.jwtService = jwtService;
         this.appConfig = appConfig;
         this.jwtConfig = jwtConfig;
+        this.redis = redis;
     }
 
     /**
@@ -97,6 +101,13 @@ public class AuthController {
         User user = userService.findOrCreateFromGitHub(info, token.accessToken());
         String access = jwtService.generateAccessToken(user.getId(), user.getGithubUsername());
         String refresh = jwtService.generateRefreshToken(user.getId());
+
+        try {
+            redis.opsForValue().set("session:refresh:" + user.getId(), refresh, Duration.ofSeconds(jwtConfig.getRefreshTokenExpiry()));
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(AuthController.class).warn("Failed to save initial refresh token in Redis: {}", e.getMessage());
+        }
+
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(appConfig.getFrontendUrl() + "/dashboard"))
                 .header(HttpHeaders.SET_COOKIE, buildCookie(ACCESS_TOKEN_COOKIE, access, jwtConfig.getAccessTokenExpiry()).toString())
@@ -112,8 +123,7 @@ public class AuthController {
     }
 
     /**
-     * Trade a valid refresh cookie for a fresh access-token cookie.
-     * We do not rotate the refresh token here — keep MVP simple.
+     * Trade a valid refresh cookie for a fresh access-token cookie and a rotated refresh-token cookie.
      */
     @PostMapping("/refresh")
     public ResponseEntity<Void> refresh(HttpServletRequest request) {
@@ -129,10 +139,33 @@ public class AuthController {
             UUID userId = UUID.fromString(claims.getSubject());
             User user = userService.findById(userId)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unknown user"));
+            
+            try {
+                String current = redis.opsForValue().get("session:refresh:" + userId);
+                if (current == null || !current.equals(refreshToken)) {
+                    redis.delete("session:refresh:" + userId);
+                    throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "refresh token reused or invalid");
+                }
+            } catch (ResponseStatusException rse) {
+                throw rse;
+            } catch (Exception e) {
+                org.slf4j.LoggerFactory.getLogger(AuthController.class).warn("Redis failure during refresh token check: {}; falling back to stateless", e.getMessage());
+            }
+
             String newAccess = jwtService.generateAccessToken(user.getId(), user.getGithubUsername());
+            String newRefresh = jwtService.generateRefreshToken(user.getId());
+
+            try {
+                redis.opsForValue().set("session:refresh:" + userId, newRefresh, Duration.ofSeconds(jwtConfig.getRefreshTokenExpiry()));
+            } catch (Exception e) {
+                org.slf4j.LoggerFactory.getLogger(AuthController.class).warn("Failed to rotate refresh token in Redis: {}", e.getMessage());
+            }
+
             return ResponseEntity.ok()
                     .header(HttpHeaders.SET_COOKIE,
                             buildCookie(ACCESS_TOKEN_COOKIE, newAccess, jwtConfig.getAccessTokenExpiry()).toString())
+                    .header(HttpHeaders.SET_COOKIE,
+                            buildCookie(REFRESH_TOKEN_COOKIE, newRefresh, jwtConfig.getRefreshTokenExpiry()).toString())
                     .build();
         } catch (JwtException ex) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid refresh token");
