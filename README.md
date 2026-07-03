@@ -1,16 +1,15 @@
-# CodeLens 🔍
-
-![CI API](https://github.com/tanmay-alpha/codelens/actions/workflows/ci-api.yml/badge.svg)
-![CI ML Worker](https://github.com/tanmay-alpha/codelens/actions/workflows/ci-ml-worker.yml/badge.svg)
-![CI Web](https://github.com/tanmay-alpha/codelens/actions/workflows/ci-web.yml/badge.svg)
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Java](https://img.shields.io/badge/Java-21-orange)
-![Python](https://img.shields.io/badge/Python-3.11-blue)
-![Rust-ready](https://img.shields.io/badge/Rust-CLI%20ready-black)
-
-> **Semantic code review. Catches what linters miss.**
-
----
+<div align="center" style="background: linear-gradient(135deg, #1e1e3f 0%, #0c0c14 100%); padding: 45px 30px; border-radius: 24px; border: 1px solid #2d2d5a; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4); margin-bottom: 30px;">
+  <h1 style="color: #ffffff; font-family: 'Outfit', sans-serif; font-size: 3.25rem; margin: 0; text-shadow: 0 4px 12px rgba(0,0,0,0.6); font-weight: 800; letter-spacing: -1.5px; border-bottom: none;">CodeLens 🔍</h1>
+  <p style="color: #a0a0d0; font-size: 1.3rem; font-weight: 400; margin-top: 12px; margin-bottom: 25px; font-family: 'Inter', sans-serif; line-height: 1.5;">Semantic Automated Code Reviews Powered by Fine-tuned CodeBERT</p>
+  <div style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;">
+    <a href="https://github.com/tanmay-alpha/codelens/actions"><img src="https://github.com/tanmay-alpha/codelens/actions/workflows/ci-api.yml/badge.svg" alt="CI API" /></a>
+    <a href="https://github.com/tanmay-alpha/codelens/actions"><img src="https://github.com/tanmay-alpha/codelens/actions/workflows/ci-ml-worker.yml/badge.svg" alt="CI ML Worker" /></a>
+    <a href="https://github.com/tanmay-alpha/codelens/actions"><img src="https://github.com/tanmay-alpha/codelens/actions/workflows/ci-web.yml/badge.svg" alt="CI Web" /></a>
+    <img src="https://img.shields.io/badge/Java-21-orange?style=flat-square&logo=openjdk&logoColor=white" alt="Java" />
+    <img src="https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python&logoColor=white" alt="Python" />
+    <img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="License" />
+  </div>
+</div>
 
 ## ❌ The Problem
 
