@@ -1,0 +1,221 @@
+{
+  "_warning": "DO NOT EVALUATE AGAINST THIS FILE UNTIL FINAL EVALUATION. This is the held-out test set. It exists in the repo so the team can verify it is real, but it must not be opened, read, sampled, or used for any model-selection decisions.",
+  "data": [
+    {
+      "diff": "+try:\n+    do_something()\n+except:\n+    pass",
+      "comment": "Please fix this: sql injection vulnerability. This is crucial for codebase health.",
+      "labels": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+const TIMEOUT = 86400;\n+let val = x * 4.25;",
+      "comment": "Please fix this: layer separation design. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+if (a) {\n+    if (b) {\n+        if (c) {\n+            if (d) {\n+                do_work();\n+            }\n+        }\n+    }\n+}",
+      "comment": "Please fix this: god class violates single responsibility. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+def process_data(user):\n+    for u in users:\n+        posts = Post.where(user=u)\n+    return posts",
+      "comment": "Please fix this: layer separation design. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+password = 'cl_live_abc123xyz789'\n+api_key = 'sk-live-randomkey'",
+      "comment": "Please fix this: magic number with unclear meaning. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        0,
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "diff": "+password = 'cl_live_abc123xyz789'\n+api_key = 'sk-live-randomkey'",
+      "comment": "Please fix this: duplicate copy-paste code. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "diff": "+const TIMEOUT = 86400;\n+let val = x * 4.25;",
+      "comment": "Please fix this: api_key. This is crucial for codebase health.",
+      "labels": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+const TIMEOUT = 86400;\n+let val = x * 4.25;",
+      "comment": "Please fix this: misleading variable naming. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        0,
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "diff": "+class LargeGodClass:\n+    def do_everything(self):\n+        pass\n+    def do_other_things(self):\n+        pass",
+      "comment": "Please fix this: null check validation exception. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        0,
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+const TIMEOUT = 86400;\n+let val = x * 4.25;",
+      "comment": "Please fix this: bare except block catches everything. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        0,
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+const TIMEOUT = 86400;\n+let val = x * 4.25;",
+      "comment": "Please fix this: nested loop is very slow. This is crucial for codebase health.",
+      "labels": [
+        0,
+        1,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+try:\n+    do_something()\n+except:\n+    pass",
+      "comment": "Please fix this: magic number with unclear meaning. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        0,
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "diff": "+if (a) {\n+    if (b) {\n+        if (c) {\n+            if (d) {\n+                do_work();\n+            }\n+        }\n+    }\n+}",
+      "comment": "Please fix this: layer separation design. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+class LargeGodClass:\n+    def do_everything(self):\n+        pass\n+    def do_other_things(self):\n+        pass",
+      "comment": "Please fix this: layer separation design. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+try:\n+    do_something()\n+except:\n+    pass",
+      "comment": "Please fix this: duplicate copy-paste code. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "diff": "+try:\n+    do_something()\n+except:\n+    pass",
+      "comment": "Please fix this: resource leak unclosed. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        0,
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+password = 'cl_live_abc123xyz789'\n+api_key = 'sk-live-randomkey'",
+      "comment": "Please fix this: bare except block catches everything. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        0,
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "diff": "+def process_data(user):\n+    for u in users:\n+        posts = Post.where(user=u)\n+    return posts",
+      "comment": "Please fix this: duplicate copy-paste code. This is crucial for codebase health.",
+      "labels": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  ]
+}
