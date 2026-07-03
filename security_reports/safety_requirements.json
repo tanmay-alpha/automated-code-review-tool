@@ -1,0 +1,4 @@
+C:\Users\TANMAY\AppData\Local\Programs\Python\Python311\Lib\site-packages\safety\auth\main.py:8: AuthlibDeprecationWarning: authlib.jose module is deprecated, please use joserfc instead.
+It will be compatible before version 2.0.0.
+  from authlib.jose import jwt
+Unhandled exception happened: post_dump() got an unexpected keyword argument 'pass_many'
