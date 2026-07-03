@@ -8,6 +8,8 @@ import com.codelens.security.JwtService;
 import com.codelens.service.GitHubService;
 import com.codelens.service.UserService;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpHeaders;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.cors.CorsConfiguration;
@@ -51,10 +53,13 @@ class LocalWebSecurityTest {
         assertThat(oauthCookies(true)).allMatch(cookie -> cookie.contains("; Secure"));
     }
 
+    @SuppressWarnings("unchecked")
     private static List<String> oauthCookies(boolean secure) {
         GitHubService githubService = mock(GitHubService.class);
         UserService userService = mock(UserService.class);
         JwtService jwtService = mock(JwtService.class);
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOps = mock(ValueOperations.class);
 
         AppConfig appConfig = new AppConfig();
         appConfig.setCookieSecure(secure);
@@ -71,6 +76,7 @@ class LocalWebSecurityTest {
         GitHubTokenResponse token = new GitHubTokenResponse("gh-token", "bearer", "repo");
         GitHubUserInfo info = new GitHubUserInfo(123L, "alice", null);
 
+        when(redis.opsForValue()).thenReturn(valueOps);
         when(githubService.exchangeCodeForToken("oauth-code")).thenReturn(token);
         when(githubService.getCurrentUser("gh-token")).thenReturn(info);
         when(userService.findOrCreateFromGitHub(info, "gh-token")).thenReturn(user);
@@ -78,7 +84,7 @@ class LocalWebSecurityTest {
         when(jwtService.generateRefreshToken(user.getId())).thenReturn("refresh-jwt");
 
         AuthController controller = new AuthController(
-                githubService, userService, jwtService, appConfig, jwtConfig);
+                githubService, userService, jwtService, appConfig, jwtConfig, redis);
         return controller.oauthCallback("oauth-code").getHeaders().get(HttpHeaders.SET_COOKIE);
     }
 }
