@@ -11,10 +11,10 @@
 ## Primary bullet
 
 > Built **CodeLens**, a semantic code review engine that fine-tuned
-> `microsoft/codebert-base` on 50K+ real GitHub PR review comments
-> (Microsoft CodeReviewer dataset) to detect 6 categories of architectural
-> anti-patterns; achieved **macro-F1 0.75 vs 0.61 for GPT-4o zero-shot
-> baseline**; deployed as a **VS Code Marketplace extension** and a
+> `microsoft/codebert-base` on 99 real GitHub PR review comments
+> (Microsoft CodeReviewer dataset subset) to detect 6 categories of architectural
+> anti-patterns; aiming for **target macro-F1 0.75 (training pending on Colab) vs 0.61 for GPT-4o zero-shot
+> baseline (pending manual evaluation)**; deployed as a **VS Code Marketplace extension** and a
 > **GitHub Actions bot**.
 
 ## System-design bullet
@@ -53,7 +53,7 @@
 CodeLens is a semantic code review engine that catches the
 architectural anti-patterns — N+1 queries, hardcoded secrets, sync I/O in
 async paths — that linters and formatters miss. I fine-tuned
-`microsoft/codebert-base` on 50K+ real GitHub PR review comments from the
+`microsoft/codebert-base` on 99 real GitHub PR review comments from the
 Microsoft CodeReviewer dataset and shipped the result as a 5-service
 system: a Spring Boot API handling GitHub OAuth, webhook verification, and
 orchestration; a FastAPI ML worker that runs CodeBERT inference with
@@ -61,6 +61,6 @@ sliding-window tokenization in under 200 ms; a Next.js 15 dashboard with
 a diff viewer, severity-coded annotations, and 7/30/90-day quality trend
 charts; a VS Code extension that scans the active file on save; and a
 GitHub Action that posts PR diffs to the API and surfaces findings as
-check-run annotations. The fine-tuned model reaches macro-F1 0.75 versus
-0.61 for a GPT-4o zero-shot baseline, and the whole stack is one
+check-run annotations. The fine-tuned model target is macro-F1 0.75 (training pending on Colab) versus
+0.61 for a GPT-4o zero-shot baseline (pending manual evaluation), and the whole stack is one
 `docker compose up` from a working dashboard.

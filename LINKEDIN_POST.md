@@ -6,11 +6,11 @@ The problem: ESLint and pylint catch syntax errors. But they miss:
 ❌ God classes with 15 unrelated responsibilities
 ❌ Hardcoded API keys inside business logic branches
 
-My solution: fine-tuned microsoft/codebert-base on 50,000+ real GitHub PR review comments to detect 6 categories of architectural anti-patterns.
+My solution: fine-tuned microsoft/codebert-base on 99 real GitHub PR review comments (Microsoft CodeReviewer subset) to detect 6 categories of architectural anti-patterns.
 
 Results:
-✅ Macro-F1: 0.75 (vs 0.61 for GPT-4o zero-shot on same test set)
-✅ 14-point improvement over prompting a large model
+✅ Target Macro-F1: 0.75 (training pending on Colab; baseline target 0.61 for GPT-4o zero-shot)
+✅ Latency win over calling a large model
 ✅ Sub-200ms inference latency
 
 What I built:
