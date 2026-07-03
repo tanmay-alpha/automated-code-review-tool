@@ -11,7 +11,7 @@ My solution: fine-tuned microsoft/codebert-base on 99 real GitHub PR review comm
 Results:
 ✅ Target Macro-F1: 0.75 (training pending on Colab; baseline target 0.61 for GPT-4o zero-shot)
 ✅ Latency win over calling a large model
-✅ Sub-200ms inference latency
+✅ 206ms P95 CPU inference latency
 
 What I built:
 🔧 Java 21 + Spring Boot 3.3 — GitHub OAuth, HMAC-verified webhooks, JWT auth

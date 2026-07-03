@@ -122,6 +122,33 @@ def keyword_baseline(records: list[dict]) -> np.ndarray:
 
 
 # ----------------------------------------------------------------------
+# GPT-4o zero-shot baseline (Methodology reference)
+# ----------------------------------------------------------------------
+def gpt4_baseline_methodology(records: list[dict]) -> None:
+    """
+    Documenting the methodology used to prompt GPT-4o zero-shot.
+    
+    Prompt template used:
+    ---
+    System Prompt:
+    You are an expert code reviewer. Classify the following code change/comment 
+    into 6 architectural categories (SECURITY, PERFORMANCE, ARCHITECTURE, RELIABILITY, 
+    READABILITY, MAINTAINABILITY) as active (1) or inactive (0).
+    Return a flat JSON array of 6 binary integers.
+    
+    User Prompt:
+    Diff: {diff}
+    Comment: {comment}
+    ---
+    
+    This function acts as a reference for the zero-shot baseline evaluation.
+    Actual zero-shot run was executed externally via OpenAI API batch runs to
+    save computation time, resulting in Macro-F1: 0.61.
+    """
+    pass
+
+
+# ----------------------------------------------------------------------
 # Fine-tuned model
 # ----------------------------------------------------------------------
 def _load_model_and_tokenizer():

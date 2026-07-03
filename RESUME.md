@@ -22,7 +22,7 @@
 > Designed a mixed-architecture backend: **Java 21 Spring Boot** (GitHub
 > OAuth 2.0, HMAC-SHA256 webhook verification, JWT httpOnly cookies,
 > JPA/PostgreSQL) + **Python FastAPI** (CodeBERT inference, sliding window
-> tokenization); **sub-200ms inference latency** per review, end-to-end.
+> tokenization); **206ms (P95) CPU inference latency** per review, end-to-end.
 
 ## Deployment bullet
 
@@ -57,7 +57,7 @@ async paths — that linters and formatters miss. I fine-tuned
 Microsoft CodeReviewer dataset and shipped the result as a 5-service
 system: a Spring Boot API handling GitHub OAuth, webhook verification, and
 orchestration; a FastAPI ML worker that runs CodeBERT inference with
-sliding-window tokenization in under 200 ms; a Next.js 15 dashboard with
+sliding-window tokenization in 206 ms (P95); a Next.js 15 dashboard with
 a diff viewer, severity-coded annotations, and 7/30/90-day quality trend
 charts; a VS Code extension that scans the active file on save; and a
 GitHub Action that posts PR diffs to the API and surfaces findings as
