@@ -15,35 +15,40 @@
 .env.test
 
 # -----------------------------------------------------
-# Java / Maven / Spring Boot
+# General Build & Output Artifacts
 # -----------------------------------------------------
+build/
+dist/
+out/
+target/
+bin/
 *.class
 *.jar
 *.war
 *.ear
+*.vsix
+*.tsbuildinfo
 
-# Maven build output
-target/
-build/
-out/
-*.classpath
-*.project
-*.settings/
+# The GitHub Action must commit its self-contained runtime bundle.
+!github-action/dist/
+!github-action/dist/index.js
+!github-action/dist/licenses.txt
+!github-action/dist/package.json
 
-# Gradle (just in case)
-.gradle/
-build/
+# -----------------------------------------------------
+# Dependency Directories
+# -----------------------------------------------------
+node_modules/
+.pnpm-store/
+bun.lockb
 
-# Spring Boot DevTools
-spring-boot-devtools.properties
-
-# IDE — IntelliJ
+# -----------------------------------------------------
+# Java & IDEs (IntelliJ, Eclipse, VS Code)
+# -----------------------------------------------------
 .idea/
 *.iml
 *.iws
 *.ipr
-
-# IDE — Eclipse
 .classpath
 .project
 .cproject
@@ -51,41 +56,22 @@ spring-boot-devtools.properties
 .buildpath
 .springBeans
 .sts4-cache/
-bin/
-
-# IDE — VS Code
 .vscode/
-
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
-ehthumbs.db
-$RECYCLE.BIN/
-
-# Logs
-*.log
-logs/
-spring.log
-fastapi.log
+spring-boot-devtools.properties
 
 # -----------------------------------------------------
-# Python (ml-worker)
+# Python & ML Worker
 # -----------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-
-# Virtual environments
 venv/
 .venv/
 env/
 ENV/
 .python-version
-
-# Distribution / packaging
 develop-eggs/
 downloads/
 eggs/
@@ -98,8 +84,8 @@ wheels/
 *.egg
 
 # PyInstaller
-build/
-dist/
+*.manifest
+*.spec
 
 # Unit test / coverage
 htmlcov/
@@ -112,20 +98,14 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
-
-# Jupyter
-.ipynb_checkpoints
-
-# Type checkers
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Linters
 .ruff_cache/
 .pylint.d/
+.ipynb_checkpoints/
 
-# ML / data / model artifacts
+# ML / Data / Model Artifacts
 *.pt
 *.pth
 *.pkl
@@ -136,15 +116,12 @@ dmypy.json
 *.npy
 *.npz
 *.parquet
-
-# HuggingFace cache
 .huggingface/
 hf_cache/
+mlruns/
+wandb/
 
-# Large data
-data/raw/
-data/filtered/
-data/labeled/
+# Training Data (Keep directories via .gitkeep, ignore data contents)
 apps/ml-worker/training/data/raw/*
 apps/ml-worker/training/data/filtered/*
 apps/ml-worker/training/data/labeled/*
@@ -154,94 +131,46 @@ apps/ml-worker/training/data/labeled/*
 apps/ml-worker/training/data/train.json
 apps/ml-worker/training/data/val.json
 # NOTE: test.json is intentionally NOT ignored — committed but never opened until final eval
-#
-# Keep the data/ subdirectories themselves tracked (so .gitkeep placeholders
-# inside them can be committed), but ignore the actual data files.
-
-# MLflow / Weights & Biases
-mlruns/
-wandb/
 
 # -----------------------------------------------------
-# Node / Next.js / VS Code Extension
+# Web / Next.js
 # -----------------------------------------------------
-node_modules/
+.next/
+next-env.d.ts
+.vercel
+
+# -----------------------------------------------------
+# Docker & System Logs
+# -----------------------------------------------------
+postgres_data/
+redis_data/
+*.log
+logs/
+spring.log
+fastapi.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Next.js
-.next/
-out/
-next-env.d.ts
-.vercel
-
-# Build outputs
-dist/
-build/
-*.tsbuildinfo
-*.vsix
-
-# The GitHub Action must commit its self-contained runtime bundle.
-!github-action/dist/
-!github-action/dist/index.js
-!github-action/dist/licenses.txt
-!github-action/dist/package.json
-
-# Coverage
-coverage/
-.nyc_output/
-
-# Cache
-.cache/
-.parcel-cache/
-.eslintcache
-
-# pnpm
-.pnpm-store/
-
-# Bun
-bun.lockb
-
 # -----------------------------------------------------
-# Docker
+# OS-specific Files & Temp/Backups
 # -----------------------------------------------------
-# Allow committed Dockerfiles; ignore runtime volumes
-postgres_data/
-redis_data/
-hf_cache/
-
-# -----------------------------------------------------
-# OS-specific
-# -----------------------------------------------------
-# Windows
-desktop.ini
-ehthumbs.db
-Thumbs.db
-$RECYCLE.BIN/
-*.lnk
-
-# macOS
 .DS_Store
 .AppleDouble
 .LSOverride
 ._*
-
-# Linux
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
 *~
 .fuse_hidden*
 .Trash-*
-
-# -----------------------------------------------------
-# Misc
-# -----------------------------------------------------
 *.swp
 *.swo
-*~
 *.bak
 *.tmp
 *.orig
-
-# Local config
 .local/
