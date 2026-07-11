@@ -23,6 +23,7 @@ import java.util.UUID;
  *   <li>{@code sub} = {@code userId} (UUID, stringified)</li>
  *   <li>{@code type} = {@code "access"} or {@code "refresh"}</li>
  *   <li>{@code username} = GitHub login (access tokens only)</li>
+     *   <li>{@code jti} = Unique JWT ID for blacklisting</li>
  * </ul>
  *
  * <p>Throws {@link JwtException} on any parse/verify failure (bad signature,
@@ -34,6 +35,7 @@ public class JwtService {
 
     public static final String CLAIM_TYPE = "type";
     public static final String CLAIM_USERNAME = "username";
+    public static final String CLAIM_JTI = "jti";
     public static final String TYPE_ACCESS = "access";
     public static final String TYPE_REFRESH = "refresh";
 
@@ -68,10 +70,12 @@ public class JwtService {
 
     public String generateAccessToken(UUID userId, String githubUsername) {
         Instant now = Instant.now();
+        String jti = UUID.randomUUID().toString();
         return Jwts.builder()
                 .subject(userId.toString())
                 .claim(CLAIM_TYPE, TYPE_ACCESS)
                 .claim(CLAIM_USERNAME, githubUsername)
+                .claim(CLAIM_JTI, jti)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(config.getAccessTokenExpiry())))
                 .signWith(signingKey)
@@ -80,9 +84,11 @@ public class JwtService {
 
     public String generateRefreshToken(UUID userId) {
         Instant now = Instant.now();
+        String jti = UUID.randomUUID().toString();
         return Jwts.builder()
                 .subject(userId.toString())
                 .claim(CLAIM_TYPE, TYPE_REFRESH)
+                .claim(CLAIM_JTI, jti)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(config.getRefreshTokenExpiry())))
                 .signWith(signingKey)
@@ -110,5 +116,15 @@ public class JwtService {
     public UUID extractUserId(String token) {
         Claims claims = validateToken(token);
         return UUID.fromString(claims.getSubject());
+    }
+
+    /**
+     * Extract the JTI (JWT ID) claim from a token.
+     *
+     * @throws JwtException if the token is invalid or malformed
+     */
+    public String extractJTI(String token) {
+        Claims claims = validateToken(token);
+        return claims.get(CLAIM_JTI, String.class);
     }
 }

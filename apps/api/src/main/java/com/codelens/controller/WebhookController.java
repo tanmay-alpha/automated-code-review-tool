@@ -84,7 +84,7 @@ public class WebhookController {
         //    An "unknown repo" (no secret on file) is a 200 — not our hook.
         try {
             if (!hmacVerifier.verify(payload, signature, body.repository().id().toString())) {
-                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
             }
         } catch (HmacVerificationException ex) {
             log.debug("Ignoring webhook for unknown repo: {}", ex.getMessage());
