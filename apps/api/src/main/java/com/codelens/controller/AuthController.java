@@ -6,6 +6,7 @@ import com.codelens.dto.GitHubTokenResponse;
 import com.codelens.dto.GitHubUserInfo;
 import com.codelens.dto.UserResponse;
 import com.codelens.entity.User;
+import com.codelens.security.JwtBlacklistService;
 import com.codelens.security.JwtService;
 import com.codelens.service.GitHubService;
 import com.codelens.service.UserService;
@@ -53,6 +54,7 @@ public class AuthController {
     private final GitHubService githubService;
     private final UserService userService;
     private final JwtService jwtService;
+    private final JwtBlacklistService jwtBlacklistService;
     private final AppConfig appConfig;
     private final JwtConfig jwtConfig;
     private final StringRedisTemplate redis;
@@ -60,12 +62,14 @@ public class AuthController {
     public AuthController(GitHubService githubService,
                           UserService userService,
                           JwtService jwtService,
+                          JwtBlacklistService jwtBlacklistService,
                           AppConfig appConfig,
                           JwtConfig jwtConfig,
                           StringRedisTemplate redis) {
         this.githubService = githubService;
         this.userService = userService;
         this.jwtService = jwtService;
+        this.jwtBlacklistService = jwtBlacklistService;
         this.appConfig = appConfig;
         this.jwtConfig = jwtConfig;
         this.redis = redis;
@@ -183,7 +187,36 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout() {
+    public ResponseEntity<Void> logout(@AuthenticationPrincipal UUID userId) {
+        // Get the access token from the current request to blacklist it
+        String accessToken = readCookie(null, ACCESS_TOKEN_COOKIE); // We'll need to modify this to get current token
+        if (accessToken != null) {
+            try {
+                String jti = jwtService.extractJTI(accessToken);
+                long expiry = jwtConfig.getAccessTokenExpiry();
+                jwtBlacklistService.blacklistToken(jti, expiry);
+
+                // Also blacklist the refresh token if it exists
+                String refreshToken = readCookie(null, REFRESH_TOKEN_COOKIE);
+                if (refreshToken != null) {
+                    String refreshJti = jwtService.extractJTI(refreshToken);
+                    long refreshExpiry = jwtConfig.getRefreshTokenExpiry();
+                    jwtBlacklistService.blacklistToken(refreshJti, refreshExpiry);
+                }
+
+                // Clean up Redis refresh token
+                try {
+                    redis.delete("session:refresh:" + userId);
+                } catch (Exception e) {
+                    // Log but don't fail the logout
+                    System.err.println("Failed to clean up refresh token: " + e.getMessage());
+                }
+            } catch (Exception e) {
+                // If token extraction fails, still proceed with logout
+                System.err.println("Failed to blacklist token: " + e.getMessage());
+            }
+        }
+
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, clearCookie(ACCESS_TOKEN_COOKIE).toString())
                 .header(HttpHeaders.SET_COOKIE, clearCookie(REFRESH_TOKEN_COOKIE).toString())

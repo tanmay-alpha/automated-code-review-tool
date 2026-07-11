@@ -16,3 +16,7 @@ ENV HF_HOME=/home/codelens/.cache/huggingface
 USER codelens
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Security hardening
+RUN chmod -R 500 /app
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ml/health', timeout=2).status==200 else 1)" || exit 1
