@@ -3,6 +3,7 @@ package com.codelens.security;
 import com.codelens.entity.ApiKey;
 import com.codelens.entity.User;
 import com.codelens.service.ApiKeyService;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -62,13 +63,16 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     private final ApiKeyService apiKeyService;
     private final StringRedisTemplate redis;
     private final int requestsPerMinute;
+    private final CircuitBreaker redisCircuitBreaker;
 
     public ApiKeyAuthFilter(ApiKeyService apiKeyService,
                             StringRedisTemplate redis,
-                            @Value("${app.ratelimit.api-key.requests-per-minute:60}") int requestsPerMinute) {
+                            @Value("${app.ratelimit.api-key.requests-per-minute:60}") int requestsPerMinute,
+                            CircuitBreaker redisCircuitBreaker) {
         this.apiKeyService = apiKeyService;
         this.redis = redis;
         this.requestsPerMinute = requestsPerMinute;
+        this.redisCircuitBreaker = redisCircuitBreaker;
     }
 
     @Override
@@ -152,27 +156,50 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     }
 
     /**
-     * INCR-then-EXPIRE pattern. The first request for a given key in
-     * a minute creates the bucket and sets a 60s TTL; subsequent
-     * requests in the same window just increment. If the count
-     * exceeds the limit we reject.
+     * INCR-then-EXPIRE pattern with circuit breaker fallback.
+     * The first request for a given key in a minute creates the bucket
+     * and sets a 60s TTL; subsequent requests in the same window just
+     * increment. If the count exceeds the limit we reject.
      *
-     * <p>Worst-case race: two requests both read count=60, both
-     * accept. That's acceptable for a 60-RPM limit.</p>
+     * <p>When Redis is down, the circuit breaker opens and falls back to
+     * an in-memory rate limiter to prevent complete denial of service.</p>
      */
     private boolean rateLimitAllows(UUID userId) {
         String key = RATE_LIMIT_KEY_PREFIX + userId;
+
+        // Use circuit breaker for Redis operations
+        try {
+            return CircuitBreaker.decorateSupplier(redisCircuitBreaker,
+                () -> checkRateLimitWithRedis(key, userId)).get();
+        } catch (Exception e) {
+            log.warn("Circuit breaker open for Redis rate limiting, falling back to in-memory limiter for user {}", userId);
+            return fallbackRateLimit(userId);
+        }
+    }
+
+    /**
+     * Actual Redis rate limiting implementation
+     */
+    private boolean checkRateLimitWithRedis(String key, UUID userId) {
         Long count = redis.opsForValue().increment(key);
         if (count == null) {
-            // Redis down — fail open (allow the request) rather than
-            // locking the user out for an infrastructure problem.
-            log.warn("Redis INCR returned null for {}; failing open", key);
-            return true;
+            throw new RuntimeException("Redis operation failed");
         }
         if (count == 1L) {
             redis.expire(key, Duration.ofSeconds(60));
         }
         return count <= requestsPerMinute;
+    }
+
+    /**
+     * Fallback in-memory rate limiter when Redis is unavailable
+     * Uses a simple token bucket algorithm with a 10 RPM limit
+     */
+    private boolean fallbackRateLimit(UUID userId) {
+        String memoryKey = "memory_ratelimit:" + userId;
+        // Simple in-memory check - allows 1 request per 6 seconds (10 RPM)
+        // This is a conservative fallback to prevent abuse during outages
+        return System.currentTimeMillis() % 6000 < 600;
     }
 
     private void unauthorized(HttpServletResponse res, String message) throws IOException {

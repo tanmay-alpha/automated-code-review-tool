@@ -1,5 +1,7 @@
 package com.codelens.security;
 
+import com.codelens.logging.SecurityEventLogger;
+import com.codelens.security.JwtBlacklistService;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
@@ -34,9 +36,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     public static final String ACCESS_TOKEN_COOKIE = "accessToken";
 
     private final JwtService jwtService;
+    private final JwtBlacklistService jwtBlacklistService;
 
-    public JwtAuthFilter(JwtService jwtService) {
+    public JwtAuthFilter(JwtService jwtService, JwtBlacklistService jwtBlacklistService) {
         this.jwtService = jwtService;
+        this.jwtBlacklistService = jwtBlacklistService;
     }
 
     @Override
@@ -54,6 +58,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     chain.doFilter(request, response);
                     return;
                 }
+
+                // Check if token is blacklisted
+                String jti = claims.get(JwtService.CLAIM_JTI, String.class);
+                if (jwtBlacklistService.isBlacklisted(jti)) {
+                    // Token is blacklisted - clear context and reject
+                    SecurityContextHolder.clearContext();
+                    chain.doFilter(request, response);
+                    return;
+                }
+
                 UUID userId = UUID.fromString(claims.getSubject());
                 UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
                         userId, null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
