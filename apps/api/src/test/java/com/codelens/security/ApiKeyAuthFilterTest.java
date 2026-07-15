@@ -15,6 +15,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
@@ -53,7 +54,7 @@ class ApiKeyAuthFilterTest {
         valueOps = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(valueOps);
 
-        filter = new ApiKeyAuthFilter(apiKeyService, redis, 60);
+        filter = new ApiKeyAuthFilter(apiKeyService, redis, 60, CircuitBreaker.ofDefaults("redisRateLimiter"));
         SecurityContextHolder.clearContext();
     }
 

@@ -26,12 +26,20 @@ spring:
     redis:
       host: localhost
       port: 0  # disabled — tests that need Redis inject a mock
+management:
+  health:
+    redis:
+      enabled: false
 
 app:
   jwt:
     secret: test-secret-key-32-bytes-long-for-hs256-min
     access-token-expiry: 900
     refresh-token-expiry: 604800
+  request:
+    max-body-size: 5000
+    max-query-size: 4096
+    max-header-size: 4096
   webhook:
     callback-url: http://localhost:8080/api/webhook/github
   ratelimit:

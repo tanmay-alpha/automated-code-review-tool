@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import com.codelens.logging.SecurityEventLogger;
 
 import java.net.URI;
 import java.time.Duration;
@@ -58,6 +59,7 @@ public class AuthController {
     private final AppConfig appConfig;
     private final JwtConfig jwtConfig;
     private final StringRedisTemplate redis;
+    private final SecurityEventLogger securityEventLogger;
 
     public AuthController(GitHubService githubService,
                           UserService userService,
@@ -65,7 +67,8 @@ public class AuthController {
                           JwtBlacklistService jwtBlacklistService,
                           AppConfig appConfig,
                           JwtConfig jwtConfig,
-                          StringRedisTemplate redis) {
+                          StringRedisTemplate redis,
+                          SecurityEventLogger securityEventLogger) {
         this.githubService = githubService;
         this.userService = userService;
         this.jwtService = jwtService;
@@ -73,6 +76,7 @@ public class AuthController {
         this.appConfig = appConfig;
         this.jwtConfig = jwtConfig;
         this.redis = redis;
+        this.securityEventLogger = securityEventLogger;
     }
 
     /**
@@ -187,23 +191,32 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(@AuthenticationPrincipal UUID userId) {
+    public ResponseEntity<Void> logout(@AuthenticationPrincipal UUID userId, HttpServletRequest request) {
         // Get the access token from the current request to blacklist it
-        String accessToken = readCookie(null, ACCESS_TOKEN_COOKIE); // We'll need to modify this to get current token
+        String accessToken = readCookie(request, ACCESS_TOKEN_COOKIE);
+        if (accessToken == null && request != null) {
+            String bearerToken = request.getHeader("Authorization");
+            if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
+                accessToken = bearerToken.substring(7);
+            }
+        }
         if (accessToken != null) {
             try {
                 String jti = jwtService.extractJTI(accessToken);
                 long expiry = jwtConfig.getAccessTokenExpiry();
                 jwtBlacklistService.blacklistToken(jti, expiry);
-
+                if (securityEventLogger != null) {
+                    securityEventLogger.logTokenBlacklisting(jti, userId, "logout");
+                }
+ 
                 // Also blacklist the refresh token if it exists
-                String refreshToken = readCookie(null, REFRESH_TOKEN_COOKIE);
+                String refreshToken = readCookie(request, REFRESH_TOKEN_COOKIE);
                 if (refreshToken != null) {
                     String refreshJti = jwtService.extractJTI(refreshToken);
                     long refreshExpiry = jwtConfig.getRefreshTokenExpiry();
                     jwtBlacklistService.blacklistToken(refreshJti, refreshExpiry);
                 }
-
+ 
                 // Clean up Redis refresh token
                 try {
                     redis.delete("session:refresh:" + userId);
