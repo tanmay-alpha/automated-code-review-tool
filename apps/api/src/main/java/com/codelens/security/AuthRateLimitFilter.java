@@ -7,10 +7,12 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import com.codelens.monitoring.SecurityMonitor;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -55,6 +57,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     private final StringRedisTemplate redis;
     private final int requestsPerMinute;
 
+    @Autowired
+    private SecurityMonitor securityMonitor;
+
     public AuthRateLimitFilter(
             StringRedisTemplate redis,
             @Value("${app.ratelimit.auth.requests-per-minute:10}") int requestsPerMinute) {
@@ -75,6 +80,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
 
         String clientIp = resolveClientIp(request);
         if (isRateLimited(clientIp)) {
+            if (securityMonitor != null) {
+                securityMonitor.recordRateLimitEvent(null, clientIp, request.getRequestURI(), "RATE_LIMIT");
+            }
             tooManyRequests(response);
             return;
         }

@@ -3,7 +3,6 @@ package com.codelens.config;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
-import io.github.resilience4j.spring6.circuitbreaker.configure.CircuitBreakerAspect;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -28,8 +27,8 @@ public class ResilienceConfig {
         CircuitBreakerConfig config = CircuitBreakerConfig.custom()
                 .failureRateThreshold(50) // Open after 50% failures
                 .waitDurationInOpenState(Duration.ofSeconds(60))
-                .ringBufferSizeInHalfOpenState(2)
-                .ringBufferSizeInClosedState(5)
+                .permittedNumberOfCallsInHalfOpenState(2)
+                .slidingWindowSize(5)
                 .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
                 .build();
 
@@ -45,8 +44,8 @@ public class ResilienceConfig {
         CircuitBreakerConfig config = CircuitBreakerConfig.custom()
                 .failureRateThreshold(50)
                 .waitDurationInOpenState(Duration.ofSeconds(30))
-                .ringBufferSizeInHalfOpenState(2)
-                .ringBufferSizeInClosedState(3)
+                .permittedNumberOfCallsInHalfOpenState(2)
+                .slidingWindowSize(3)
                 .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
                 .build();
 
@@ -55,6 +54,6 @@ public class ResilienceConfig {
 
     @Bean
     public CircuitBreakerRegistry circuitBreakerRegistry() {
-        return CircuitBreakerRegistry.of(redisRateLimiterCircuitBreaker().getConfig());
+        return CircuitBreakerRegistry.of(redisRateLimiterCircuitBreaker().getCircuitBreakerConfig());
     }
 }

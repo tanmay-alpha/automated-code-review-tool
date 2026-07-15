@@ -3,6 +3,8 @@ package com.codelens.config;
 import com.codelens.security.ApiKeyAuthFilter;
 import com.codelens.security.AuthRateLimitFilter;
 import com.codelens.security.JwtAuthFilter;
+import com.codelens.security.RequestSizeLimitFilter;
+import com.codelens.logging.LogRedactorFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -50,15 +52,21 @@ public class SecurityConfig {
     private final ApiKeyAuthFilter apiKeyAuthFilter;
     private final AuthRateLimitFilter authRateLimitFilter;
     private final AppConfig appConfig;
+    private final RequestSizeLimitFilter requestSizeLimitFilter;
+    private final LogRedactorFilter logRedactorFilter;
 
     public SecurityConfig(JwtAuthFilter jwtAuthFilter,
                           ApiKeyAuthFilter apiKeyAuthFilter,
                           AuthRateLimitFilter authRateLimitFilter,
-                          AppConfig appConfig) {
+                          AppConfig appConfig,
+                          RequestSizeLimitFilter requestSizeLimitFilter,
+                          LogRedactorFilter logRedactorFilter) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.apiKeyAuthFilter = apiKeyAuthFilter;
         this.authRateLimitFilter = authRateLimitFilter;
         this.appConfig = appConfig;
+        this.requestSizeLimitFilter = requestSizeLimitFilter;
+        this.logRedactorFilter = logRedactorFilter;
     }
 
     @Bean
@@ -90,7 +98,9 @@ public class SecurityConfig {
                 // Auth rate limit runs before JWT so brute-force attempts
                 // on /api/auth/* are shed before any token work.
                 .addFilterBefore(authRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(logRedactorFilter, ApiKeyAuthFilter.class)
+                .addFilterBefore(requestSizeLimitFilter, LogRedactorFilter.class);
         return http.build();
     }
 
@@ -105,6 +115,20 @@ public class SecurityConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
+    }
+
+    @Bean
+    public org.springframework.boot.web.servlet.FilterRegistrationBean<RequestSizeLimitFilter> requestSizeLimitFilterRegistration(RequestSizeLimitFilter filter) {
+        org.springframework.boot.web.servlet.FilterRegistrationBean<RequestSizeLimitFilter> registration = new org.springframework.boot.web.servlet.FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    public org.springframework.boot.web.servlet.FilterRegistrationBean<LogRedactorFilter> logRedactorFilterRegistration(LogRedactorFilter filter) {
+        org.springframework.boot.web.servlet.FilterRegistrationBean<LogRedactorFilter> registration = new org.springframework.boot.web.servlet.FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
     }
 
     @Bean

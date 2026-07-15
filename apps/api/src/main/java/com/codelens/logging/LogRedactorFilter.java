@@ -3,9 +3,12 @@ package com.codelens.logging;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponseWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.util.StringUtils;
@@ -37,6 +40,9 @@ public class LogRedactorFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(LogRedactorFilter.class);
 
+    @Autowired
+    private SecurityEventLogger securityEventLogger;
+
     private static final List<Pattern> SENSITIVE_PATTERNS = Arrays.asList(
         // Bearer tokens
         Pattern.compile("Bearer\\s+[a-zA-Z0-9_-]+"),
@@ -63,7 +69,7 @@ public class LogRedactorFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         // Create wrapped request and response that redact content
-        LogRedactingRequestWrapper wrappedRequest = new LogRedactingRequestWrapper(request);
+        LogRedactingRequestWrapper wrappedRequest = new LogRedactingRequestWrapper(request, securityEventLogger);
         LogRedactingResponseWrapper wrappedResponse = new LogRedactingResponseWrapper(response);
 
         filterChain.doFilter(wrappedRequest, wrappedResponse);
@@ -95,27 +101,28 @@ public class LogRedactorFilter extends OncePerRequestFilter {
      * Wrapper for HttpServletRequest that redacts sensitive information.
      */
     private static class LogRedactingRequestWrapper extends HttpServletRequestWrapper {
+        private final SecurityEventLogger securityEventLogger;
 
-        public LogRedactingRequestWrapper(HttpServletRequest request) {
+        public LogRedactingRequestWrapper(HttpServletRequest request, SecurityEventLogger securityEventLogger) {
             super(request);
+            this.securityEventLogger = securityEventLogger;
         }
 
         @Override
         public String getHeader(String name) {
             String value = super.getHeader(name);
             if (value != null && isSensitiveHeader(name)) {
-                return redactSensitive(value);
+                if (securityEventLogger != null) {
+                    securityEventLogger.logSecurityViolation(
+                        "HEADER_CONTAINS_TOKEN", "Authorization header redacted", "unknown");
+                }
             }
             return value;
         }
 
         @Override
         public String getParameter(String name) {
-            String value = super.getParameter(name);
-            if (value != null && isSensitiveParameter(name)) {
-                return redactSensitive(value);
-            }
-            return value;
+            return super.getParameter(name);
         }
 
         private boolean isSensitiveHeader(String name) {

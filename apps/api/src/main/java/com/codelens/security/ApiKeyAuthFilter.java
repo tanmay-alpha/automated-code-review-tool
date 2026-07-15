@@ -10,6 +10,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.lang.NonNull;
@@ -68,7 +69,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     public ApiKeyAuthFilter(ApiKeyService apiKeyService,
                             StringRedisTemplate redis,
                             @Value("${app.ratelimit.api-key.requests-per-minute:60}") int requestsPerMinute,
-                            CircuitBreaker redisCircuitBreaker) {
+                            @Qualifier("redisRateLimiterCircuitBreaker") CircuitBreaker redisCircuitBreaker) {
         this.apiKeyService = apiKeyService;
         this.redis = redis;
         this.requestsPerMinute = requestsPerMinute;

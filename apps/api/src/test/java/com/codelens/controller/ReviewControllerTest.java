@@ -11,6 +11,8 @@ import com.codelens.security.ApiKeyAuthFilter;
 import com.codelens.security.AuthRateLimitFilter;
 import com.codelens.security.JwtAuthFilter;
 import com.codelens.security.JwtService;
+import com.codelens.logging.SecurityEventLogger;
+import com.codelens.monitoring.SecurityMonitor;
 import com.codelens.service.ApiKeyService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
@@ -55,7 +57,7 @@ class ReviewControllerTest {
     static class PassThroughFilter {
         @org.springframework.context.annotation.Bean
         JwtAuthFilter jwtAuthFilter() {
-            return new JwtAuthFilter(null) {
+            return new JwtAuthFilter(null, null) {
                 @Override
                 protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res,
                                                 FilterChain chain) throws java.io.IOException, jakarta.servlet.ServletException {
@@ -86,6 +88,8 @@ class ReviewControllerTest {
     // SecurityConfig also wires AuthRateLimitFilter (needs Redis) — mock
     // it as a pass-through alongside ApiKeyAuthFilter.
     @MockBean AuthRateLimitFilter authRateLimitFilter;
+    @MockBean SecurityEventLogger securityEventLogger;
+    @MockBean SecurityMonitor securityMonitor;
 
     @org.junit.jupiter.api.BeforeEach
     void stubApiKeyFilter() throws Exception {

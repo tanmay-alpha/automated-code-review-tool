@@ -5,10 +5,13 @@ import com.codelens.repository.ProcessedWebhookRepository;
 import com.codelens.service.WebhookService;
 import com.codelens.webhook.GitHubWebhookEvent;
 import com.codelens.webhook.HmacVerificationException;
+import com.codelens.logging.SecurityEventLogger;
 import com.codelens.webhook.HmacVerifier;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -42,6 +45,9 @@ public class WebhookController {
     private final ProcessedWebhookRepository processedWebhookRepository;
     private final ObjectMapper objectMapper;
 
+    @Autowired
+    private SecurityEventLogger securityEventLogger;
+
     public WebhookController(HmacVerifier hmacVerifier,
                             WebhookService webhookService,
                             ProcessedWebhookRepository processedWebhookRepository,
@@ -54,6 +60,7 @@ public class WebhookController {
 
     @PostMapping("/github")
     public ResponseEntity<Void> handle(
+            HttpServletRequest request,
             @RequestHeader(value = "X-Hub-Signature-256", required = false) String signature,
             @RequestHeader(value = "X-GitHub-Event", required = false) String event,
             @RequestHeader(value = "X-GitHub-Delivery", required = false) String deliveryId,
@@ -80,11 +87,32 @@ public class WebhookController {
             return ResponseEntity.ok().build();
         }
 
+        String ip = request.getRemoteAddr();
+        if (ip == null || ip.isBlank()) {
+            ip = "unknown";
+        }
+
         // 3. HMAC: must match the secret we stored when installing the hook.
         //    An "unknown repo" (no secret on file) is a 200 — not our hook.
         try {
             if (!hmacVerifier.verify(payload, signature, body.repository().id().toString())) {
+                if (securityEventLogger != null) {
+                    securityEventLogger.logWebhookSecurityEvent(
+                        body.repository().id().toString(),
+                        false,
+                        ip,
+                        body.action()
+                    );
+                }
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            }
+            if (securityEventLogger != null) {
+                securityEventLogger.logWebhookSecurityEvent(
+                    body.repository().id().toString(),
+                    true,
+                    ip,
+                    body.action()
+                );
             }
         } catch (HmacVerificationException ex) {
             log.debug("Ignoring webhook for unknown repo: {}", ex.getMessage());

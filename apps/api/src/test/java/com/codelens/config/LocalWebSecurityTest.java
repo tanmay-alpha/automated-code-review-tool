@@ -5,6 +5,7 @@ import com.codelens.dto.GitHubTokenResponse;
 import com.codelens.dto.GitHubUserInfo;
 import com.codelens.entity.User;
 import com.codelens.security.JwtService;
+import com.codelens.security.JwtBlacklistService;
 import com.codelens.service.GitHubService;
 import com.codelens.service.UserService;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,7 @@ class LocalWebSecurityTest {
     void corsAllowsConfiguredFrontendWithCredentials() {
         AppConfig appConfig = new AppConfig();
         appConfig.setFrontendUrl("http://localhost:3000");
-        SecurityConfig securityConfig = new SecurityConfig(null, null, null, appConfig);
+        SecurityConfig securityConfig = new SecurityConfig(null, null, null, appConfig, null, null);
 
         CorsConfiguration cors = securityConfig.corsConfigurationSource()
                 .getCorsConfiguration(new MockHttpServletRequest("GET", "/api/auth/me"));
@@ -58,6 +59,7 @@ class LocalWebSecurityTest {
         GitHubService githubService = mock(GitHubService.class);
         UserService userService = mock(UserService.class);
         JwtService jwtService = mock(JwtService.class);
+        JwtBlacklistService jwtBlacklistService = mock(JwtBlacklistService.class);
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOps = mock(ValueOperations.class);
 
@@ -84,7 +86,7 @@ class LocalWebSecurityTest {
         when(jwtService.generateRefreshToken(user.getId())).thenReturn("refresh-jwt");
 
         AuthController controller = new AuthController(
-                githubService, userService, jwtService, appConfig, jwtConfig, redis);
+                githubService, userService, jwtService, jwtBlacklistService, appConfig, jwtConfig, redis, null);
         return controller.oauthCallback("oauth-code").getHeaders().get(HttpHeaders.SET_COOKIE);
     }
 }

@@ -8,6 +8,8 @@ import com.codelens.security.JwtAuthFilter;
 import com.codelens.security.JwtService;
 import com.codelens.service.ApiKeyService;
 import com.codelens.service.WebhookService;
+import com.codelens.logging.SecurityEventLogger;
+import com.codelens.monitoring.SecurityMonitor;
 import com.codelens.webhook.GitHubWebhookEvent;
 import com.codelens.webhook.HmacVerificationException;
 import com.codelens.webhook.HmacVerifier;
@@ -65,6 +67,8 @@ class WebhookControllerTest {
     // SecurityConfig also wires AuthRateLimitFilter (needs Redis) — mock
     // it as a pass-through alongside ApiKeyAuthFilter.
     @MockBean AuthRateLimitFilter authRateLimitFilter;
+    @MockBean SecurityEventLogger securityEventLogger;
+    @MockBean SecurityMonitor securityMonitor;
 
     @org.junit.jupiter.api.BeforeEach
     void stubApiKeyFilter() throws Exception {
@@ -95,7 +99,7 @@ class WebhookControllerTest {
     static class StubFilterConfig {
         @org.springframework.context.annotation.Bean
         JwtAuthFilter jwtAuthFilter() {
-            return new JwtAuthFilter(null) {
+            return new JwtAuthFilter(null, null) {
                 @Override
                 protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res,
                                                 FilterChain chain) throws java.io.IOException, jakarta.servlet.ServletException {
@@ -140,7 +144,7 @@ class WebhookControllerTest {
     }
 
     @Test
-    void testForgedSignatureReturns401() throws Exception {
+    void testForgedSignatureReturns400() throws Exception {
         String body = payload("opened", 123L);
         when(hmacVerifier.verify(anyString(), anyString(), anyString())).thenReturn(false);
 
@@ -150,7 +154,7 @@ class WebhookControllerTest {
                         .header("X-GitHub-Delivery", DELIVERY)
                         .contentType("application/json")
                         .content(body))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isBadRequest());
 
         verify(webhookService, never()).processAsync(any(), anyString());
     }
