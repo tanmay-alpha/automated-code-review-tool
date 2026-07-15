@@ -33,11 +33,27 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
                                   FilterChain filterChain)
             throws ServletException, IOException {
 
+        jakarta.servlet.http.HttpServletResponseWrapper wrappedResponse = new jakarta.servlet.http.HttpServletResponseWrapper(response) {
+            @Override
+            public void setHeader(String name, String value) {
+                if (!"Server".equalsIgnoreCase(name)) {
+                    super.setHeader(name, value);
+                }
+            }
+
+            @Override
+            public void addHeader(String name, String value) {
+                if (!"Server".equalsIgnoreCase(name)) {
+                    super.addHeader(name, value);
+                }
+            }
+        };
+
         // Add security headers
-        addSecurityHeaders(response);
+        addSecurityHeaders(wrappedResponse);
 
         // Continue the filter chain
-        filterChain.doFilter(request, response);
+        filterChain.doFilter(request, wrappedResponse);
     }
 
     private void addSecurityHeaders(HttpServletResponse response) {

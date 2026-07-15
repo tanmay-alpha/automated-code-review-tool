@@ -13,6 +13,7 @@ import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -38,6 +39,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final JwtBlacklistService jwtBlacklistService;
 
+    @Autowired
+    private SecurityEventLogger securityEventLogger;
+
     public JwtAuthFilter(JwtService jwtService, JwtBlacklistService jwtBlacklistService) {
         this.jwtService = jwtService;
         this.jwtBlacklistService = jwtBlacklistService;
@@ -49,7 +53,20 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                                     @NonNull FilterChain chain)
             throws ServletException, IOException {
 
+        if ("POST".equals(request.getMethod()) && "/api/auth/logout".equals(request.getRequestURI())) {
+            String csrfHeader = request.getHeader("X-CSRF-Token");
+            if (csrfHeader == null || csrfHeader.isBlank()) {
+                securityEventLogger.logSecurityViolation("CSRF_PROTECTION", "Missing CSRF token", "unknown");
+            }
+        }
+
         String token = readAccessTokenCookie(request);
+        if (token == null) {
+            String bearerToken = request.getHeader("Authorization");
+            if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
+                token = bearerToken.substring(7);
+            }
+        }
         if (token != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
                 Claims claims = jwtService.validateToken(token);

@@ -8,6 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -136,7 +137,7 @@ public class SecurityMonitor implements HealthIndicator {
 
         // Check if we have too many security violations
         if (metrics.getSecurityViolations() > 5) {
-            return Health.warning()
+            return Health.status("WARNING")
                     .withDetail("securityStatus", "MEDIUM_RISK")
                     .withDetail("securityViolations", metrics.getSecurityViolations())
                     .build();
