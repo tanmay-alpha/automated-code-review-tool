@@ -8,13 +8,17 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import reactor.netty.http.client.HttpClient;
+
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -39,9 +43,14 @@ public class GitHubService {
     private final WebClient apiClient;
     private final GitHubConfig config;
 
+    private static final HttpClient HTTP_CLIENT = HttpClient.create()
+            .responseTimeout(Duration.ofSeconds(30))
+            .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000);
+
     public GitHubService(WebClient.Builder builder, GitHubConfig config) {
-        this.oauthClient = builder.baseUrl("https://github.com").build();
-        this.apiClient = builder.baseUrl(API_BASE).build();
+        WebClient.Builder timeoutBuilder = builder.clientConnector(new ReactorClientHttpConnector(HTTP_CLIENT));
+        this.oauthClient = timeoutBuilder.baseUrl("https://github.com").build();
+        this.apiClient = timeoutBuilder.baseUrl(API_BASE).build();
         this.config = config;
     }
 
