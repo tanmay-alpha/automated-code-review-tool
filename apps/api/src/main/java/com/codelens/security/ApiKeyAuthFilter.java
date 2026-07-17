@@ -24,7 +24,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ArrayDeque;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
 /**
  * Authenticates {@code /api/scan/file} (and any future
@@ -193,18 +197,41 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     }
 
     /**
-     * Fallback in-memory rate limiter when Redis is unavailable
-     * Uses a simple token bucket algorithm with a 10 RPM limit
+     * In-memory sliding window rate limiter used as fallback when Redis
+     * is unavailable. Tracks timestamps per user in a minute window.
+     */
+    private static final int FALLBACK_RPM = 10;
+    private static final long WINDOW_MS = 60_000L;
+    private static final ConcurrentHashMap<UUID, ConcurrentLinkedDeque<Long>> memoryBuckets = new ConcurrentHashMap<>();
+
+    /**
+     * Fallback in-memory rate limiter when Redis is unavailable.
+     * Uses a sliding window: tracks request timestamps per user and
+     * allows N requests per minute window.
      */
     private boolean fallbackRateLimit(UUID userId) {
-        String memoryKey = "memory_ratelimit:" + userId;
-        // Simple in-memory check - allows 1 request per 6 seconds (10 RPM)
-        // This is a conservative fallback to prevent abuse during outages
-        return System.currentTimeMillis() % 6000 < 600;
+        long now = System.currentTimeMillis();
+        long windowStart = now - WINDOW_MS;
+
+        ConcurrentLinkedDeque<Long> timestamps = memoryBuckets.computeIfAbsent(
+                userId, k -> new ConcurrentLinkedDeque<>());
+
+        // Remove stale entries outside the window.
+        while (!timestamps.isEmpty() && timestamps.peekFirst() < windowStart) {
+            timestamps.pollFirst();
+        }
+
+        if (timestamps.size() >= FALLBACK_RPM) {
+            return false; // Rate limited.
+        }
+
+        timestamps.addLast(now);
+        return true;
     }
 
     private void unauthorized(HttpServletResponse res, String message) throws IOException {
-        res.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        res.setHeader("WWW-Authenticate", "Bearer");
         res.setContentType("application/json");
         res.getWriter().write(
                 "{\"error\":\"API_KEY_INVALID\",\"message\":\"" + message + "\"}");

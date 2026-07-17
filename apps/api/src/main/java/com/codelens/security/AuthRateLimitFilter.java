@@ -17,6 +17,7 @@ import com.codelens.monitoring.SecurityMonitor;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Per-IP rate limiter for the public auth flow endpoints.
@@ -132,15 +133,34 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     /**
      * X-Forwarded-For is a comma-separated chain of IPs in order
      * client, proxy1, proxy2; the first entry is the original caller.
-     * Falls back to {@code remoteAddr} if the header is absent.
+     *
+     * <p>Only trusts the header when the immediate remote address is a
+     * known proxy. Otherwise, the header could be spoofed by any client.</p>
      */
     private static String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader(X_FORWARDED_FOR);
-        if (forwarded != null && !forwarded.isBlank()) {
-            int comma = forwarded.indexOf(',');
-            return (comma == -1 ? forwarded : forwarded.substring(0, comma)).trim();
+        String remoteAddr = request.getRemoteAddr();
+        if (isTrustedProxy(remoteAddr)) {
+            String forwarded = request.getHeader(X_FORWARDED_FOR);
+            if (forwarded != null && !forwarded.isBlank()) {
+                int comma = forwarded.indexOf(',');
+                return (comma == -1 ? forwarded : forwarded.substring(0, comma)).trim();
+            }
         }
-        return request.getRemoteAddr();
+        return remoteAddr;
+    }
+
+    private static final Set<String> TRUSTED_PROXY_PREFIXES = Set.of(
+            "127.0.0.1", "0:0:0:0:0:0:0:1",
+            "10.", "192.168.",
+            "172.16.", "172.17.", "172.18.", "172.19.",
+            "172.20.", "172.21.", "172.22.", "172.23.",
+            "172.24.", "172.25.", "172.26.", "172.27.",
+            "172.28.", "172.29.", "172.30.", "172.31."
+    );
+
+    private static boolean isTrustedProxy(String ip) {
+        if (ip == null) return false;
+        return TRUSTED_PROXY_PREFIXES.stream().anyMatch(ip::startsWith);
     }
 
     private void tooManyRequests(HttpServletResponse res) throws IOException {

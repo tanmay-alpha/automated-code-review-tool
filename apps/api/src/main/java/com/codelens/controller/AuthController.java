@@ -30,6 +30,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import com.codelens.logging.SecurityEventLogger;
 
 import java.net.URI;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
@@ -79,25 +80,68 @@ public class AuthController {
         this.securityEventLogger = securityEventLogger;
     }
 
+    private static final String OAUTH_STATE_COOKIE = "oauth_state";
+
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AuthController.class);
+
+    private static String generateStateToken() {
+        byte[] bytes = new byte[32];
+        SECURE_RANDOM.nextBytes(bytes);
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
     /**
      * Start the OAuth flow by 302-ing the browser to GitHub's authorize URL.
+     *
+     * <p>Generates a random {@code state} token, stores it in an HTTP-only
+     * cookie, and appends it to the authorize URL. The callback validates
+     * the returned state against the cookie to prevent CSRF.</p>
      */
     @GetMapping("/github")
-    public ResponseEntity<Void> startOAuth() {
+    public ResponseEntity<Void> startOAuth(HttpServletRequest request) {
+        String state = generateStateToken();
+
+        // Store state in an HTTP-only cookie (short-lived, 5 min).
+        ResponseCookie stateCookie = ResponseCookie.from(OAUTH_STATE_COOKIE, state)
+                .httpOnly(true)
+                .secure(appConfig.isCookieSecure())
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(Duration.ofSeconds(300))
+                .build();
+
+        String redirectUrl = githubService.getOAuthRedirectUrl() + "&state=" + java.net.URLEncoder.encode(state, java.nio.charset.StandardCharsets.UTF_8);
+
         return ResponseEntity.status(HttpStatus.FOUND)
-                .location(URI.create(githubService.getOAuthRedirectUrl()))
+                .header(HttpHeaders.SET_COOKIE, stateCookie.toString())
+                .location(URI.create(redirectUrl))
                 .build();
     }
 
     /**
      * GitHub redirects the browser here after consent. We exchange the
      * code, fetch the user, upsert them, and issue JWT cookies.
+     *
+     * <p>Validates the {@code state} query parameter against the cookie set
+     * during {@link #startOAuth(HttpServletRequest)} to prevent CSRF
+     * attacks on the OAuth handshake.</p>
      */
     @GetMapping("/callback")
-    public ResponseEntity<Void> oauthCallback(@RequestParam("code") String code) {
+    public ResponseEntity<Void> oauthCallback(@RequestParam("code") String code,
+                                              @RequestParam(value = "state", required = false) String state,
+                                              HttpServletRequest request) {
         if (code == null || code.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "missing oauth code");
         }
+
+        // Validate state parameter to prevent CSRF.
+        String cookieState = readCookie(request, OAUTH_STATE_COOKIE);
+        if (state == null || state.isBlank() || cookieState == null || !state.equals(cookieState)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid oauth state");
+        }
+
         GitHubTokenResponse token = githubService.exchangeCodeForToken(code);
         if (token == null || token.accessToken() == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "github token exchange failed");
@@ -120,6 +164,8 @@ public class AuthController {
                 .location(URI.create(appConfig.getFrontendUrl() + "/dashboard"))
                 .header(HttpHeaders.SET_COOKIE, buildCookie(ACCESS_TOKEN_COOKIE, access, jwtConfig.getAccessTokenExpiry()).toString())
                 .header(HttpHeaders.SET_COOKIE, buildCookie(REFRESH_TOKEN_COOKIE, refresh, jwtConfig.getRefreshTokenExpiry()).toString())
+                // Clear the OAuth state cookie now that the handshake is complete.
+                .header(HttpHeaders.SET_COOKIE, clearCookie(OAUTH_STATE_COOKIE).toString())
                 .build();
     }
 
@@ -222,11 +268,11 @@ public class AuthController {
                     redis.delete("session:refresh:" + userId);
                 } catch (Exception e) {
                     // Log but don't fail the logout
-                    System.err.println("Failed to clean up refresh token: " + e.getMessage());
+                    log.error("Failed to clean up refresh token", e);
                 }
             } catch (Exception e) {
                 // If token extraction fails, still proceed with logout
-                System.err.println("Failed to blacklist token: " + e.getMessage());
+                log.error("Failed to blacklist token", e);
             }
         }
 
@@ -235,8 +281,6 @@ public class AuthController {
                 .header(HttpHeaders.SET_COOKIE, clearCookie(REFRESH_TOKEN_COOKIE).toString())
                 .build();
     }
-
-    // --- helpers -----------------------------------------------------------
 
     private ResponseCookie buildCookie(String name, String value, long maxAgeSeconds) {
         // Secure is configurable so local HTTP development can authenticate,

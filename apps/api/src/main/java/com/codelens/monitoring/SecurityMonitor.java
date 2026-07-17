@@ -64,13 +64,18 @@ public class SecurityMonitor implements HealthIndicator {
 
     /**
      * Record a successful authentication.
+     *
+     * <p>Resets only the failed-attempt counter for the specific IP that
+     * just authenticated — not every IP tracked in the map. A blanket
+     * {@code clear()} would unfairly reset brute-force tracking for
+     * unrelated clients.</p>
      */
-    public void recordSuccess(UUID userId, String username, String method) {
+    public void recordSuccess(UUID userId, String username, String method, String ip) {
         successfulAuths.incrementAndGet();
         eventLogger.logAuthenticationSuccess(userId, username, method);
 
-        // Reset failed attempts on successful auth
-        failedAttemptsByIP.clear();
+        // Reset failed attempts for this specific IP only.
+        failedAttemptsByIP.remove(ip);
     }
 
     /**

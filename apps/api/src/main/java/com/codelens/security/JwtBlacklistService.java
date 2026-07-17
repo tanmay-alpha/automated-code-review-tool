@@ -1,5 +1,7 @@
 package com.codelens.security;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class JwtBlacklistService {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtBlacklistService.class);
     private static final String BLACKLIST_PREFIX = "blacklist:jti:";
     private final StringRedisTemplate redis;
     private final long tokenExpiryHours;
@@ -47,7 +50,9 @@ public class JwtBlacklistService {
         redis.opsForValue().set(key, "blacklisted", Duration.ofSeconds(ttl));
 
         // Log for audit purposes
-        System.out.println("[AUDIT] Token blacklisted: " + jti.substring(0, Math.min(8, jti.length())) + "...");
+        log.warn("[AUDIT] Token blacklisted: jti={}, userId={}, reason={}",
+                jti.substring(0, Math.min(8, jti.length())) + "...",
+                "N/A", "logout");
     }
 
     /**

@@ -96,7 +96,22 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
     public ResponseEntity<Map<String, Object>> handleResponseStatus(org.springframework.web.server.ResponseStatusException ex) {
-        return body(HttpStatus.valueOf(ex.getStatusCode().value()), "UNAUTHORIZED", ex.getReason());
+        return body(HttpStatus.valueOf(ex.getStatusCode().value()), mapStatusCode(ex.getStatusCode().value()), ex.getReason());
+    }
+
+    /**
+     * Map HTTP status codes to matching error-code strings.
+     */
+    private static String mapStatusCode(int status) {
+        return switch (status) {
+            case 400 -> "BAD_REQUEST";
+            case 401 -> "UNAUTHORIZED";
+            case 403 -> "FORBIDDEN";
+            case 404 -> "NOT_FOUND";
+            case 429 -> "RATE_LIMIT_EXCEEDED";
+            case 500 -> "INTERNAL_ERROR";
+            default -> "ERROR";
+        };
     }
 
     @ExceptionHandler(Exception.class)

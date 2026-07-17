@@ -4,6 +4,7 @@ import com.codelens.dto.GitHubUserInfo;
 import com.codelens.entity.User;
 import com.codelens.repository.UserRepository;
 import com.codelens.security.EncryptionService;
+import com.codelens.service.ApiKeyService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,14 +33,17 @@ public class UserService {
     private final UserRepository userRepository;
     private final EncryptionService encryptionService;
     private final PasswordEncoder passwordEncoder;
+    private final ApiKeyService apiKeyService;
     private final SecureRandom random = new SecureRandom();
 
     public UserService(UserRepository userRepository,
                        EncryptionService encryptionService,
-                       PasswordEncoder passwordEncoder) {
+                       PasswordEncoder passwordEncoder,
+                       ApiKeyService apiKeyService) {
         this.userRepository = userRepository;
         this.encryptionService = encryptionService;
         this.passwordEncoder = passwordEncoder;
+        this.apiKeyService = apiKeyService;
     }
 
     @Transactional
@@ -68,16 +72,19 @@ public class UserService {
     /**
      * Generate a new API key for the user. Returns the raw key — the caller
      * must show it to the user once and then forget it.
+     *
+     * <p>Delegates to {@link ApiKeyService#createKey(com.codelens.entity.User, String)}
+     * so all keys live in the dedicated {@code api_keys} table. The legacy
+     * {@code users.api_key_hash} / {@code users.api_key_prefix} columns are
+     * read-only and retained for backward compatibility only.</p>
      */
     @Transactional
     public String generateApiKey(UUID userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("user not found: " + userId));
-        String rawKey = API_KEY_PREFIX + randomHex(API_KEY_HEX_LEN);
-        user.setApiKeyHash(passwordEncoder.encode(rawKey));
-        user.setApiKeyPrefix(rawKey.substring(0, 12));
-        userRepository.save(user);
-        return rawKey;
+        // Delegate to ApiKeyService — keys are now managed via the api_keys table.
+        ApiKeyService.CreatedApiKey created = apiKeyService.createKey(user, "generated-by-user-service");
+        return created.plaintext();
     }
 
     private String randomHex(int hexChars) {
