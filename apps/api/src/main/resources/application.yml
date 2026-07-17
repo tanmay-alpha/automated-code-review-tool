@@ -2,6 +2,13 @@ spring:
   application:
     name: codelens-api
 
+  server:
+    max-http-request-header-size: 4KB
+
+  servlet:
+    multipart:
+      max-request-size: 1MB
+
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/codelens}
     username: ${SPRING_DATASOURCE_USERNAME:codelens}
@@ -20,9 +27,14 @@ spring:
       host: ${SPRING_REDIS_HOST:localhost}
       port: 6379
 
+
 app:
   frontend-url: ${FRONTEND_URL:http://localhost:3000}
   cookie-secure: ${COOKIE_SECURE:true}
+  request:
+    max-body-size: ${APP_MAX_BODY_SIZE:1048576}   # 1MB default for webhook + scan endpoints
+    max-query-size: 4096   # 4KB
+    max-header-size: 4096  # 4KB
   jwt:
     secret: ${JWT_SECRET}
     access-token-expiry: 900      # 15 minutes
