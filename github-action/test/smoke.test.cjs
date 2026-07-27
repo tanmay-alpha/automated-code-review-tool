@@ -1,4 +1,4 @@
-// Lightweight smoke test for the CodeLens GitHub Action.
+// Lightweight smoke test for the automated-code-review-tool GitHub Action.
 // Verifies that the action's source files are well-formed and that the
 // declared inputs / outputs are present.
 //
@@ -60,10 +60,11 @@ test('package.json declares required dependencies', () => {
 function actionHarness(overrides = {}) {
   const calls = { failed: [], outputs: {}, warnings: [], errors: [], notices: [] };
   const inputs = {
-    'api-url': 'http://localhost:8080',
+    'api-url': 'https://localhost:8080',
     'api-key': 'cl_live_test',
     language: 'python',
     'fail-threshold': '60',
+    'fetch-timeout-ms': '30000',
     ...overrides.inputs,
   };
   const core = {
@@ -79,7 +80,7 @@ function actionHarness(overrides = {}) {
     context: {
       eventName: 'pull_request',
       payload: { pull_request: { number: 42 } },
-      repo: { owner: 'tanmay-alpha', repo: 'codelens' },
+      repo: { owner: 'tanmay-alpha', repo: 'automated-code-review-tool' },
     },
     getOctokit: () => ({
       rest: { pulls: { get: async () => ({ data: 'diff --git a/a.py b/a.py\n+x = 1' }) } },
@@ -102,15 +103,17 @@ test('action submits the PR diff to the file scan endpoint', async () => {
 
   await run({ ...harness, fetch });
 
-  assert.equal(request.url, 'http://localhost:8080/api/scan/file');
+  assert.equal(request.url, 'https://localhost:8080/api/scan/file');
   assert.deepEqual(JSON.parse(request.init.body), {
     content: 'diff --git a/a.py b/a.py\n+x = 1',
     language: 'python',
-    filePath: 'tanmay-alpha/codelens#42',
+    filePath: 'tanmay-alpha/automated-code-review-tool#42',
   });
   assert.equal(request.init.headers.Authorization, 'Bearer cl_live_test');
   assert.deepEqual(harness.calls.failed, []);
   assert.equal(harness.calls.outputs['quality-score'], '100');
+  // The fetch now carries an AbortSignal so we can enforce a timeout.
+  assert.ok(request.init.signal instanceof AbortSignal, 'fetch must accept an AbortSignal');
 });
 
 test('action annotates findings and fails a score below threshold', async () => {
@@ -138,4 +141,16 @@ test('action annotates findings and fails a score below threshold', async () => 
   assert.equal(harness.calls.outputs['findings-count'], '1');
   assert.equal(harness.calls.outputs['critical-count'], '1');
   assert.match(harness.calls.failed[0], /below threshold 60/);
+});
+
+test('action rejects plain-http api-url (HTTPS only)', async () => {
+  const { run } = await import('../index.js');
+  const harness = actionHarness({ inputs: { 'api-url': 'http://insecure.example.com' } });
+  let fetched = false;
+  const fetch = async () => { fetched = true; return { ok: true, json: async () => ({}) }; };
+
+  await run({ ...harness, fetch });
+
+  assert.equal(fetched, false, 'fetch must NOT be called when api-url is plain http');
+  assert.match(harness.calls.failed[0], /https:\/\//);
 });
