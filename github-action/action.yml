@@ -1,13 +1,13 @@
-name: 'CodeLens Code Review'
+name: 'automated-code-review-tool Code Review'
 description: 'Semantic code review that catches anti-patterns linters miss'
-author: 'CodeLens'
+author: 'automated-code-review-tool'
 
 inputs:
   api-url:
-    description: 'CodeLens API URL (e.g. https://api.codelens.dev)'
+    description: 'automated-code-review-tool API URL (e.g. https://api.automated-code-review-tool.dev)'
     required: true
   api-key:
-    description: 'CodeLens API key from dashboard (Settings → API Key)'
+    description: 'automated-code-review-tool API key from dashboard (Settings → API Key)'
     required: true
   language:
     description: 'Primary language of the PR (python | javascript | java)'
@@ -17,10 +17,14 @@ inputs:
     description: 'Minimum quality score (0-100). Below this the action fails.'
     required: false
     default: '60'
+  fetch-timeout-ms:
+    description: 'Timeout for HTTP requests to the API and GitHub (1000-300000 ms).'
+    required: false
+    default: '30000'
 
 outputs:
   quality-score:
-    description: 'Quality score reported by CodeLens (0-100).'
+    description: 'Quality score reported by automated-code-review-tool (0-100).'
   findings-count:
     description: 'Total number of findings returned.'
   critical-count:

@@ -1,5 +1,5 @@
 /**
- * CodeLens GitHub Action entrypoint.
+ * automated-code-review-tool GitHub Action entrypoint.
  *
  * Fetches the pull-request diff, submits it to the ad-hoc file scan API,
  * emits annotations and outputs, and enforces the configured quality gate.
@@ -25,6 +25,11 @@ async function run(deps = {}) {
       coreApi.getInput('fail-threshold') || '60',
       10,
     );
+    // Configurable timeouts (ms) with sensible defaults.
+    const fetchTimeoutMs = Number.parseInt(
+      coreApi.getInput('fetch-timeout-ms') || '30000',
+      10,
+    );
 
     if (!apiUrl) return coreApi.setFailed('Missing required input: api-url');
     if (!apiKey) return coreApi.setFailed('Missing required input: api-key');
@@ -33,14 +38,26 @@ async function run(deps = {}) {
         `Invalid fail-threshold: must be 0-100, got ${failThreshold}`,
       );
     }
-    if (!/^https?:\/\//i.test(apiUrl)) {
-      return coreApi.setFailed(`api-url must start with http(s)://; got: ${apiUrl}`);
+    if (
+      Number.isNaN(fetchTimeoutMs) ||
+      fetchTimeoutMs < 1000 ||
+      fetchTimeoutMs > 300000
+    ) {
+      return coreApi.setFailed(
+        `Invalid fetch-timeout-ms: must be 1000-300000, got ${fetchTimeoutMs}`,
+      );
+    }
+    // HTTPS-only — a CI secret in HTTP is exfiltration waiting to happen.
+    if (!/^https:\/\//i.test(apiUrl)) {
+      return coreApi.setFailed(
+        `api-url must use https:// (plain http is rejected for security); got: ${apiUrl}`,
+      );
     }
 
     const context = githubApi.context;
     if (context.eventName !== 'pull_request') {
       coreApi.info(
-        `Event is "${context.eventName}"; CodeLens only runs on pull_request. Skipping.`,
+        `Event is "${context.eventName}"; automated-code-review-tool only runs on pull_request. Skipping.`,
       );
       return;
     }
@@ -52,21 +69,26 @@ async function run(deps = {}) {
 
     const repoFullName = `${context.repo.owner}/${context.repo.repo}`;
     coreApi.info(
-      `CodeLens: scanning ${repoFullName}#${prNumber} (language=${language})`,
+      `automated-code-review-tool: scanning ${repoFullName}#${prNumber} (language=${language})`,
     );
 
     const octokit = githubApi.getOctokit(process.env.GITHUB_TOKEN);
+    // Bound the GitHub diff fetch with the same timeout so we don't hang
+    // forever waiting on api.github.com.
     const { data: diff } = await octokit.rest.pulls.get({
       owner: context.repo.owner,
       repo: context.repo.repo,
       pull_number: prNumber,
       mediaType: { format: 'diff' },
+      request: { timeout: fetchTimeoutMs },
     });
     if (!diff || typeof diff !== 'string') {
       coreApi.warning('Empty diff returned from GitHub; nothing to scan.');
       return;
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), fetchTimeoutMs);
     const response = await fetchApi(`${apiUrl}/api/scan/file`, {
       method: 'POST',
       headers: {
@@ -79,12 +101,13 @@ async function run(deps = {}) {
         language,
         filePath: `${repoFullName}#${prNumber}`,
       }),
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId));
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       return coreApi.setFailed(
-        `CodeLens API returned HTTP ${response.status}: ${text.slice(0, 500)}`,
+        `automated-code-review-tool API returned HTTP ${response.status}: ${text.slice(0, 500)}`,
       );
     }
 
@@ -133,7 +156,7 @@ async function run(deps = {}) {
     coreApi.setOutput('critical-count', String(criticalCount));
     coreApi.info(
       [
-        `CodeLens complete: ${repoFullName}#${prNumber}`,
+        `automated-code-review-tool complete: ${repoFullName}#${prNumber}`,
         `Quality score: ${qualityScore == null ? 'n/a' : `${qualityScore}/100`}`,
         `Findings: ${findings.length} total (${criticalCount} critical, ${majorCount} major, ${minorCount} minor)`,
       ].join('\n'),
