@@ -1,4 +1,4 @@
-# docker-compose.yml — local development stack for the entire CodeLens MVP.
+# docker-compose.yml — local development stack for the entire automated-code-review-tool MVP.
 #
 # Brings up: postgres, redis, ml-worker, api, web.
 # Run:   docker compose up --build
@@ -11,11 +11,11 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: codelens-postgres
+    container_name: automated-code-review-tool-postgres
     environment:
-      POSTGRES_DB: codelens
-      POSTGRES_USER: ${POSTGRES_USER:-codelens}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-codelens_local}
+      POSTGRES_DB: automated-code-review-tool
+      POSTGRES_USER: ${POSTGRES_USER:-automated-code-review-tool}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-automated-code-review-tool_local}
     ports:
       - "5432:5432"
     volumes:
@@ -24,7 +24,7 @@ services:
       # volume is empty — i.e. the very first time you bring up the stack).
       - ../scripts/seed-db.sql:/docker-entrypoint-initdb.d/seed.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-codelens}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-automated-code-review-tool}"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -39,14 +39,30 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: codelens-redis
+    container_name: automated-code-review-tool-redis
     # Tiny inline healthcheck — Redis is fast enough that the default
     # 30s probe is way too long for the api's depends_on to gate on.
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    #
+    # Auth: password from $REDIS_PASSWORD (dev default is non-empty so the
+    # stack still boots without an .env, but production overrides MUST set
+    # a long random value). requirepass is honored even if the env var
+    # is unset/empty — we always pass a non-empty value through compose.
+    command:
+      - "redis-server"
+      - "--save"
+      - ""
+      - "--appendonly"
+      - "no"
+      - "--requirepass"
+      - "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"
+      - "--bind"
+      - "0.0.0.0"
+      - "--protected-mode"
+      - "yes"
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -56,9 +72,9 @@ services:
     build:
       context: ../apps/ml-worker
       dockerfile: Dockerfile
-    container_name: codelens-ml-worker
+    container_name: automated-code-review-tool-ml-worker
     environment:
-      - MODEL_NAME=${ML_MODEL_NAME:-tanmay-alpha/codelens-codebert}
+      - MODEL_NAME=${ML_MODEL_NAME:-tanmay-alpha/automated-code-review-tool-codebert}
       - HF_TOKEN=${HF_TOKEN:-}
       - ML_WORKER_SECRET=${ML_WORKER_SECRET}
     ports:
@@ -66,7 +82,7 @@ services:
     # NOTE: First startup is slow — model downloads ~500MB from HuggingFace.
     # After first run, model is cached in Docker volume.
     volumes:
-      - hf_cache:/home/codelens/.cache/huggingface
+      - hf_cache:/home/automated-code-review-tool/.cache/huggingface
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ml/health', timeout=2).status==200 else 1)"]
       interval: 30s
@@ -79,14 +95,15 @@ services:
     build:
       context: ../apps/api
       dockerfile: Dockerfile
-    container_name: codelens-api
+    container_name: automated-code-review-tool-api
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/codelens
-      - SPRING_DATASOURCE_USERNAME=codelens
-      - SPRING_DATASOURCE_PASSWORD=codelens_local
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/automated-code-review-tool
+      - SPRING_DATASOURCE_USERNAME=automated-code-review-tool
+      - SPRING_DATASOURCE_PASSWORD=automated-code-review-tool_local
       - SPRING_REDIS_HOST=redis
       - SPRING_REDIS_PORT=6379
+      - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
       - JWT_SECRET=${JWT_SECRET}
@@ -121,7 +138,7 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
-    container_name: codelens-web
+    container_name: automated-code-review-tool-web
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
