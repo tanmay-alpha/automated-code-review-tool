@@ -1,5 +1,5 @@
 """
-CodeLens — Sliding window tokenizer (Issue #8).
+automated-code-review-tool — Sliding window tokenizer (Issue #8).
 
 Splits long texts into overlapping token windows for models with a
 fixed max sequence length (CodeBERT: 512). Used at inference time when
@@ -84,7 +84,16 @@ def sliding_window_tokenize(
         # requires equal-length tensors.
         pad = max_length - len(ids)
         if pad > 0:
-            ids = ids + [tokenizer.pad_token_id] * pad
+            # Some tokenizers (gpt2, RoBERTa-class) leave pad_token_id=None
+            # until set explicitly. Falling back to eos_token_id is safe for
+            # both CodeBERT (pad=0) and GPT-2 (pad=eos=50256) — the model
+            # treats the pad positions as masked thanks to attention_mask=0.
+            pad_id = tokenizer.pad_token_id
+            if pad_id is None:
+                pad_id = tokenizer.eos_token_id
+                if pad_id is None:
+                    pad_id = 0
+            ids = ids + [pad_id] * pad
             mask = mask + [0] * pad
         windows.append({"input_ids": ids, "attention_mask": mask})
         if end == n:
