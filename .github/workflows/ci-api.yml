@@ -26,14 +26,14 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: codelens_test
-          POSTGRES_USER: codelens
-          POSTGRES_PASSWORD: codelens_test
+          POSTGRES_DB: automated-code-review-tool_test
+          POSTGRES_USER: automated-code-review-tool
+          POSTGRES_PASSWORD: automated-code-review-tool_test
         ports:
           - 5432:5432
         # Match local dev default so Spring Boot's healthcheck works.
         options: >-
-          --health-cmd "pg_isready -U codelens"
+          --health-cmd "pg_isready -U automated-code-review-tool"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
@@ -47,12 +47,14 @@ jobs:
       # intentionally uses H2; the Postgres service container defined
       # above is preserved for any future ad-hoc `mvn` runs against
       # a real Postgres (e.g. `mvn flyway:migrate`).
-      JWT_SECRET: ${{ secrets.JWT_SECRET_TEST || 'ci_test_secret_must_be_at_least_64_bytes_long_for_hs512_aaaa' }}
-      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY_TEST || 'ci_test_encryption_key_32b!' }}
+      #
+      # Secrets MUST be set in repo settings; no hardcoded fallbacks.
+      JWT_SECRET: ${{ secrets.JWT_SECRET_TEST }}
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY_TEST }}
       ML_WORKER_URL: http://localhost:8000
-      ML_WORKER_SECRET: ci_test_ml_worker_secret
-      GITHUB_CLIENT_ID: ci_test_client_id
-      GITHUB_CLIENT_SECRET: ci_test_client_secret
+      ML_WORKER_SECRET: ${{ secrets.ML_WORKER_SECRET_TEST }}
+      GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID_TEST }}
+      GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET_TEST }}
 
     steps:
       - name: Checkout
