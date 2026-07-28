@@ -1,0 +1,102 @@
+version: phase-0
+description: |
+  Canonical anti-pattern taxonomy for automated-code-review-tool.
+  All Python inference, fallback scanner, Java persistence, SQL seeds, and tests
+  MUST use IDs from this file.
+anti_patterns:
+  - id: SECURITY_HARDCODED_SECRET
+    display_name: "Hardcoded Secret"
+    category: SECURITY
+    default_severity: critical
+    description: |
+      A credential such as an API key, password, or token is hard-coded into
+      the source tree. Such credentials should be loaded from an environment
+      variable, a vault, or a secrets manager.
+
+  - id: SECURITY_SQL_INJECTION
+    display_name: "SQL Injection"
+    category: SECURITY
+    default_severity: major
+    description: |
+      User-controlled input is concatenated into a SQL string passed to
+      execute() or similar. Use parameterised queries or an ORM instead.
+
+  - id: SECURITY_WEAK_CRYPTO
+    display_name: "Weak Cryptography"
+    category: SECURITY
+    default_severity: major
+    description: |
+      Use of weak or broken cryptographic primitives (MD5, SHA-1, DES, RC4,
+      Math.random, etc.). Use SHA-256+, AES, or a vetted crypto library.
+
+  - id: PERFORMANCE_N_PLUS_ONE
+    display_name: "N+1 Query"
+    category: PERFORMANCE
+    default_severity: major
+    description: |
+      A loop performs a per-iteration database or remote call that should be
+      batched into a single query or lookup.
+
+  - id: PERFORMANCE_QUADRATIC_LOOP
+    display_name: "Quadratic Loop"
+    category: PERFORMANCE
+    default_severity: major
+    description: |
+      Nested iteration with O(n^2) or worse complexity. Consider a hashmap
+      lookup, sorting, or a single pass.
+
+  - id: RELIABILITY_BROAD_EXCEPTION
+    display_name: "Broad Exception"
+    category: RELIABILITY
+    default_severity: major
+    description: |
+      A bare except, catch-all Exception, or Java catch (Exception|Throwable)
+      that swallows errors and obscures root causes.
+
+  - id: RELIABILITY_MISSING_TIMEOUT
+    display_name: "Missing Timeout"
+    category: RELIABILITY
+    default_severity: minor
+    description: |
+      External call (HTTP, DB, lock, queue) has no timeout, which may cause
+      indefinite blocking.
+
+  - id: READABILITY_MAGIC_NUMBER
+    display_name: "Magic Number"
+    category: READABILITY
+    default_severity: minor
+    description: |
+      Unexplained numeric literal in code. Extract into a named constant so
+      its purpose is obvious.
+
+  - id: READABILITY_LONG_METHOD
+    display_name: "Long Statement"
+    category: READABILITY
+    default_severity: minor
+    description: |
+      A single statement or line that exceeds reasonable length, often a
+      sign it should be split into smaller pieces.
+
+  - id: MAINTAINABILITY_DUPLICATE_CODE
+    display_name: "Duplicate Code"
+    category: MAINTAINABILITY
+    default_severity: minor
+    description: |
+      Identical or near-identical logic appears in multiple places. Extract
+      a shared helper so future changes only need to be made once.
+
+  - id: PRINT_TO_STDOUT
+    display_name: "Print to Stdout"
+    category: PRINT
+    default_severity: minor
+    description: |
+      Direct print() or console.log() in code paths that should use
+      structured logging (logging module, winston, pino).
+
+  - id: MAINTAINABILITY_COMMENTED_CODE
+    display_name: "Commented-Out Code"
+    category: MAINTAINABILITY
+    default_severity: minor
+    description: |
+      Multi-line blocks of commented-out code. Remove them; version control
+      preserves the previous logic if you ever need to restore it.
