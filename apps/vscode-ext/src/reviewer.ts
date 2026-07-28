@@ -18,6 +18,7 @@ import {
   Diagnostic,
   DiagnosticCollection,
   DiagnosticSeverity,
+  Range,
   TextDocument,
   Uri,
   window,
@@ -97,12 +98,20 @@ export async function scanFile(
     return;
   }
 
+  const content = doc.getText();
+  if (content.length > 1_048_576) {
+    statusBar().text = "$(warning) automated-code-review-tool: file too large (>1MB)";
+    statusBar().tooltip = "File exceeds 1MB limit for automatic scanning.";
+    statusBar().show();
+    return;
+  }
+
   statusBar().text = "$(sync~spin) automated-code-review-tool: scanning…";
   statusBar().show();
 
   try {
     const response = await postScan({
-      content: doc.getText(),
+      content,
       language: doc.languageId,
       filePath: doc.fileName,
     }, getApiUrl());
@@ -134,10 +143,15 @@ async function postScan(
   const timer = setTimeout(() => controller.abort(), 15_000);
 
   try {
-    if (apiUrl.startsWith("http://")) {
-      void window.showWarningMessage(
-        "automated-code-review-tool: API URL uses plain HTTP — credentials may be exposed on the network.",
-      );
+    try {
+      const url = new URL(apiUrl);
+      if (url.protocol === "http:" && !["localhost", "127.0.0.1"].includes(url.hostname)) {
+        void window.showWarningMessage(
+          "automated-code-review-tool: API key is being sent over unencrypted HTTP.",
+        );
+      }
+    } catch {
+      // invalid URL will fail fetch below
     }
 
     const res = await fetch(`${apiUrl}/api/scan/file`, {
@@ -166,7 +180,11 @@ async function postScan(
       );
     }
 
-    return (await res.json()) as ScanFileResponse;
+    const parsed = await res.json();
+    if (!parsed || !Array.isArray(parsed.findings)) {
+      throw new Error("Invalid API response shape: expected { findings: [...] }");
+    }
+    return parsed as ScanFileResponse;
   } finally {
     clearTimeout(timer);
   }
@@ -215,17 +233,16 @@ function toDiagnostic(f: FindingDTO): Diagnostic {
   // start of the file rather than a zero-width Range(0,0,0,0).
   const range =
     f.lineStart == null
-      ? new (require("vscode").Range)(0, 0, 0, 1)
-      : new (require("vscode").Range)(startLine, 0, endLine, Number.MAX_SAFE_INTEGER);
+      ? new Range(0, 0, 0, 1)
+      : new Range(startLine, 0, endLine, Number.MAX_SAFE_INTEGER);
 
   const severity = mapSeverity(f.severity);
 
   // The diagnostic message is rendered in the editor's hover popup
   // and the Problems panel. We pack anti-pattern name + confidence +
   // explanation into a stable, readable format.
-  const pct = typeof f.confidence === "number"
-    ? ` (${Math.round(f.confidence * 100)}% confidence)`
-    : "";
+  const pctVal = typeof f.confidence === "number" ? Math.min(100, Math.max(0, Math.round(f.confidence * 100))) : null;
+  const pct = pctVal !== null ? ` (${pctVal}% confidence)` : "";
   const message = `${prettify(f.antiPattern)}${pct}: ${f.explanation}`;
 
   const d = new Diagnostic(range, message, severity);
