@@ -1,4 +1,4 @@
--- CodeLens local-dev seed SQL. Runs automatically the first time
+-- automated-code-review-tool local-dev seed SQL. Runs automatically the first time
 -- `docker compose up` is invoked (against an empty postgres volume).
 --
 -- This file is intentionally minimal — schema is owned by Spring Boot /
@@ -10,4 +10,4 @@
 -- CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 
 -- Done — schema migrations are applied by Spring Boot on api startup.
-SELECT 'CodeLens dev DB ready — schema will be created by Spring Boot Flyway migrations.' AS status;
+SELECT 'automated-code-review-tool dev DB ready — schema will be created by Spring Boot Flyway migrations.' AS status;
