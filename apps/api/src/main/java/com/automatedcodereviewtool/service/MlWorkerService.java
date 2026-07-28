@@ -1,9 +1,10 @@
-package com.codelens.service;
+package com.automatedcodereviewtool.service;
 
-import com.codelens.dto.MlReviewRequest;
-import com.codelens.dto.MlReviewResponse;
-import com.codelens.exception.InvalidDiffException;
-import com.codelens.exception.MlWorkerException;
+import com.automatedcodereviewtool.dto.MlFinding;
+import com.automatedcodereviewtool.dto.MlReviewRequest;
+import com.automatedcodereviewtool.dto.MlReviewResponse;
+import com.automatedcodereviewtool.exception.InvalidDiffException;
+import com.automatedcodereviewtool.exception.MlWorkerException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,8 +15,11 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -177,7 +181,7 @@ public class MlWorkerService {
         }
     }
 
-    public List<com.codelens.dto.MlFinding> reviewFindings(String diff, String language) {
+    public List<com.automatedcodereviewtool.dto.MlFinding> reviewFindings(String diff, String language) {
         MlReviewResponse resp = review(diff, language);
         return resp == null || resp.findings() == null ? List.of() : resp.findings();
     }
@@ -187,4 +191,71 @@ public class MlWorkerService {
     String getMlWorkerUrl() { return mlWorkerUrl; }
 
     String getMlWorkerSecret() { return mlWorkerSecret; }
+
+    // -- Fallback scoring (used when worker omits the score field) -----
+
+    /**
+     * Compute a quality score from a finding list when the ML worker
+     * omitted one. Applies a simple penalty model:
+     *   critical=20, major=10, minor=5, weighted by confidence.
+     * Result is clamped to [0, 100] and rounded to 2dp.
+     */
+    public static BigDecimal computeQualityScore(MlReviewResponse response) {
+        if (response == null) return BigDecimal.ZERO;
+        BigDecimal ws = response.qualityScore();
+        if (ws != null) {
+            return ws.min(BigDecimal.valueOf(100)).max(BigDecimal.ZERO)
+                    .setScale(2, RoundingMode.HALF_UP);
+        }
+        if (response.findings() == null || response.findings().isEmpty()) {
+            return BigDecimal.valueOf(100);
+        }
+        BigDecimal penalty = BigDecimal.ZERO;
+        for (MlFinding f : response.findings()) {
+            BigDecimal conf = f.confidence() == null ? BigDecimal.ZERO : f.confidence();
+            BigDecimal weight = switch (f.severity() == null ? "minor" : f.severity().toLowerCase(Locale.ROOT)) {
+                case "critical" -> BigDecimal.valueOf(20);
+                case "major" -> BigDecimal.valueOf(10);
+                default -> BigDecimal.valueOf(5);
+            };
+            penalty = penalty.add(weight.multiply(conf));
+        }
+        BigDecimal score = BigDecimal.valueOf(100).subtract(penalty);
+        return score.max(BigDecimal.ZERO).min(BigDecimal.valueOf(100))
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Detect the dominant language in a unified diff by counting
+     * added/removed lines per file-extension bucket. Falls back to
+     * {@code "python"} if no recognisable extension is present.
+     */
+    public static String detectLanguage(String diff) {
+        if (diff == null || diff.isBlank()) return "python";
+        int py = 0, js = 0, java = 0;
+        String currentFile = null;
+        for (String raw : diff.split("\n")) {
+            String line = raw.stripLeading();
+            if (line.startsWith("diff --git")) {
+                int b = line.indexOf(" b/");
+                if (b > 0) {
+                    currentFile = line.substring(b + 3);
+                } else {
+                    currentFile = null;
+                }
+            }
+            if (currentFile != null && (line.startsWith("+") || line.startsWith("-"))
+                    && !line.startsWith("+++") && !line.startsWith("---")) {
+                String lower = currentFile.toLowerCase(Locale.ROOT);
+                if (lower.endsWith(".py")) py++;
+                else if (lower.endsWith(".js") || lower.endsWith(".jsx")
+                        || lower.endsWith(".ts") || lower.endsWith(".tsx")) js++;
+                else if (lower.endsWith(".java")) java++;
+            }
+        }
+        if (py >= js && py >= java && py > 0) return "python";
+        if (js >= py && js >= java && js > 0) return "javascript";
+        if (java > 0) return "java";
+        return "python";
+    }
 }

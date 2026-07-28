@@ -1,17 +1,17 @@
-package com.codelens.service;
+package com.automatedcodereviewtool.service;
 
-import com.codelens.dto.MlFinding;
-import com.codelens.dto.MlReviewResponse;
-import com.codelens.dto.ReviewResult;
-import com.codelens.entity.Finding;
-import com.codelens.entity.PullRequestEntity;
-import com.codelens.entity.QualityMetric;
-import com.codelens.entity.Repository;
-import com.codelens.exception.MlWorkerException;
-import com.codelens.repository.FindingRepository;
-import com.codelens.repository.PullRequestRepository;
-import com.codelens.repository.QualityMetricRepository;
-import com.codelens.repository.RepositoryRepository;
+import com.automatedcodereviewtool.dto.MlFinding;
+import com.automatedcodereviewtool.dto.MlReviewResponse;
+import com.automatedcodereviewtool.dto.ReviewResult;
+import com.automatedcodereviewtool.entity.Finding;
+import com.automatedcodereviewtool.entity.PullRequestEntity;
+import com.automatedcodereviewtool.entity.QualityMetric;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.exception.MlWorkerException;
+import com.automatedcodereviewtool.repository.FindingRepository;
+import com.automatedcodereviewtool.repository.PullRequestRepository;
+import com.automatedcodereviewtool.repository.QualityMetricRepository;
+import com.automatedcodereviewtool.repository.RepositoryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -22,9 +22,9 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Orchestrates a single review: call ML worker → persist findings →
@@ -37,6 +37,13 @@ import java.util.Locale;
 public class ReviewService {
 
     private static final Logger log = LoggerFactory.getLogger(ReviewService.class);
+
+    // Regex to parse unified diff headers: @@ -oldStart,oldCount +newStart,newCount @@
+    private static final Pattern HUNK_HEADER_RE = Pattern.compile(
+            "^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@");
+    // Regex to parse diff --git lines: diff --git a/<path> b/<path>
+    private static final Pattern GIT_HEADER_RE = Pattern.compile(
+            "^diff --git a/.+? b/(.+)$");
 
     private final MlWorkerService mlWorkerService;
     private final FindingRepository findingRepository;
@@ -72,7 +79,7 @@ public class ReviewService {
             diff = "";
         }
 
-        String language = detectLanguage(diff);
+        String language = MlWorkerService.detectLanguage(diff);
         log.info("Reviewing PR #{} — detected language: {}", pr.getGithubPrNumber(), language);
 
         MlReviewResponse mlResponse;
@@ -86,16 +93,19 @@ public class ReviewService {
             return ReviewResult.empty(ex.getMessage());
         }
 
+        // Parse the diff to extract file paths and code snippets for findings.
+        DiffParseResult parsed = parseDiff(diff);
+
         // -- persist findings (batch delete + save) ------------------------
         findingRepository.deleteAllByPullRequestId(pr.getId());
         List<Finding> saved = new ArrayList<>();
-        BigDecimal score = computeQualityScore(mlResponse);
+        BigDecimal score = MlWorkerService.computeQualityScore(mlResponse);
 
         if (mlResponse.findings() != null) {
             for (MlFinding ml : mlResponse.findings()) {
                 Finding f = Finding.builder()
                         .pullRequest(pr)
-                        .filePath("n/a")
+                        .filePath(resolveFilePath(ml, parsed))
                         .lineStart(ml.lineStart())
                         .lineEnd(ml.lineEnd())
                         .antiPattern(ml.antiPattern() == null ? "UNKNOWN" : ml.antiPattern())
@@ -103,6 +113,7 @@ public class ReviewService {
                         .severity(ml.severity() == null ? "minor" : ml.severity())
                         .confidence(ml.confidence() == null ? BigDecimal.ZERO : ml.confidence())
                         .explanation(ml.explanation())
+                        .codeSnippet(extractCodeSnippet(ml, parsed))
                         .build();
                 saved.add(findingRepository.save(f));
             }
@@ -115,6 +126,9 @@ public class ReviewService {
         pr.setReviewedAt(Instant.now());
         pullRequestRepository.save(pr);
 
+        // -- update repository rolling quality score -----------------------
+        updateRepositoryQualityScore(pr.getRepo(), score);
+
         // -- quality metric ------------------------------------------------
         updateQualityMetric(pr.getRepo(), score, saved);
 
@@ -124,60 +138,117 @@ public class ReviewService {
     }
 
     // -----------------------------------------------------------------
-    // Language detection — counts lines touched per extension, picks the winner
+    // Diff parsing — maps line numbers to file paths and extracts snippets
     // -----------------------------------------------------------------
 
     /**
-     * Inspect the diff and pick the most-represented language by
-     * counting the number of lines in files of each extension.
+     * Result of parsing a unified diff. Contains a map from line number
+     * to file path, and a map from line number to the line text.
      */
-    static String detectLanguage(String diff) {
-        if (diff == null || diff.isBlank()) return "python";
-        int py = 0, js = 0, java = 0;
-        String currentFile = null;
-        for (String raw : diff.split("\n")) {
-            String line = raw.stripLeading();
-            if (line.startsWith("diff --git")) {
-                // Extract file extension from the b/ path
-                int b = line.indexOf(" b/");
-                if (b > 0) {
-                    currentFile = line.substring(b + 3);
-                } else {
-                    currentFile = null;
-                }
+    record DiffParseResult(
+            Map<Integer, String> lineToFile,
+            Map<Integer, String> lineToText,
+            List<String> fileOrder
+    ) {}
+
+    /**
+     * Parses a unified diff into per-line file-path and text maps.
+     * This enables populating {@link Finding#filePath} and
+     * {@link Finding#codeSnippet} from the diff data.
+     */
+    private DiffParseResult parseDiff(String diff) {
+        Map<Integer, String> lineToFile = new HashMap<>();
+        Map<Integer, String> lineToText = new HashMap<>();
+        List<String> fileOrder = new ArrayList<>();
+        Set<String> seenFiles = new LinkedHashSet<>();
+
+        String currentFile = "unknown";
+        int currentLine = 0;
+
+        for (String rawLine : diff.split("\n")) {
+            String line = rawLine;
+
+            // Track file changes from diff --git headers
+            Matcher gitMatcher = GIT_HEADER_RE.matcher(line);
+            if (gitMatcher.find()) {
+                currentFile = gitMatcher.group(1);
+                seenFiles.add(currentFile);
+                continue;
             }
-            if (currentFile != null && (line.startsWith("+") || line.startsWith("-"))
-                    && !line.startsWith("+++") && !line.startsWith("---")) {
-                // Count only added/removed (non-context) lines
-                String lower = currentFile.toLowerCase(Locale.ROOT);
-                if (lower.endsWith(".py")) py++;
-                else if (lower.endsWith(".js") || lower.endsWith(".jsx")
-                        || lower.endsWith(".ts") || lower.endsWith(".tsx")) js++;
-                else if (lower.endsWith(".java")) java++;
+
+            // Track hunk headers to know the new file's starting line
+            Matcher hunkMatcher = HUNK_HEADER_RE.matcher(line);
+            if (hunkMatcher.find()) {
+                // The +-side starting line number
+                currentLine = Integer.parseInt(hunkMatcher.group(2));
+                continue;
+            }
+
+            // Track content lines (the + lines in the new file)
+            if (line.startsWith("+") && !line.startsWith("+++")) {
+                lineToFile.put(currentLine, currentFile);
+                lineToText.put(currentLine, line.substring(1));
+                currentLine++;
+            } else if (line.startsWith("-") && !line.startsWith("---")) {
+                // Removed lines don't advance the new file line number
+                // but we still track them for reference
+            } else if (!line.startsWith("@@") && !line.startsWith("diff ")) {
+                // Context lines in the new file
+                currentLine++;
             }
         }
-        // Bonus for .py default — if no signal at all, fall back
-        if (py >= js && py >= java && py > 0) return "python";
-        if (js >= py && js >= java && js > 0) return "javascript";
-        if (java > 0) return "java";
-        return "python";
+
+        fileOrder.addAll(seenFiles);
+        return new DiffParseResult(lineToFile, lineToText, fileOrder);
     }
 
     /**
-     * Build the GitHub PR comment markdown. Delegates to the static
-     * helper in {@link WebhookService}.
+     * Resolve the file path for a finding based on its line number.
      */
+    private String resolveFilePath(MlFinding ml, DiffParseResult parsed) {
+        if (ml.lineStart() == null) {
+            return parsed.fileOrder.isEmpty() ? "unknown" : parsed.fileOrder.get(0);
+        }
+        String path = parsed.lineToFile().get(ml.lineStart());
+        return path != null ? path : (parsed.fileOrder.isEmpty() ? "unknown" : parsed.fileOrder.get(0));
+    }
+
+    /**
+     * Extract a code snippet around the flagged lines from the parsed diff.
+     * Returns up to 5 lines of context (2 before, the flagged line, 2 after).
+     */
+    private String extractCodeSnippet(MlFinding ml, DiffParseResult parsed) {
+        if (ml.lineStart() == null) {
+            return null;
+        }
+        int start = ml.lineStart();
+        int end = ml.lineEnd() != null ? ml.lineEnd() : start;
+
+        StringBuilder sb = new StringBuilder();
+        for (int line = Math.max(1, start - 2); line <= end + 2; line++) {
+            String text = parsed.lineToText().get(line);
+            if (text != null) {
+                sb.append(text).append("\n");
+            }
+        }
+        String snippet = sb.toString().trim();
+        return snippet.isEmpty() ? null : snippet;
+    }
+
+    // -----------------------------------------------------------------
+    // GitHub comment markdown
+    // -----------------------------------------------------------------
+
     String formatGithubComment(List<Finding> findings, BigDecimal score) {
-        // Count severities
         int critical = 0, major = 0, minor = 0;
         for (Finding f : findings) {
             String sev = f.getSeverity() == null ? "minor" : f.getSeverity().toLowerCase(Locale.ROOT);
             if ("critical".equals(sev)) critical++;
             else if ("major".equals(sev)) major++;
-            else if ("minor".equals(sev)) minor++;
+            else minor++;
         }
         return WebhookService.buildComment(findings.stream()
-                        .map(f -> new com.codelens.dto.MlFinding(
+                        .map(f -> new com.automatedcodereviewtool.dto.MlFinding(
                                 f.getLineStart(),
                                 f.getLineEnd(),
                                 f.getAntiPattern(),
@@ -190,42 +261,14 @@ public class ReviewService {
     }
 
     // -----------------------------------------------------------------
-    // Quality score — penalty model
-    // -----------------------------------------------------------------
-
-    /**
-     * Compute a 0–100 quality score. Uses the worker's {@code qualityScore}
-     * when available; falls back to a penalty calculation from findings.
-     */
-    static BigDecimal computeQualityScore(MlReviewResponse response) {
-        if (response == null) return BigDecimal.ZERO;
-        BigDecimal ws = response.qualityScore();
-        if (ws != null) {
-            return ws.min(BigDecimal.valueOf(100)).max(BigDecimal.ZERO)
-                    .setScale(2, RoundingMode.HALF_UP);
-        }
-        // Fallback: 100 minus weighted penalties
-        if (response.findings() == null || response.findings().isEmpty()) {
-            return BigDecimal.valueOf(100);
-        }
-        BigDecimal penalty = BigDecimal.ZERO;
-        for (MlFinding f : response.findings()) {
-            BigDecimal conf = f.confidence() == null ? BigDecimal.ZERO : f.confidence();
-            BigDecimal weight = switch (f.severity() == null ? "minor" : f.severity().toLowerCase(Locale.ROOT)) {
-                case "critical" -> BigDecimal.valueOf(20);
-                case "major" -> BigDecimal.valueOf(10);
-                default -> BigDecimal.valueOf(5);
-            };
-            penalty = penalty.add(weight.multiply(conf));
-        }
-        BigDecimal score = BigDecimal.valueOf(100).subtract(penalty);
-        return score.max(BigDecimal.ZERO).min(BigDecimal.valueOf(100))
-                .setScale(2, RoundingMode.HALF_UP);
-    }
-
-    // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
+
+    private void updateRepositoryQualityScore(Repository repo, BigDecimal score) {
+        if (repo == null) return;
+        repo.setQualityScore(score);
+        repositoryRepository.save(repo);
+    }
 
     private void updateQualityMetric(Repository repo, BigDecimal score, List<Finding> findings) {
         if (repo == null) return;
@@ -240,6 +283,7 @@ public class ReviewService {
                         .criticalCount(0)
                         .majorCount(0)
                         .minorCount(0)
+                        .updatedAt(Instant.now())
                         .build());
         int prevCount = metric.getPrsReviewed();
         BigDecimal prevAvg = metric.getAvgQuality() == null ? BigDecimal.ZERO : metric.getAvgQuality();
@@ -260,6 +304,7 @@ public class ReviewService {
         metric.setCriticalCount(metric.getCriticalCount() + critical);
         metric.setMajorCount(metric.getMajorCount() + major);
         metric.setMinorCount(metric.getMinorCount() + minor);
+        // updatedAt is automatically set by @UpdateTimestamp
         qualityMetricRepository.save(metric);
     }
 }
