@@ -1,5 +1,5 @@
 """
-CodeLens — Final evaluation script (Issue #6).
+automated-code-review-tool — Final evaluation script (Issue #6).
 
 Runs ONCE after training is complete. Evaluates the fine-tuned model
 on the held-out test set and compares against the keyword baseline
@@ -34,8 +34,8 @@ NUM_LABELS = 6
 LABEL_NAMES = CATEGORIES  # fixed order: SECURITY, PERFORMANCE, ARCHITECTURE, RELIABILITY, READABILITY, MAINTAINABILITY
 MAX_SEQ_LENGTH = 512
 THRESHOLD = 0.5
-HF_REPO = "tanmay-alpha/codelens-codebert"
-OUTPUT_DIR = "./codelens-model"
+HF_REPO = "tanmay-alpha/automated-code-review-tool-codebert"
+OUTPUT_DIR = "./automated-code-review-tool-model"
 DATA_DIR = "./training/data"
 TEST_FILE = "test.json"
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -214,7 +214,7 @@ def _format_md_table(model_per_label: dict, model_summary: dict,
     Rows:     fine-tuned, keyword, gpt-4o (placeholder).
     """
     lines: list[str] = []
-    lines.append("# CodeLens — Final Evaluation Results")
+    lines.append("# automated-code-review-tool — Final Evaluation Results")
     lines.append("")
     lines.append("Source: `apps/ml-worker/training/evaluate.py` on the held-out test set.")
     lines.append("")

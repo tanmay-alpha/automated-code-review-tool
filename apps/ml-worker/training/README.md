@@ -1,4 +1,4 @@
-# CodeLens — Training Pipeline
+# automated-code-review-tool — Training Pipeline
 
 > Step-by-step guide to: download the dataset, label it, verify the labels, split by PR, fine-tune CodeBERT on Colab, and evaluate on the held-out test set.
 >
@@ -125,8 +125,8 @@ Runtime → Change runtime type → **T4 GPU**.
 ### 5.2 Clone the repo and install training deps
 
 ```python
-!git clone https://github.com/tanmay-alpha/codelens.git
-%cd codelens
+!git clone https://github.com/tanmay-alpha/automated-code-review-tool.git
+%cd automated-code-review-tool
 !pip install -r apps/ml-worker/requirements-train.txt
 ```
 
@@ -141,7 +141,7 @@ drive.mount('/content/drive')
 
 ### 5.4 Copy your data into the repo
 
-If you ran steps 1–4 locally, upload `apps/ml-worker/training/data/train.json` and `val.json` to Colab (the actual files — do NOT upload `test.json`). Place them under `codelens/apps/ml-worker/training/data/`.
+If you ran steps 1–4 locally, upload `apps/ml-worker/training/data/train.json` and `val.json` to Colab (the actual files — do NOT upload `test.json`). Place them under `automated-code-review-tool/apps/ml-worker/training/data/`.
 
 ### 5.5 Set the HuggingFace token (for pushing the model)
 
@@ -150,7 +150,7 @@ import os
 os.environ["HF_TOKEN"] = "<your-hf-token>"
 ```
 
-Get a token from https://huggingface.co/settings/tokens. The token must have write access to the target repo (`tanmay-alpha/codelens-codebert`).
+Get a token from https://huggingface.co/settings/tokens. The token must have write access to the target repo (`tanmay-alpha/automated-code-review-tool-codebert`).
 
 ### 5.6 Run training
 
@@ -164,14 +164,14 @@ This will:
 3. Fine-tune `microsoft/codebert-base` for 5 epochs, batch size 16, lr 2e-5.
 4. Use `BCEWithLogitsLoss` (explicit in code) since this is multi-label classification.
 5. Evaluate at every epoch and keep the best checkpoint by **val macro-F1**.
-6. Push the best checkpoint to `tanmay-alpha/codelens-codebert` on the Hub.
+6. Push the best checkpoint to `tanmay-alpha/automated-code-review-tool-codebert` on the Hub.
 
 Total wall time on a T4: ~2–4 hours.
 
 ### 5.7 Save the model locally (optional)
 
 ```python
-!cp -r codelens-model /content/drive/MyDrive/codelens-model
+!cp -r automated-code-review-tool-model /content/drive/MyDrive/automated-code-review-tool-model
 ```
 
 ---
@@ -183,7 +183,7 @@ python apps/ml-worker/training/evaluate.py
 ```
 
 This runs ONCE, on the held-out `test.json`. It will:
-1. Load the fine-tuned model from `tanmay-alpha/codelens-codebert` (falls back to local `./codelens-model` if Hub load fails).
+1. Load the fine-tuned model from `tanmay-alpha/automated-code-review-tool-codebert` (falls back to local `./automated-code-review-tool-model` if Hub load fails).
 2. Run inference on every test sample.
 3. Run the keyword baseline (from `label_mapper.py`) on the same samples.
 4. Compute per-label P/R/F1 and macro-F1 for both.
@@ -225,4 +225,4 @@ The markdown report has a placeholder row for the GPT-4o baseline — fill that 
 | `WEIGHT_DECAY` | `0.01` | Standard |
 | `WARMUP_RATIO` | `0.1` | 10% warmup |
 | `THRESHOLD` | `0.5` | Sigmoid threshold for converting logits → binary |
-| `HF_REPO` | `tanmay-alpha/codelens-codebert` | Private Hub repo |
+| `HF_REPO` | `tanmay-alpha/automated-code-review-tool-codebert` | Private Hub repo |

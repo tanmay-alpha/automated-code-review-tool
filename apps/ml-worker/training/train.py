@@ -11,7 +11,7 @@
 # Colab Pro T4 fits BATCH_SIZE=16 with MAX_SEQ_LENGTH=512.
 
 """
-CodeLens — CodeBERT fine-tuning script (Issue #5).
+automated-code-review-tool — CodeBERT fine-tuning script (Issue #5).
 
 Trains microsoft/codebert-base on the multi-label CodeReviewer dataset
 produced by split.py, with 6 binary heads (one per category).
@@ -63,8 +63,8 @@ NUM_EPOCHS = 5
 WEIGHT_DECAY = 0.01
 WARMUP_RATIO = 0.1
 THRESHOLD = 0.5
-HF_REPO = "tanmay-alpha/codelens-codebert"
-OUTPUT_DIR = "./codelens-model"
+HF_REPO = "tanmay-alpha/automated-code-review-tool-codebert"
+OUTPUT_DIR = "./automated-code-review-tool-model"
 DATA_DIR = "./training/data"
 TRAIN_FILE = "train.json"
 VAL_FILE = "val.json"
@@ -288,10 +288,10 @@ def main() -> int:
         print(f"\nPushing best model + tokenizer to {HF_REPO} ...")
         try:
             trainer.model.push_to_hub(
-                HF_REPO, use_auth_token=hf_token, commit_message="CodeLens fine-tuned CodeBERT (Issue #5)"
+                HF_REPO, use_auth_token=hf_token, commit_message="automated-code-review-tool fine-tuned CodeBERT (Issue #5)"
             )
             tokenizer.push_to_hub(
-                HF_REPO, use_auth_token=hf_token, commit_message="CodeLens tokenizer"
+                HF_REPO, use_auth_token=hf_token, commit_message="automated-code-review-tool tokenizer"
             )
             print(f"Pushed to https://huggingface.co/{HF_REPO}")
         except Exception as e:

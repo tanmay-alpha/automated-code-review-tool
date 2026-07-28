@@ -1,5 +1,5 @@
 """
-CodeLens — Interactive sample verification script (Issue #3).
+automated-code-review-tool — Interactive sample verification script (Issue #3).
 
 Loads labeled samples via label_mapper.filter_and_label_dataset(),
 draws 500 random items (seeded), and walks the user through them one
@@ -34,7 +34,7 @@ from label_mapper import (  # noqa: E402
 TARGET_SAMPLE_SIZE = 500
 RANDOM_SEED = 42
 DIFF_SNIPPET_LINES = 8
-REPO_ROOT = Path(__file__).resolve().parents[3]   # .../codelens
+REPO_ROOT = Path(__file__).resolve().parents[3]   # .../automated-code-review-tool
 RAW_DIR = REPO_ROOT / "apps" / "ml-worker" / "training" / "data" / "raw"
 REPORT_DIR = REPO_ROOT / "apps" / "ml-worker" / "training" / "data"
 REPORT_JSON = REPORT_DIR / "verification_report.json"

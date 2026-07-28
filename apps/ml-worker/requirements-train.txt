@@ -1,5 +1,5 @@
 # =====================================================
-# CodeLens — ml-worker training-only dependencies
+# automated-code-review-tool — ml-worker training-only dependencies
 # =====================================================
 # Install on top of requirements.txt when running training
 # (Google Colab Pro T4 environment).
