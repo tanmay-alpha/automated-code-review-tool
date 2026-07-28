@@ -117,7 +117,7 @@ describe("DiffViewer", () => {
         .getAllByTestId("diff-row")
         .find((r) => r.getAttribute("data-line") === "2");
       expect(row).toBeDefined();
-      expect(row!.className).toContain("codelens-finding-critical");
+      expect(row!.className).toContain("automated-code-review-tool-finding-critical");
     });
   });
 
@@ -128,7 +128,7 @@ describe("DiffViewer", () => {
         .getAllByTestId("diff-row")
         .find((r) => r.getAttribute("data-line") === "4");
       expect(row).toBeDefined();
-      expect(row!.className).toContain("codelens-finding-minor");
+      expect(row!.className).toContain("automated-code-review-tool-finding-minor");
     });
   });
 
@@ -138,7 +138,7 @@ describe("DiffViewer", () => {
     await waitFor(() => {
       const rows = screen.getAllByTestId("diff-row");
       const anyHighlighted = rows.some((r) =>
-        r.className.includes("codelens-finding-"),
+        r.className.includes("automated-code-review-tool-finding-"),
       );
       expect(anyHighlighted).toBe(false);
     });
@@ -167,7 +167,7 @@ describe("DiffViewer", () => {
           .getAllByTestId("diff-row")
           .find((r) => r.getAttribute("data-line") === String(ln));
         expect(row).toBeDefined();
-        expect(row!.className).toContain("codelens-finding-critical");
+        expect(row!.className).toContain("automated-code-review-tool-finding-critical");
       }
     });
   });
@@ -186,8 +186,8 @@ describe("DiffViewer", () => {
         .find((r) => r.getAttribute("data-line") === "2");
       expect(row).toBeDefined();
       // Critical wins over minor.
-      expect(row!.className).toContain("codelens-finding-critical");
-      expect(row!.className).not.toContain("codelens-finding-minor");
+      expect(row!.className).toContain("automated-code-review-tool-finding-critical");
+      expect(row!.className).not.toContain("automated-code-review-tool-finding-minor");
     });
   });
 
@@ -226,7 +226,7 @@ describe("DiffViewer", () => {
     await waitFor(() => {
       const rows = screen.getAllByTestId("diff-row");
       const anyHighlighted = rows.some((r) =>
-        r.className.includes("codelens-finding-"),
+        r.className.includes("automated-code-review-tool-finding-"),
       );
       expect(anyHighlighted).toBe(false);
     });
