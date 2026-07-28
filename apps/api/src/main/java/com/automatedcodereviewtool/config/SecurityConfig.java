@@ -1,10 +1,10 @@
-package com.codelens.config;
+package com.automatedcodereviewtool.config;
 
-import com.codelens.security.ApiKeyAuthFilter;
-import com.codelens.security.AuthRateLimitFilter;
-import com.codelens.security.JwtAuthFilter;
-import com.codelens.security.RequestSizeLimitFilter;
-import com.codelens.logging.LogRedactorFilter;
+import com.automatedcodereviewtool.security.ApiKeyAuthFilter;
+import com.automatedcodereviewtool.security.AuthRateLimitFilter;
+import com.automatedcodereviewtool.security.JwtAuthFilter;
+import com.automatedcodereviewtool.security.RequestSizeLimitFilter;
+import com.automatedcodereviewtool.logging.LogRedactorFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -45,7 +45,7 @@ import java.util.List;
  */
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties(AppConfig.class)
+@EnableConfigurationProperties({AppConfig.class, WebhookConfig.class})
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
