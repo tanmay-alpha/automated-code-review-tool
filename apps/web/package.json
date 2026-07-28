@@ -1,5 +1,5 @@
 {
-  "name": "@codelens/web",
+  "name": "@automated-code-review-tool/web",
   "version": "0.1.0",
   "private": true,
   "scripts": {

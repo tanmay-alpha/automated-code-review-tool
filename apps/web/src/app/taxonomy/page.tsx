@@ -24,7 +24,7 @@ import { severityClasses } from "@/lib/utils";
  * to detect. No API calls — the content is hard-coded from the plan
  * (ENGINEERING_PLAN.md §3 — label taxonomy).
  *
- * This page is the canonical reference for what CodeLens can catch; we
+ * This page is the canonical reference for what automated-code-review-tool can catch; we
  * embed code snippets directly so the dashboard works offline and the
  * taxonomy never drifts from the model without an explicit update.
  */
@@ -206,7 +206,7 @@ function TaxonomyContent() {
           <h1 className="text-3xl font-bold tracking-tight">Taxonomy</h1>
         </div>
         <p className="mt-2 text-muted-foreground">
-          The {PATTERNS.length} anti-patterns the CodeLens model was trained
+          The {PATTERNS.length} anti-patterns the automated-code-review-tool model was trained
           to detect. Severity ratings follow{" "}
           <span className="font-mono">ENGINEERING_PLAN.md §3</span>.
         </p>
