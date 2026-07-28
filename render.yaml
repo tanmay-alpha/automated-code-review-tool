@@ -80,6 +80,14 @@ services:
       - key: JAVA_TOOL_OPTIONS
         value: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
 
+  # NOTE: In Phase 0 no fine-tuned model checkpoint exists yet.
+  # MODEL_NAME is intentionally set to "none" so the FastAPI worker
+  # loads in fallback-only mode — all detections go through the
+  # rule-based scanner.  When a trained checkpoint is added later,
+  # set MODEL_NAME to the HuggingFace repo (e.g. "org/codebert-sonar")
+  # and unset it back to "none" to disable the fallback path.
+  # HF_TOKEN should be populated in Render when a real checkpoint is used.
+
   # ── FastAPI ML Worker ─────────────────────────────────────────────────
   - type: web
     name: automated-code-review-tool-ml-worker
@@ -91,11 +99,11 @@ services:
     healthCheckPath: /ml/health
     healthCheckTimeout: 120
     autoDeploy: true
-    # Larger plan needed for PyTorch + CodeBERT model (~500MB)
-    # Standard plan provides 2GB RAM
+    # Standard plan (2 GB RAM) is sufficient for fallback-only mode.
+    # No PyTorch model is loaded when MODEL_NAME="none".
     envVars:
       - key: MODEL_NAME
-        value: "microsoft/codebert-base"
+        value: "none"
       - key: HF_TOKEN
         sync: false
       - key: ML_WORKER_SECRET
