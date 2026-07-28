@@ -7,10 +7,12 @@ selection, sliding-window tokenization, and max-pool aggregation.
 
 `LABEL_CONFIG` is the single source of truth mapping model output
 index → (antiPattern, category, severity, explanation_template). The
-order here MUST match `label_mapper.LABEL_NAMES` from training.
+order here MUST match the order of the canonical taxonomy at
+``taxonomy/anti_patterns.yaml`` (built at runtime by ``build_label_config``).
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -18,53 +20,176 @@ import torch
 from app.config import settings
 from app.schemas import Finding
 from app.tokenizer_utils import aggregate_logits, sliding_window_tokenize
+from app.taxonomy import load_taxonomy
 
 if TYPE_CHECKING:
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    pass
+
+logger = logging.getLogger(__name__)
+
+
+# ----------------------------------------------------------------------
+# Quality score contract (Phase 0)
+# ----------------------------------------------------------------------
+# Severity penalty weights. MUST match the contract tested in
+# ``tests/test_quality_score.py`` AND the Java implementation in
+# ``apps/api``. See README § "Quality scoring contract".
+SEVERITY_PENALTY: dict[str, float] = {
+    "critical": 20.0,
+    "major": 10.0,
+    "minor": 3.0,
+}
+
+
+def compute_quality_score(findings: list[Finding]) -> float:
+    """Compute the 0–100 quality score for a list of findings.
+
+    Contract (see README):
+      * critical: 20-point penalty
+      * major: 10-point penalty
+      * minor: 3-point penalty
+      * each penalty is multiplied by the finding's confidence
+      * the result is `100 - sum(penalty * confidence)`,
+        clamped to [0, 100] and rounded to two decimals.
+
+    This MUST produce identical numbers to the Java implementation in
+    ``apps/api`` for the same inputs.
+    """
+    raw = 100.0
+    for f in findings:
+        raw -= SEVERITY_PENALTY.get(f.severity, 0.0) * float(f.confidence)
+    clamped = max(0.0, min(100.0, raw))
+    return round(clamped, 2)
 
 
 # ----------------------------------------------------------------------
 # Label configuration (index → finding metadata)
 # ----------------------------------------------------------------------
-# Index order MUST match the training label order in label_mapper.py.
-LABEL_CONFIG: list[dict[str, str]] = [
-    {
-        "name": "SECURITY_HARDCODED_SECRET",
-        "category": "SECURITY",
-        "severity": "critical",
-        "explanation_template": "Hardcoded secret detected — use environment variables or a secrets manager.",
-    },
-    {
-        "name": "PERFORMANCE_N_PLUS_1",
-        "category": "PERFORMANCE",
-        "severity": "major",
-        "explanation_template": "N+1 query pattern detected — batch the queries or use eager loading.",
-    },
-    {
-        "name": "ARCH_GOD_CLASS",
-        "category": "ARCHITECTURE",
-        "severity": "major",
-        "explanation_template": "Class has too many responsibilities — split it along its cohesion boundaries.",
-    },
-    {
-        "name": "RELY_BARE_EXCEPT",
-        "category": "RELIABILITY",
-        "severity": "major",
-        "explanation_template": "Bare `except` swallows all errors, including KeyboardInterrupt — catch a specific exception.",
-    },
-    {
-        "name": "READ_MAGIC_NUMBER",
-        "category": "READABILITY",
-        "severity": "minor",
-        "explanation_template": "Magic number with no name — extract it into a named constant.",
-    },
-    {
-        "name": "MAINT_DEEP_NESTING",
-        "category": "MAINTAINABILITY",
-        "severity": "minor",
-        "explanation_template": "Deeply nested code is hard to follow — extract helper functions or use early returns.",
-    },
-]
+def build_label_config() -> list[dict[str, str]]:
+    """Build LABEL_CONFIG from the canonical taxonomy YAML.
+
+    Ensures that model output index ``i`` always maps to the same
+    anti-pattern ID the rest of the system uses. If the YAML changes,
+    the model becomes incompatible and ``validate_checkpoint_compatibility``
+    reports it degraded.
+    """
+    taxonomy = load_taxonomy()
+    return [
+        {
+            "name": ap.id,
+            "category": ap.category,
+            "severity": ap.default_severity,
+            "explanation_template": (
+                ap.description.strip().splitlines()[0]
+                if ap.description
+                else f"{ap.display_name} detected."
+            ),
+        }
+        for ap in taxonomy.entries
+    ]
+
+
+LABEL_CONFIG: list[dict[str, str]] = build_label_config()
+
+
+# ----------------------------------------------------------------------
+# Checkpoint compatibility validation
+# ----------------------------------------------------------------------
+def validate_checkpoint_compatibility(model: Any, taxonomy: Any | None = None) -> dict[str, Any]:
+    """Validate that a loaded HF model is compatible with the taxonomy.
+
+    Returns a small structured envelope so callers can mark the service
+    degraded. A non-compatible checkpoint is NEVER used for inference —
+    the caller is responsible for that decision.
+    """
+    if taxonomy is None:
+        taxonomy = load_taxonomy()
+
+    expected_num_labels = len(taxonomy.entries)
+    expected_id2label: dict[int, str] = {
+        i: ap.id for i, ap in enumerate(taxonomy.entries)
+    }
+    expected_taxonomy_version = taxonomy.version
+
+    cfg = getattr(model, "config", None)
+    if cfg is None:
+        return {
+            "status": "degraded",
+            "reason": "model has no config attribute",
+            "expected_num_labels": expected_num_labels,
+        }
+
+    actual_num_labels = getattr(cfg, "num_labels", None)
+    if actual_num_labels != expected_num_labels:
+        return {
+            "status": "degraded",
+            "reason": (
+                f"num_labels={actual_num_labels} != "
+                f"len(taxonomy)={expected_num_labels}"
+            ),
+            "expected_num_labels": expected_num_labels,
+            "actual_num_labels": actual_num_labels,
+        }
+
+    actual_id2label = getattr(cfg, "id2label", None)
+    if not isinstance(actual_id2label, dict) or not actual_id2label:
+        return {
+            "status": "degraded",
+            "reason": "id2label missing or empty",
+            "expected_num_labels": expected_num_labels,
+        }
+
+    try:
+        actual_normalized = {int(k): v for k, v in actual_id2label.items()}
+    except (TypeError, ValueError):
+        return {
+            "status": "degraded",
+            "reason": "id2label keys must be ints",
+            "expected_num_labels": expected_num_labels,
+        }
+
+    for idx, expected_label in expected_id2label.items():
+        if actual_normalized.get(idx) != expected_label:
+            return {
+                "status": "degraded",
+                "reason": (
+                    f"id2label[{idx}]={actual_normalized.get(idx)!r} != "
+                    f"{expected_label!r}"
+                ),
+                "expected_num_labels": expected_num_labels,
+            }
+
+    # task_type / expected taxonomy version check
+    actual_task = getattr(cfg, "problem_type", None)
+    if actual_task and actual_task not in ("multi_label_classification",):
+        # HuggingFace sets ``problem_type`` to the task type. Our model
+        # is multi-label; reject anything that says otherwise.
+        return {
+            "status": "degraded",
+            "reason": (
+                f"problem_type={actual_task!r} is not 'multi_label_classification'"
+            ),
+            "expected_num_labels": expected_num_labels,
+        }
+
+    # Optional taxonomy version is also recorded on the config (some
+    # checkpoints save it as ``taxonomy_version``).
+    actual_version = getattr(cfg, "taxonomy_version", None)
+    if actual_version and actual_version != expected_taxonomy_version:
+        return {
+            "status": "degraded",
+            "reason": (
+                f"taxonomy_version mismatch: checkpoint={actual_version!r} "
+                f"code={expected_taxonomy_version!r}"
+            ),
+            "expected_num_labels": expected_num_labels,
+        }
+
+    return {
+        "status": "healthy",
+        "expected_num_labels": expected_num_labels,
+        "taxonomy_version": expected_taxonomy_version,
+    }
 
 
 # ----------------------------------------------------------------------
@@ -98,11 +223,35 @@ class AutomatedCodeReviewToolModel:
         ).to(self.device)
         self.model.eval()
 
+        # Validate checkpoint compatibility against the canonical taxonomy.
+        # If incompatible, refuse to serve predictions: leave self.model
+        # attribute set (so healthcheck can report it) but mark the
+        # service degraded and route inference to the fallback scanner.
+        self.compatibility: dict[str, Any] = validate_checkpoint_compatibility(self.model)
+        if self.compatibility["status"] != "healthy":
+            logger.warning(
+                "Checkpoint %s is incompatible: %s — service will run in fallback mode.",
+                self.model_name,
+                self.compatibility.get("reason"),
+            )
+
+    @property
+    def is_healthy(self) -> bool:
+        return bool(getattr(self, "compatibility", {}).get("status") == "healthy")
+
     # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
     def predict(self, text: str, language: str) -> list[Finding]:
-        """Run inference on `text`, return findings above the threshold."""
+        """Run inference on `text`, return findings above the threshold.
+
+        Returns an empty list if the checkpoint was incompatible at
+        construction time. Callers should use the fallback scanner
+        when ``is_healthy`` is False.
+        """
+        if not self.is_healthy:
+            return []
+
         windows = sliding_window_tokenize(
             text,
             self.tokenizer,
@@ -150,20 +299,3 @@ class AutomatedCodeReviewToolModel:
             )
         return findings
 
-
-# ----------------------------------------------------------------------
-# Quality score
-# ----------------------------------------------------------------------
-_SEVERITY_PENALTY: dict[str, float] = {
-    "critical": 20.0,
-    "major": 10.0,
-    "minor": 3.0,
-}
-
-
-def compute_quality_score(findings: list[Finding]) -> float:
-    """100 minus a weighted sum of severity penalties, floored at 0."""
-    score = 100.0
-    for f in findings:
-        score -= _SEVERITY_PENALTY.get(f.severity, 0.0)
-    return max(0.0, score)
