@@ -1,11 +1,11 @@
-package com.codelens.config;
+package com.automatedcodereviewtool.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Properties under the {@code app.jwt} prefix in application.yml.
  *
- * <p>Bound to {@link com.codelens.security.JwtService} on startup.
+ * <p>Bound to {@link com.automatedcodereviewtool.security.JwtService} on startup.
  * The {@code secret} must be at least 32 bytes (HS256 minimum key size);
  * the application will fail to start otherwise.</p>
  */
