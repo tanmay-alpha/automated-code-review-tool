@@ -1,15 +1,19 @@
-package com.codelens.service;
+package com.automatedcodereviewtool.service;
 
-import com.codelens.entity.PullRequestEntity;
-import com.codelens.entity.QualityMetric;
-import com.codelens.entity.Repository;
-import com.codelens.entity.User;
-import com.codelens.exception.ConnectRepoException;
-import com.codelens.repository.PullRequestRepository;
-import com.codelens.repository.QualityMetricRepository;
-import com.codelens.repository.RepositoryRepository;
-import com.codelens.repository.UserRepository;
-import com.codelens.security.EncryptionService;
+import com.automatedcodereviewtool.entity.PullRequestEntity;
+import com.automatedcodereviewtool.entity.QualityMetric;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.exception.ConnectRepoException;
+import com.automatedcodereviewtool.repository.FindingRepository;
+import com.automatedcodereviewtool.repository.PullRequestRepository;
+import com.automatedcodereviewtool.repository.QualityMetricRepository;
+import com.automatedcodereviewtool.repository.RepositoryRepository;
+import com.automatedcodereviewtool.repository.UserRepository;
+import com.automatedcodereviewtool.security.EncryptionService;
+import com.automatedcodereviewtool.dto.FindingStats;
+import com.automatedcodereviewtool.dto.FindingTrendRow;
+import com.automatedcodereviewtool.config.WebhookConfig;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +30,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -52,6 +57,7 @@ public class RepoService {
     private final UserRepository userRepository;
     private final PullRequestRepository pullRequestRepository;
     private final QualityMetricRepository qualityMetricRepository;
+    private final FindingRepository findingRepository;
     private final GitHubService gitHubService;
     private final EncryptionService encryptionService;
     private final String webhookCallbackUrl;
@@ -61,16 +67,18 @@ public class RepoService {
                        UserRepository userRepository,
                        PullRequestRepository pullRequestRepository,
                        QualityMetricRepository qualityMetricRepository,
+                       FindingRepository findingRepository,
                        GitHubService gitHubService,
                        EncryptionService encryptionService,
-                       @Value("${app.webhook.callback-url}") String webhookCallbackUrl) {
+                       WebhookConfig webhookConfig) {
         this.repositoryRepository = repositoryRepository;
         this.userRepository = userRepository;
         this.pullRequestRepository = pullRequestRepository;
         this.qualityMetricRepository = qualityMetricRepository;
+        this.findingRepository = findingRepository;
         this.gitHubService = gitHubService;
         this.encryptionService = encryptionService;
-        this.webhookCallbackUrl = webhookCallbackUrl;
+        this.webhookCallbackUrl = webhookConfig.getCallbackUrl();
     }
 
     // -------------------------------------------------------------------
@@ -126,7 +134,7 @@ public class RepoService {
         // 3. Reject if this github-id is already connected (any user) —
         //    avoids accidentally double-hooking the same repo for two users.
         if (repositoryRepository.findByGithubId(ghId).isPresent()) {
-            throw new ConnectRepoException("This repository is already connected to a CodeLens account");
+            throw new ConnectRepoException("This repository is already connected to an automated-code-review-tool account");
         }
 
         // 4. Generate secret + install webhook on GitHub. If GitHub
@@ -272,6 +280,43 @@ public class RepoService {
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
         LocalDate from = today.minusDays(window - 1L);
         return qualityMetricRepository.findRange(repo, from, today);
+    }
+
+    // -------------------------------------------------------------------
+    // dashboard stats
+    // -------------------------------------------------------------------
+
+    /**
+     * Returns a per-repo aggregate of finding counts grouped by
+     * anti-pattern and severity, backed by a single GROUP-BY query
+     * (no N+1). Used by the dashboard's "biggest issues this week"
+     * chart.
+     */
+    @Transactional(readOnly = true)
+    public List<FindingStats> findingStatsForOwner(User caller, UUID repoId) {
+        Repository repo = repositoryRepository.findById(repoId)
+                .orElseThrow(() -> new EntityNotFoundException("Repo " + repoId + " not found"));
+        if (!repo.getOwner().getId().equals(caller.getId())) {
+            throw new EntityNotFoundException("Repo " + repoId + " not found");
+        }
+        return findingRepository.aggregateByAntiPatternAndSeverity(repo.getId());
+    }
+
+    /**
+     * Returns the daily trend of finding counts for the given repo over
+     * the last {@code days} days (clamped 1..365). Backed by a single
+     * GROUP-BY query — service layer must not iterate Findings.
+     */
+    @Transactional(readOnly = true)
+    public List<FindingTrendRow> trendForOwner(User caller, UUID repoId, int days) {
+        Repository repo = repositoryRepository.findById(repoId)
+                .orElseThrow(() -> new EntityNotFoundException("Repo " + repoId + " not found"));
+        if (!repo.getOwner().getId().equals(caller.getId())) {
+            throw new EntityNotFoundException("Repo " + repoId + " not found");
+        }
+        int window = Math.max(1, Math.min(days, 365));
+        Instant since = Instant.now().minus(window, ChronoUnit.DAYS);
+        return findingRepository.trendByDay(repo.getId(), since);
     }
 
     // -------------------------------------------------------------------
