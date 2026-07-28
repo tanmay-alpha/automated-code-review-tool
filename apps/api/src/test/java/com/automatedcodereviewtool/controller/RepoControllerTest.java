@@ -1,16 +1,16 @@
-package com.codelens.controller;
+package com.automatedcodereviewtool.controller;
 
-import com.codelens.entity.Repository;
-import com.codelens.entity.User;
-import com.codelens.repository.RepositoryRepository;
-import com.codelens.repository.UserRepository;
-import com.codelens.security.ApiKeyAuthFilter;
-import com.codelens.security.AuthRateLimitFilter;
-import com.codelens.security.JwtAuthFilter;
-import com.codelens.security.EncryptionService;
-import com.codelens.service.ApiKeyService;
-import com.codelens.service.GitHubService;
-import com.codelens.service.RepoService;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.repository.RepositoryRepository;
+import com.automatedcodereviewtool.repository.UserRepository;
+import com.automatedcodereviewtool.security.ApiKeyAuthFilter;
+import com.automatedcodereviewtool.security.AuthRateLimitFilter;
+import com.automatedcodereviewtool.security.JwtAuthFilter;
+import com.automatedcodereviewtool.security.EncryptionService;
+import com.automatedcodereviewtool.service.ApiKeyService;
+import com.automatedcodereviewtool.service.GitHubService;
+import com.automatedcodereviewtool.service.RepoService;
 import jakarta.servlet.FilterChain;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,10 +40,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * with an H2 in-memory database (PostgreSQL-compatibility mode) and the
  * real Flyway migrations.
  *
- * <p>The {@link com.codelens.security.ApiKeyAuthFilter} is replaced with
+ * <p>The {@link com.automatedcodereviewtool.security.ApiKeyAuthFilter} is replaced with
  * a Mockito mock so we don't need Redis; the JWT auth is bypassed by
  * attaching an authenticated principal to each request via
- * {@link com.codelens.security.test.SecurityMockMvcRequestPostProcessors#user}.
+ * {@link com.automatedcodereviewtool.security.test.SecurityMockMvcRequestPostProcessors#user}.
  * The {@code GitHubService} is mocked to avoid real HTTP calls.</p>
  *
  * <p>The api_keys table is exercised by the JPA layer; we don't need a

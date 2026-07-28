@@ -1,8 +1,8 @@
-package com.codelens.security;
+package com.automatedcodereviewtool.security;
 
-import com.codelens.entity.ApiKey;
-import com.codelens.entity.User;
-import com.codelens.service.ApiKeyService;
+import com.automatedcodereviewtool.entity.ApiKey;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.service.ApiKeyService;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

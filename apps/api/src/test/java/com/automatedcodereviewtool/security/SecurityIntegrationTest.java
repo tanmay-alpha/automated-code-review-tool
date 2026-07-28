@@ -1,8 +1,8 @@
-package com.codelens.security;
+package com.automatedcodereviewtool.security;
 
-import com.codelens.config.SecurityConfig;
-import com.codelens.logging.SecurityEventLogger;
-import com.codelens.monitoring.SecurityMonitor;
+import com.automatedcodereviewtool.config.SecurityConfig;
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.monitoring.SecurityMonitor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -22,7 +22,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import java.time.Duration;
-import com.codelens.webhook.HmacVerifier;
+import com.automatedcodereviewtool.webhook.HmacVerifier;
 
 import java.util.UUID;
 
