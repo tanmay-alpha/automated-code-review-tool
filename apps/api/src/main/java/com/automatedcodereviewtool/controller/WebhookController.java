@@ -66,6 +66,11 @@ public class WebhookController {
             @RequestHeader(value = "X-GitHub-Delivery", required = false) String deliveryId,
             @RequestBody String payload) {
 
+        if (payload != null && payload.length() > 1_048_576) {
+            log.warn("Payload size exceeds maximum allowed 1MB limit; length={}", payload.length());
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).build();
+        }
+
         if (deliveryId == null || deliveryId.isBlank()) {
             // A blank delivery-id means we can't dedupe — treat as
             // a malformed request rather than silently processing.

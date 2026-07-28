@@ -104,10 +104,9 @@ public class ReviewController {
      * unauthorized callers.
      */
     private static boolean isOwnedBy(PullRequestEntity pr, User caller) {
-        if (caller == null || caller.getGithubUsername() == null) return false;
+        if (caller == null || caller.getId() == null) return false;
         Repository repo = pr.getRepo();
-        if (repo == null || repo.getOwner() == null) return false;
-        String ownerLogin = repo.getOwner().getGithubUsername();
-        return ownerLogin != null && ownerLogin.equals(caller.getGithubUsername());
+        if (repo == null || repo.getOwner() == null || repo.getOwner().getId() == null) return false;
+        return caller.getId().equals(repo.getOwner().getId());
     }
 }

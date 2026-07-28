@@ -60,4 +60,12 @@ public class AppConfig {
     public void setCookieSecure(boolean cookieSecure) {
         this.cookieSecure = cookieSecure;
     }
+
+    @jakarta.annotation.PostConstruct
+    public void validateCookieSecurity() {
+        String activeProfile = System.getProperty("spring.profiles.active", System.getenv("SPRING_PROFILES_ACTIVE"));
+        if (!cookieSecure && activeProfile != null && !activeProfile.contains("dev") && !activeProfile.contains("test")) {
+            log.warn("COOKIE_SECURE is disabled in a non-dev profile ('{}'). Auth cookies will be sent over unencrypted HTTP.", activeProfile);
+        }
+    }
 }

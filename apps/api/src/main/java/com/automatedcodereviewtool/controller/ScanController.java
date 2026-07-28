@@ -143,12 +143,11 @@ public class ScanController {
      * have rejected them).
      */
     private static boolean isOwnedBy(Finding finding, User caller) {
-        if (caller == null || caller.getGithubUsername() == null) return false;
+        if (caller == null || caller.getId() == null) return false;
         PullRequestEntity pr = finding.getPullRequest();
         if (pr == null) return false;
         Repository repo = pr.getRepo();
-        if (repo == null || repo.getOwner() == null) return false;
-        String ownerLogin = repo.getOwner().getGithubUsername();
-        return caller.getGithubUsername().equalsIgnoreCase(ownerLogin);
+        if (repo == null || repo.getOwner() == null || repo.getOwner().getId() == null) return false;
+        return caller.getId().equals(repo.getOwner().getId());
     }
 }
