@@ -29,11 +29,10 @@ import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import torch
-from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.metrics import f1_score
 from torch.utils.data import Dataset
 from transformers import (
     AutoModelForSequenceClassification,
@@ -51,7 +50,6 @@ from transformers import (
 # with the IDs the rest of the system uses. The input to the model is
 # the **diff only**; the review comment is held out as a future
 # generation target.
-import os as _os
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _TAXONOMY_PATH = _REPO_ROOT / "taxonomy" / "anti_patterns.yaml"
 
