@@ -1,4 +1,4 @@
-package com.codelens.config;
+package com.automatedcodereviewtool.config;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
