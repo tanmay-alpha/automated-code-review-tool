@@ -1,12 +1,12 @@
-package com.codelens.controller;
+package com.automatedcodereviewtool.controller;
 
-import com.codelens.entity.ProcessedWebhook;
-import com.codelens.repository.ProcessedWebhookRepository;
-import com.codelens.service.WebhookService;
-import com.codelens.webhook.GitHubWebhookEvent;
-import com.codelens.webhook.HmacVerificationException;
-import com.codelens.logging.SecurityEventLogger;
-import com.codelens.webhook.HmacVerifier;
+import com.automatedcodereviewtool.entity.ProcessedWebhook;
+import com.automatedcodereviewtool.repository.ProcessedWebhookRepository;
+import com.automatedcodereviewtool.service.WebhookService;
+import com.automatedcodereviewtool.webhook.GitHubWebhookEvent;
+import com.automatedcodereviewtool.webhook.HmacVerificationException;
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.webhook.HmacVerifier;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,7 +67,9 @@ public class WebhookController {
             @RequestBody String payload) {
 
         if (deliveryId == null || deliveryId.isBlank()) {
-            return ResponseEntity.ok().build();
+            // A blank delivery-id means we can't dedupe — treat as
+            // a malformed request rather than silently processing.
+            return ResponseEntity.badRequest().build();
         }
 
         // 1. Event filter: only process pull_request.
