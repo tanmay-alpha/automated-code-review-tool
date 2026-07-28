@@ -1,5 +1,5 @@
 """
-CodeLens — Model inference (Issue #9).
+automated-code-review-tool — Model inference (Issue #9).
 
 Wraps the fine-tuned CodeBERT model behind a `predict(text, language)`
 method that returns a list of `Finding` objects. Handles device
@@ -70,7 +70,7 @@ LABEL_CONFIG: list[dict[str, str]] = [
 # ----------------------------------------------------------------------
 # Model wrapper
 # ----------------------------------------------------------------------
-class CodeLensModel:
+class AutomatedCodeReviewToolModel:
     """Lazy-loaded fine-tuned CodeBERT wrapped in a clean predict() API."""
 
     def __init__(
@@ -80,12 +80,10 @@ class CodeLensModel:
         max_seq_length: int | None = None,
         hf_token: str | None = None,
     ) -> None:
-        # Imports are deferred to keep unit tests light.
-        from transformers import AutoModelForSequenceClassification, AutoTokenizer  # noqa: F401
-
         self.model_name = model_name or settings.MODEL_NAME
         self.threshold = threshold if threshold is not None else settings.THRESHOLD
-        self.max_seq_length = max_seq_length or settings.MAX_SEQ_LENGTH
+        self.max_seq_length = max_seq_length if max_seq_length is not None else settings.MAX_SEQ_LENGTH
+        self.last_windows_processed = 0
         token = hf_token if hf_token is not None else settings.HF_TOKEN
         token_kw: dict[str, Any] = {"token": token} if token else {}
 

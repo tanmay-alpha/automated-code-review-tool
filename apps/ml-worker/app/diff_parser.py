@@ -1,5 +1,5 @@
 """
-CodeLens — Unified diff parser (Issue #7).
+automated-code-review-tool — Unified diff parser (Issue #7).
 
 Parses a unified-diff string into a list of per-file FileHunk objects,
 handles multiple files in one diff, skips binary files silently, and
@@ -52,7 +52,6 @@ def infer_language(file_path: str) -> str:
 
 # Regexes used during parsing.
 _GIT_HEADER_RE = re.compile(r"^diff --git a/(.+?) b/(.+?)\s*$")
-_DEV_NULL_RE = re.compile(r"^diff --git a/(.+?) b/(.+?)\s*$")
 _PLUS_FILE_RE = re.compile(r"^\+\+\+\s+(?:b/)?(.+?)\s*$")
 _MINUS_FILE_RE = re.compile(r"^---\s+(?:a/)?(.+?)\s*$")
 _BINARY_PATCH_RE = re.compile(r"^GIT binary patch$")
