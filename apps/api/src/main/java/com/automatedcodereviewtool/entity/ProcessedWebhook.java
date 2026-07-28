@@ -1,4 +1,4 @@
-package com.codelens.entity;
+package com.automatedcodereviewtool.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -15,7 +15,7 @@ import java.time.Instant;
 /**
  * Idempotency table — a row per {@code X-GitHub-Delivery} id we've
  * already processed. Lets us safely retry delivery without double-posting
- * a CodeLens comment.
+ * an automated-code-review-tool comment.
  *
  * <p>Old rows can be GC'd by a scheduled job (the plan suggests &gt;24h).</p>
  */

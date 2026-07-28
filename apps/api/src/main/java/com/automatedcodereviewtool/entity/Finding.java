@@ -1,4 +1,4 @@
-package com.codelens.entity;
+package com.automatedcodereviewtool.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -45,13 +45,13 @@ public class Finding {
     @Column(name = "line_end")
     private Integer lineEnd;
 
-    @Column(name = "anti_pattern", nullable = false)
+    @Column(name = "anti_pattern", nullable = false, length = 80)
     private String antiPattern;
 
-    @Column(name = "category", nullable = false)
+    @Column(name = "category", nullable = false, length = 30)
     private String category;
 
-    @Column(name = "severity", nullable = false)
+    @Column(name = "severity", nullable = false, length = 10)
     private String severity;
 
     @Column(name = "confidence", precision = 4, scale = 3, nullable = false)
