@@ -1,4 +1,4 @@
-package com.codelens.dto.response;
+package com.automatedcodereviewtool.dto.response;
 
 import java.time.Instant;
 import java.util.UUID;
