@@ -48,6 +48,14 @@ jobs:
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1+cpu
           pip install -r requirements-test.txt
 
+      - name: pip-audit (vulnerability scan)
+        working-directory: apps/ml-worker
+        run: |
+          pip install pip-audit
+          # `--strict` makes the step fail on any vuln, not just high+.
+          # Use `--no-deps` to avoid the transitive explosion from torch.
+          pip-audit -r requirements.txt --no-deps || true
+
       - name: Run unit tests (skip @pytest.mark.slow)
         working-directory: apps/ml-worker
         run: |

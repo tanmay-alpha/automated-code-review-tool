@@ -46,3 +46,7 @@ jobs:
       - name: Run vitest
         working-directory: apps/web
         run: npm test
+
+      - name: npm audit (high+ only)
+        working-directory: apps/web
+        run: npm audit --audit-level=high --omit=dev || true
