@@ -1,5 +1,5 @@
 """
-CodeLens — Taxonomy label mapper (Issue #2).
+automated-code-review-tool — Taxonomy label mapper (Issue #2).
 
 Maps a code-review comment to a 6-dimensional multi-label binary vector
 using keyword matching against the locked taxonomy in

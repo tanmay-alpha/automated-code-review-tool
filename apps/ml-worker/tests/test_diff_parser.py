@@ -1,5 +1,5 @@
 """
-CodeLens — diff_parser unit tests (Issue #7).
+automated-code-review-tool — diff_parser unit tests (Issue #7).
 
 Pure unit tests — no model loading, no network. Fast.
 

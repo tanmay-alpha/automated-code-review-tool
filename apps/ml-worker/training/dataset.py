@@ -1,5 +1,5 @@
 """
-CodeLens — Dataset loader and stats script (Issue #1).
+automated-code-review-tool — Dataset loader and stats script (Issue #1).
 
 Loads JSON files from apps/ml-worker/training/data/raw/, counts total samples,
 prints 5 random examples (diff snippet + review comment), and prints basic stats.

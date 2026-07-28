@@ -1,5 +1,5 @@
 """
-CodeLens — Pydantic v2 request/response schemas (Issue #9).
+automated-code-review-tool — Pydantic v2 request/response schemas (Issue #9).
 
 Defines the wire contract for /ml/review and /ml/health. All field
 constraints (length, literal types) are enforced by FastAPI at the
