@@ -1,8 +1,8 @@
-package com.codelens.service;
+package com.automatedcodereviewtool.service;
 
-import com.codelens.dto.MlReviewResponse;
-import com.codelens.exception.InvalidDiffException;
-import com.codelens.exception.MlWorkerException;
+import com.automatedcodereviewtool.dto.MlReviewResponse;
+import com.automatedcodereviewtool.exception.InvalidDiffException;
+import com.automatedcodereviewtool.exception.MlWorkerException;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
@@ -197,7 +197,7 @@ class MlWorkerServiceTest {
                 .setResponseCode(200)
                 .setBody("{\"findings\":null,\"qualityScore\":0.5}"));
 
-        List<com.codelens.dto.MlFinding> findings = service.reviewFindings("diff", "java");
+        List<com.automatedcodereviewtool.dto.MlFinding> findings = service.reviewFindings("diff", "java");
 
         assertThat(findings).isEmpty();
     }

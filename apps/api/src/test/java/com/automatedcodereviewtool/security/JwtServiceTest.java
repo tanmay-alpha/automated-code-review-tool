@@ -1,6 +1,6 @@
-package com.codelens.security;
+package com.automatedcodereviewtool.security;
 
-import com.codelens.config.JwtConfig;
+import com.automatedcodereviewtool.config.JwtConfig;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import org.junit.jupiter.api.BeforeEach;
