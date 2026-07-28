@@ -1,7 +1,7 @@
-package com.codelens.repository;
+package com.automatedcodereviewtool.repository;
 
-import com.codelens.entity.Finding;
-import com.codelens.entity.Repository;
+import com.automatedcodereviewtool.entity.Finding;
+import com.automatedcodereviewtool.entity.Repository;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -41,4 +41,27 @@ public interface FindingRepository extends JpaRepository<Finding, UUID> {
         String getPattern();
         long getCnt();
     }
+
+    @Query("""
+            SELECT new com.automatedcodereviewtool.dto.FindingStats(
+                f.antiPattern, f.severity, COUNT(f)
+            )
+            FROM Finding f
+            WHERE f.pullRequest.repo.id = :repoId
+            GROUP BY f.antiPattern, f.severity
+            """)
+    List<com.automatedcodereviewtool.dto.FindingStats> aggregateByAntiPatternAndSeverity(@Param("repoId") UUID repoId);
+
+    @Query("""
+            SELECT new com.automatedcodereviewtool.dto.FindingTrendRow(
+                FUNCTION('DATE', f.pullRequest.createdAt), COUNT(f), f.severity
+            )
+            FROM Finding f
+            WHERE f.pullRequest.repo.id = :repoId
+              AND f.pullRequest.createdAt >= :since
+            GROUP BY FUNCTION('DATE', f.pullRequest.createdAt), f.severity
+            ORDER BY FUNCTION('DATE', f.pullRequest.createdAt) ASC
+            """)
+    List<com.automatedcodereviewtool.dto.FindingTrendRow> trendByDay(@Param("repoId") UUID repoId,
+                                                       @Param("since") java.time.Instant since);
 }

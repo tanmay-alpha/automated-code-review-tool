@@ -1,6 +1,6 @@
-package com.codelens.monitoring;
+package com.automatedcodereviewtool.monitoring;
 
-import com.codelens.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;

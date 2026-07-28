@@ -1,7 +1,7 @@
-package com.codelens.repository;
+package com.automatedcodereviewtool.repository;
 
-import com.codelens.entity.PullRequestEntity;
-import com.codelens.entity.Repository;
+import com.automatedcodereviewtool.entity.PullRequestEntity;
+import com.automatedcodereviewtool.entity.Repository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;

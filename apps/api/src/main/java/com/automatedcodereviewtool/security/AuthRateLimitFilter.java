@@ -1,4 +1,4 @@
-package com.codelens.security;
+package com.automatedcodereviewtool.security;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -12,7 +12,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
-import com.codelens.monitoring.SecurityMonitor;
+import com.automatedcodereviewtool.monitoring.SecurityMonitor;
 
 import java.io.IOException;
 import java.time.Duration;

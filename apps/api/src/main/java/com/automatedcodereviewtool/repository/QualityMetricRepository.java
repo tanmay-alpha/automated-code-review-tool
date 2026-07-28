@@ -1,7 +1,7 @@
-package com.codelens.repository;
+package com.automatedcodereviewtool.repository;
 
-import com.codelens.entity.QualityMetric;
-import com.codelens.entity.Repository;
+import com.automatedcodereviewtool.entity.QualityMetric;
+import com.automatedcodereviewtool.entity.Repository;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;

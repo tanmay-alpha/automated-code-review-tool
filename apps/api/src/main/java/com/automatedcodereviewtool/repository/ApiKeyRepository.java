@@ -1,6 +1,6 @@
-package com.codelens.repository;
+package com.automatedcodereviewtool.repository;
 
-import com.codelens.entity.ApiKey;
+import com.automatedcodereviewtool.entity.ApiKey;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
