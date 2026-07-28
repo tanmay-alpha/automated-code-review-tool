@@ -1,6 +1,6 @@
-package com.codelens.security;
-import com.codelens.logging.SecurityEventLogger;
-import com.codelens.monitoring.SecurityMonitor;
+package com.automatedcodereviewtool.security;
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.monitoring.SecurityMonitor;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import jakarta.servlet.ReadListener;
