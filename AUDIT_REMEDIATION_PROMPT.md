@@ -1,4 +1,4 @@
-# CodeLens — Full Root-Cause Remediation Prompt
+# automated-code-review-tool — Full Root-Cause Remediation Prompt
 # Feed this entire file to Claude Code (or your engineer) as the task prompt.
 # It is structured to fix every audit finding from the root cause up.
 
@@ -6,7 +6,7 @@
 
 ## PROJECT CONTEXT
 
-CodeLens is a multi-service automated code-review platform:
+automated-code-review-tool is a multi-service automated code-review platform:
 - **API** — Spring Boot 3.3.4 (Java 17) at `apps/api/`
 - **ML Worker** — FastAPI (Python) at `apps/ml-worker/`
 - **Web** — Next.js 15 (TypeScript) at `apps/web/`
@@ -252,9 +252,9 @@ private static final ThreadLocal<SecureRandom> RANDOM =
 
 ### TASK 1.24 — Add `@EnableScheduling` If Missing (LOW)
 
-**File:** Check `.../CodeLensApplication.java` and all `@Configuration` classes
+**File:** Check `.../automated-code-review-toolApplication.java` and all `@Configuration` classes
 **Root cause:** `@Scheduled` on `SecurityMonitor.resetMetrics()` requires `@EnableScheduling`.
-**Fix:** If no class has `@EnableScheduling`, add it to `CodeLensApplication.java`
+**Fix:** If no class has `@EnableScheduling`, add it to `automated-code-review-toolApplication.java`
 or create a dedicated `SchedulingConfig` class.
 
 ### TASK 1.25 — Fix show-sql for Production (MEDIUM)
@@ -685,9 +685,9 @@ Or fail the job with a clear message if secrets are missing.
 ### TASK 5.8 — Fix Dockerfile chown/chmod Order (LOW)
 
 **File:** `apps/api/Dockerfile`
-**Root cause:** `chown`/`chmod` run after `USER codelens`.
-**Fix:** Move `RUN chown -R codelens:codelens /app` and `RUN chmod -R 500 /app/app.jar`
-to BEFORE the `USER codelens` line.
+**Root cause:** `chown`/`chmod` run after `USER automated-code-review-tool`.
+**Fix:** Move `RUN chown -R automated-code-review-tool:automated-code-review-tool /app` and `RUN chmod -R 500 /app/app.jar`
+to BEFORE the `USER automated-code-review-tool` line.
 
 ---
 

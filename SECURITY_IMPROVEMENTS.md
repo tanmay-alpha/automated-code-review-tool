@@ -1,6 +1,6 @@
-# Security Improvements for CodeLens
+# Security Improvements for automated-code-review-tool
 
-This document outlines all the security improvements implemented to make CodeLens a secure, production-ready application.
+This document outlines all the security improvements implemented to make automated-code-review-tool a secure, production-ready application.
 
 ## 1. Database Secrets Management
 
@@ -166,7 +166,7 @@ This document outlines all the security improvements implemented to make CodeLen
 
 ## Summary
 
-All security improvements are now implemented and tested. The CodeLens application now includes:
+All security improvements are now implemented and tested. The automated-code-review-tool application now includes:
 
 1. **Defense in depth** with multiple security layers
 2. **Secure-by-default** configuration
