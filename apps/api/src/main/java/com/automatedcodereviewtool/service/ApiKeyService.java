@@ -1,9 +1,9 @@
-package com.codelens.service;
+package com.automatedcodereviewtool.service;
 
-import com.codelens.entity.ApiKey;
-import com.codelens.entity.User;
-import com.codelens.repository.ApiKeyRepository;
-import com.codelens.repository.UserRepository;
+import com.automatedcodereviewtool.entity.ApiKey;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.repository.ApiKeyRepository;
+import com.automatedcodereviewtool.repository.UserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,7 +20,7 @@ import java.util.UUID;
  * <p>Format: {@code cl_live_} + 32 lowercase hex chars = 64 hex chars
  * after the prefix, 256 bits of entropy. The prefix
  * {@code cl_live_} + first 8 hex chars is stored plaintext (for
- * O(1) lookup in {@link com.codelens.security.ApiKeyAuthFilter});
+ * O(1) lookup in {@link com.automatedcodereviewtool.security.ApiKeyAuthFilter});
  * the rest is bcrypt-hashed and never returned after creation.</p>
  */
 @Service

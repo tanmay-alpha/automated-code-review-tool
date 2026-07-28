@@ -1,15 +1,15 @@
-package com.codelens.service;
+package com.automatedcodereviewtool.service;
 
-import com.codelens.dto.MlFinding;
-import com.codelens.dto.ReviewResult;
-import com.codelens.entity.PullRequestEntity;
-import com.codelens.entity.Repository;
-import com.codelens.entity.User;
-import com.codelens.repository.PullRequestRepository;
-import com.codelens.repository.RepositoryRepository;
-import com.codelens.repository.UserRepository;
-import com.codelens.security.EncryptionService;
-import com.codelens.webhook.GitHubWebhookEvent;
+import com.automatedcodereviewtool.dto.MlFinding;
+import com.automatedcodereviewtool.dto.ReviewResult;
+import com.automatedcodereviewtool.entity.PullRequestEntity;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.repository.PullRequestRepository;
+import com.automatedcodereviewtool.repository.RepositoryRepository;
+import com.automatedcodereviewtool.repository.UserRepository;
+import com.automatedcodereviewtool.security.EncryptionService;
+import com.automatedcodereviewtool.webhook.GitHubWebhookEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -25,7 +25,7 @@ import java.util.Optional;
 /**
  * Orchestrator: runs the full review flow off the request thread.
  *
- * <p>Invoked from {@link com.codelens.controller.WebhookController} as
+ * <p>Invoked from {@link com.automatedcodereviewtool.controller.WebhookController} as
  * {@code @Async("taskExecutor")}. The controller returns 200 to GitHub
  * immediately; this method runs in the background pool.</p>
  *
@@ -191,7 +191,7 @@ public class WebhookService {
     static String buildComment(List<MlFinding> findings, BigDecimal quality,
                                int critical, int major, int minor) {
         StringBuilder sb = new StringBuilder();
-        sb.append("## 🔍 CodeLens Review\n\n");
+        sb.append("## 🔍 automated-code-review-tool Review\n\n");
         String emoji = quality == null ? "❓"
                 : quality.compareTo(BigDecimal.valueOf(80)) >= 0 ? "✅"
                 : quality.compareTo(BigDecimal.valueOf(60)) >= 0 ? "⚠️" : "❌";
@@ -234,7 +234,7 @@ public class WebhookService {
             }
         }
         sb.append("\n---\n");
-        sb.append("*Powered by [CodeLens](https://github.com/tanmay-alpha/codelens) — Semantic code review engine*\n");
+        sb.append("*Powered by [automated-code-review-tool](https://github.com/tanmay-alpha/automated-code-review-tool) — Semantic code review engine*\n");
         return sb.toString();
     }
 
