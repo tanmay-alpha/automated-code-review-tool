@@ -1,7 +1,7 @@
 /**
- * Configuration readers for the CodeLens VS Code extension.
+ * Configuration readers for the automated-code-review-tool VS Code extension.
  *
- * Every setting lives under the `codelens.*` namespace in
+ * Every setting lives under the `automated-code-review-tool.*` namespace in
  * VS Code's `settings.json`. We re-read on every call (not cached)
  * so a user's edits take effect immediately on the next save.
  *
@@ -9,7 +9,7 @@
  */
 import * as vscode from "vscode";
 
-const NAMESPACE = "codelens";
+const NAMESPACE = "automated-code-review-tool";
 
 /**
  * Returns the user's API key, or an empty string if not set.
@@ -21,7 +21,7 @@ export function getApiKey(): string {
 }
 
 /**
- * Base URL of the CodeLens API, with a sensible default for
+ * Base URL of the automated-code-review-tool API, with a sensible default for
  * local development. Trailing slashes are stripped.
  */
 export function getApiUrl(): string {
@@ -32,7 +32,7 @@ export function getApiUrl(): string {
 
 /**
  * Master switch. When false, onDidSaveTextDocument is a no-op
- * (the manual `codelens.scanFile` command still works).
+ * (the manual `automated-code-review-tool.scanFile` command still works).
  */
 export function isEnabled(): boolean {
   return readConfig().get<boolean>("enabled", true);
