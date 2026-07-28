@@ -1,4 +1,4 @@
-package com.codelens.entity;
+package com.automatedcodereviewtool.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -26,7 +26,7 @@ import java.util.UUID;
  * <em>prefix</em> ({@code cl_live_} + first 8 hex chars) is kept
  * in cleartext for fast O(1) lookup; the remainder is bcrypt-hashed
  * and verified on each request via
- * {@link com.codelens.security.ApiKeyAuthFilter}.</p>
+ * {@link com.automatedcodereviewtool.security.ApiKeyAuthFilter}.</p>
  */
 @Entity
 @Table(name = "api_keys")
