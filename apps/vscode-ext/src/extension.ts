@@ -1,11 +1,11 @@
 /**
- * CodeLens — VS Code extension entry point.
+ * automated-code-review-tool — VS Code extension entry point.
  *
  * Loaded by VS Code when one of the activationEvents in
  * package.json fires (any of the supported languages is opened).
  *
  * Responsibilities:
- *   - Create the `codelens` DiagnosticCollection so findings can
+ *   - Create the `automated-code-review-tool` DiagnosticCollection so findings can
  *     be displayed as inline squigglies in the editor.
  *   - Auto-scan any saved file whose language is supported.
  *   - Provide a manual "Scan Current File" command.
@@ -15,7 +15,7 @@ import * as vscode from "vscode";
 import { clearAll, scanFile } from "./reviewer";
 import { scanOnSave } from "./config";
 
-/** Languages the CodeLens backend currently understands. */
+/** Languages the automated-code-review-tool backend currently understands. */
 const SUPPORTED_LANGUAGES = new Set<string>([
   "python",
   "javascript",
@@ -32,7 +32,7 @@ const SUPPORTED_LANGUAGES = new Set<string>([
 export function activate(context: vscode.ExtensionContext): void {
   // Single shared collection — squigglies across the editor surface.
   const diagnosticCollection = vscode.languages.createDiagnosticCollection(
-    "codelens",
+    "automated-code-review-tool",
   );
   context.subscriptions.push(diagnosticCollection);
 
@@ -47,11 +47,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Manual scan command — runs even if the auto-scan is off.
   context.subscriptions.push(
-    vscode.commands.registerCommand("codelens.scanFile", async () => {
+    vscode.commands.registerCommand("automated-code-review-tool.scanFile", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) {
         void vscode.window.showInformationMessage(
-          "CodeLens: open a file to scan.",
+          "automated-code-review-tool: open a file to scan.",
         );
         return;
       }
@@ -61,7 +61,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Workspace scan command advertised in package.json.
   context.subscriptions.push(
-    vscode.commands.registerCommand("codelens.scanWorkspace", async () => {
+    vscode.commands.registerCommand("automated-code-review-tool.scanWorkspace", async () => {
       const files = await vscode.workspace.findFiles(
         "**/*.{py,js,jsx,ts,tsx,java}",
         "**/{.git,node_modules,out,dist,build}/**",
@@ -73,21 +73,21 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       }
       void vscode.window.showInformationMessage(
-        `CodeLens: scanned ${files.length} workspace file${files.length === 1 ? "" : "s"}.`,
+        `automated-code-review-tool: scanned ${files.length} workspace file${files.length === 1 ? "" : "s"}.`,
       );
     }),
   );
 
   // Clear command — useful when reviewing fixes.
   context.subscriptions.push(
-    vscode.commands.registerCommand("codelens.clear", () => {
+    vscode.commands.registerCommand("automated-code-review-tool.clear", () => {
       clearAll(diagnosticCollection);
     }),
   );
 
   // Status bar message on first activation.
   void vscode.window.showInformationMessage(
-    "CodeLens is active. Save any supported file to scan it.",
+    "automated-code-review-tool is active. Save any supported file to scan it.",
   );
 }
 
