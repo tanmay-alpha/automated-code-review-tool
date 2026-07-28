@@ -61,15 +61,15 @@
 
 /* Highlight lines that the DiffViewer flagged inline — react-diff-viewer-continued
  * renders each line as a `<td>`; we paint a coloured stripe using `data-line`. */
-.codelens-finding-critical {
+.automated-code-review-tool-finding-critical {
   background-color: rgba(239, 68, 68, 0.18) !important;
   border-left: 4px solid rgb(239, 68, 68);
 }
-.codelens-finding-major {
+.automated-code-review-tool-finding-major {
   background-color: rgba(249, 115, 22, 0.18) !important;
   border-left: 4px solid rgb(249, 115, 22);
 }
-.codelens-finding-minor {
+.automated-code-review-tool-finding-minor {
   background-color: rgba(234, 179, 8, 0.18) !important;
   border-left: 4px solid rgb(234, 179, 8);
 }

@@ -87,10 +87,10 @@ export function DiffViewer({
         const sev = (top.severity ?? "").toLowerCase();
         const cls =
           sev === "critical"
-            ? "codelens-finding-critical"
+            ? "automated-code-review-tool-finding-critical"
             : sev === "major"
-            ? "codelens-finding-major"
-            : "codelens-finding-minor";
+            ? "automated-code-review-tool-finding-major"
+            : "automated-code-review-tool-finding-minor";
         row.classList.add(cls);
 
         // Tooltip: anti-pattern name + first-line explanation.
