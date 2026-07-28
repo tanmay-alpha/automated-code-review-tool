@@ -1,26 +1,26 @@
-# CodeLens GitHub Action
+# automated-code-review-tool GitHub Action
 
 Semantic code review as a GitHub Actions check. The action pulls the diff for a
-pull request, posts it to the CodeLens API, and surfaces the findings as inline
+pull request, posts it to the automated-code-review-tool API, and surfaces the findings as inline
 PR annotations (errors, warnings, notices) sorted by severity. It exposes a
 quality score, a finding count, and a critical-finding count as job outputs,
 and optionally fails the check when the quality score drops below a threshold
-you configure. Unlike traditional linters, CodeLens catches *semantic*
+you configure. Unlike traditional linters, automated-code-review-tool catches *semantic*
 anti-patterns — the kind of structural smells and bad defaults a rule-based
 tool misses.
 
 ## Usage
 
-Add the following to `.github/workflows/codelens.yml` in any repository:
+Add the following to `.github/workflows/automated-code-review-tool.yml` in any repository:
 
 ```yaml
-name: CodeLens Review
+name: automated-code-review-tool Review
 on:
   pull_request:
     branches: [main]
 
 jobs:
-  codelens:
+  automated-code-review-tool:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -28,17 +28,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: CodeLens Code Review
-        uses: codelens/codelens-action@v1
+      - name: automated-code-review-tool Code Review
+        uses: automated-code-review-tool/automated-code-review-tool-action@v1
         with:
-          api-url: https://api.codelens.dev
-          api-key: ${{ secrets.CODELENS_API_KEY }}
+          api-url: https://api.automated-code-review-tool.dev
+          api-key: ${{ secrets.AUTOMATED_CODE_REVIEW_TOOL_API_KEY }}
           language: python
           fail-threshold: '70'
 ```
 
 The action requires a `GITHUB_TOKEN` (provided automatically by the runner)
-so it can read the diff and post review comments. Store your CodeLens API key
+so it can read the diff and post review comments. Store your automated-code-review-tool API key
 as a repository or organization secret — see the
 [API key section](#getting-an-api-key) below.
 
@@ -46,8 +46,8 @@ as a repository or organization secret — see the
 
 | Input             | Type    | Required | Default   | Description                                                                 |
 | ----------------- | ------- | -------- | --------- | --------------------------------------------------------------------------- |
-| `api-url`         | string  | **Yes**  | —         | CodeLens API base URL (e.g. `https://api.codelens.dev`).                    |
-| `api-key`         | string  | **Yes**  | —         | CodeLens API key issued from the dashboard. Treat as a secret.              |
+| `api-url`         | string  | **Yes**  | —         | automated-code-review-tool API base URL (e.g. `https://api.automated-code-review-tool.dev`).                    |
+| `api-key`         | string  | **Yes**  | —         | automated-code-review-tool API key issued from the dashboard. Treat as a secret.              |
 | `language`        | string  | No       | `python`  | Primary language of the PR. One of `python`, `javascript`, `java`.          |
 | `fail-threshold`  | number  | No       | `60`      | Minimum quality score (0–100). The job fails when the score is below this.  |
 
@@ -58,13 +58,13 @@ Values outside that range cause the action to fail with a clear error.
 
 | Output            | Type    | Description                                                |
 | ----------------- | ------- | ---------------------------------------------------------- |
-| `quality-score`   | string  | Quality score reported by CodeLens (0–100). Empty if n/a. |
+| `quality-score`   | string  | Quality score reported by automated-code-review-tool (0–100). Empty if n/a. |
 | `findings-count`  | string  | Total number of findings returned for the PR diff.         |
 | `critical-count`  | string  | Number of `CRITICAL` severity findings.                    |
 
-Consume them in downstream steps with `${{ steps.codelens.outputs.quality-score }}`,
-`${{ steps.codelens.outputs.findings-count }}`, and
-`${{ steps.codelens.outputs.critical-count }}`.
+Consume them in downstream steps with `${{ steps.automated-code-review-tool.outputs.quality-score }}`,
+`${{ steps.automated-code-review-tool.outputs.findings-count }}`, and
+`${{ steps.automated-code-review-tool.outputs.critical-count }}`.
 
 ## Example PR annotation
 
@@ -93,24 +93,24 @@ confidence: 92%
 A summary line is printed at the end of the run:
 
 ```
-CodeLens complete: acme/widgets#142
+automated-code-review-tool complete: acme/widgets#142
 Quality score: 74/100
 Findings: 7 total (1 critical, 3 major, 3 minor)
 ```
 
 ## Getting an API key
 
-CodeLens API keys are minted from the CodeLens dashboard:
+automated-code-review-tool API keys are minted from the automated-code-review-tool dashboard:
 
-1. Sign in at [https://codelens.dev](https://codelens.dev).
+1. Sign in at [https://automated-code-review-tool.dev](https://automated-code-review-tool.dev).
 2. Open **Settings → API Keys**.
 3. Click **Create key**, give it a name (e.g. `github-actions-prod`), and copy
    the value — it is shown only once.
 4. In your repository, go to **Settings → Secrets and variables → Actions**
-   and add the value as `CODELENS_API_KEY`.
+   and add the value as `AUTOMATED_CODE_REVIEW_TOOL_API_KEY`.
 
 Rotate the key from the dashboard if it ever leaks. The same key works across
-all repositories under your CodeLens workspace, so reuse one secret across
+all repositories under your automated-code-review-tool workspace, so reuse one secret across
 many workflows rather than minting a fresh key per repo.
 
 ## License

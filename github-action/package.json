@@ -1,7 +1,7 @@
 {
-  "name": "codelens-action",
+  "name": "automated-code-review-tool-action",
   "version": "1.0.0",
-  "description": "GitHub Action: semantic code review via the CodeLens API",
+  "description": "GitHub Action: semantic code review via the automated-code-review-tool API",
   "main": "index.js",
   "type": "module",
   "private": true,
@@ -21,7 +21,7 @@
     "code-review",
     "static-analysis",
     "anti-patterns",
-    "codelens"
+    "automated-code-review-tool"
   ],
   "license": "MIT",
   "devDependencies": {
