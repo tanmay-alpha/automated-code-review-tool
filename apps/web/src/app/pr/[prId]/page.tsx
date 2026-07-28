@@ -82,7 +82,7 @@ function PRReviewContent() {
               <a
                 href={data.githubPrUrl}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="flex items-center gap-1 underline"
               >
                 Open on GitHub
@@ -164,7 +164,7 @@ function PRReviewContent() {
                 <CardTitle className="text-base">No findings</CardTitle>
               </CardHeader>
               <CardContent className="text-sm text-muted-foreground">
-                CodeLens didn’t flag anything on this PR. Nice work.
+                automated-code-review-tool didn’t flag anything on this PR. Nice work.
               </CardContent>
             </Card>
           ) : (
