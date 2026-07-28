@@ -12,11 +12,11 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.codelens</groupId>
-    <artifactId>codelens-api</artifactId>
+    <groupId>com.automatedcodereviewtool</groupId>
+    <artifactId>automated-code-review-tool-api</artifactId>
     <version>1.0.0</version>
-    <name>CodeLens API</name>
-    <description>CodeLens Spring Boot API gateway</description>
+    <name>automated-code-review-tool API</name>
+    <description>automated-code-review-tool Spring Boot API gateway</description>
 
     <properties>
         <java.version>21</java.version>
@@ -164,7 +164,7 @@
     </dependencies>
 
     <build>
-        <finalName>codelens-api</finalName>
+        <finalName>automated-code-review-tool-api</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
