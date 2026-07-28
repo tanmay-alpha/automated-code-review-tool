@@ -1,6 +1,6 @@
-package com.codelens.dto;
+package com.automatedcodereviewtool.dto;
 
-import com.codelens.entity.Finding;
+import com.automatedcodereviewtool.entity.Finding;
 
 import java.math.BigDecimal;
 import java.time.Instant;

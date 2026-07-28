@@ -1,4 +1,4 @@
-package com.codelens.dto;
+package com.automatedcodereviewtool.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 

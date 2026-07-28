@@ -1,6 +1,6 @@
-package com.codelens.dto;
+package com.automatedcodereviewtool.dto;
 
-import com.codelens.entity.User;
+import com.automatedcodereviewtool.entity.User;
 
 import java.time.Instant;
 import java.util.UUID;
