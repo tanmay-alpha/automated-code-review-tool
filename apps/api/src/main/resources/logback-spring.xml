@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <property name="LOG_FILE" value="logs/codelens-api"/>
+    <property name="LOG_FILE" value="logs/automated-code-review-tool-api"/>
     <property name="LOG_LEVEL" value="INFO"/>
 
     <!-- Console appender -->
@@ -38,7 +38,7 @@
     </appender>
 
     <!-- Loggers -->
-    <logger name="com.codelens" level="${LOG_LEVEL}" additivity="false">
+    <logger name="com.automatedcodereviewtool" level="${LOG_LEVEL}" additivity="false">
         <appender-ref ref="FILE"/>
         <appender-ref ref="CONSOLE"/>
     </logger>
