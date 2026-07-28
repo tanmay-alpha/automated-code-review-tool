@@ -1,5 +1,5 @@
 """
-CodeLens — tokenizer_utils unit tests (Issue #8).
+automated-code-review-tool — tokenizer_utils unit tests (Issue #8).
 
 Uses a tiny deterministic fake tokenizer instead of loading CodeBERT,
 so these tests stay fast and don't require network or GPU.

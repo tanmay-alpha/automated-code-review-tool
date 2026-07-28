@@ -1,5 +1,5 @@
 """
-CodeLens — PR-level train/val/test split script (Issue #4).
+automated-code-review-tool — PR-level train/val/test split script (Issue #4).
 
 Splits the labeled CodeReviewer dataset into train/val/test by PR ID
 (NOT by individual sample) to prevent the same PR leaking into both

@@ -1,5 +1,5 @@
 """
-CodeLens — FastAPI ML worker endpoint tests (Issue #9).
+automated-code-review-tool — FastAPI ML worker endpoint tests (Issue #9).
 
 Uses FastAPI's TestClient and a fake `app.state.model` so the tests
 run without loading the real CodeBERT checkpoint (~500 MB).
@@ -22,14 +22,14 @@ SECRET_HEADER = {"X-ML-Worker-Secret": "testsecret"}
 # ----------------------------------------------------------------------
 def test_health_returns_ok(client: TestClient):
     """No auth required; returns 200 with the expected envelope."""
-    client.app.state.model.model_name = "fake/codelens-test"
+    client.app.state.model.model_name = "fake/automated-code-review-tool-test"
     client.app.state.model.device = "cpu"
     r = client.get("/ml/health")
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok"
     assert body["modelLoaded"] is True
-    assert body["modelName"] == "fake/codelens-test"
+    assert body["modelName"] == "fake/automated-code-review-tool-test"
     assert body["device"] == "cpu"
 
 

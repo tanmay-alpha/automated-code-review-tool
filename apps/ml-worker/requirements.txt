@@ -1,5 +1,5 @@
 # =====================================================
-# CodeLens — ml-worker runtime dependencies (inference)
+# automated-code-review-tool — ml-worker runtime dependencies (inference)
 # =====================================================
 # Used by apps/ml-worker/Dockerfile and local inference runs.
 # Training-only extras live in requirements-train.txt.

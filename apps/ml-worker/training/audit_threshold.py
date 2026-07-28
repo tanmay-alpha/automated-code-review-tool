@@ -41,7 +41,7 @@ def run_threshold_sensitivity():
     try:
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
-        HF_REPO = "tanmay-alpha/codelens-codebert"
+        HF_REPO = "tanmay-alpha/automated-code-review-tool-codebert"
         
         print("[INFO] Attempting to load fine-tuned model from Hugging Face...")
         tokenizer = AutoTokenizer.from_pretrained(HF_REPO, timeout=10)
