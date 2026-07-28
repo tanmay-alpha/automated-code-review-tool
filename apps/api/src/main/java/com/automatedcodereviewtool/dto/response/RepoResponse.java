@@ -1,7 +1,7 @@
-package com.codelens.dto.response;
+package com.automatedcodereviewtool.dto.response;
 
-import com.codelens.entity.Repository;
-import com.codelens.service.RepoService;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.service.RepoService;
 
 import java.math.BigDecimal;
 import java.time.Instant;

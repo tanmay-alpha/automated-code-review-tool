@@ -1,4 +1,4 @@
-package com.codelens.dto.response;
+package com.automatedcodereviewtool.dto.response;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;

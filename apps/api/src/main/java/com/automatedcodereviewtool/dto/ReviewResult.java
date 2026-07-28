@@ -1,13 +1,13 @@
-package com.codelens.dto;
+package com.automatedcodereviewtool.dto;
 
-import com.codelens.entity.Finding;
-import com.codelens.entity.PullRequestEntity;
+import com.automatedcodereviewtool.entity.Finding;
+import com.automatedcodereviewtool.entity.PullRequestEntity;
 
 import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * Internal carrier returned by {@link com.codelens.service.ReviewService}.
+ * Internal carrier returned by {@link com.automatedcodereviewtool.service.ReviewService}.
  *
  * <p>Contains the persisted {@link PullRequestEntity} and its
  * {@link Finding} list so the orchestrating caller (the webhook
