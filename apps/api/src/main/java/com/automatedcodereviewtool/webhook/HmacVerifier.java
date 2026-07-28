@@ -1,8 +1,8 @@
-package com.codelens.webhook;
+package com.automatedcodereviewtool.webhook;
 
-import com.codelens.entity.Repository;
-import com.codelens.repository.RepositoryRepository;
-import com.codelens.security.EncryptionService;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.repository.RepositoryRepository;
+import com.automatedcodereviewtool.security.EncryptionService;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Mac;

@@ -1,8 +1,8 @@
-package com.codelens.service;
+package com.automatedcodereviewtool.service;
 
-import com.codelens.config.GitHubConfig;
-import com.codelens.dto.GitHubTokenResponse;
-import com.codelens.dto.GitHubUserInfo;
+import com.automatedcodereviewtool.config.GitHubConfig;
+import com.automatedcodereviewtool.dto.GitHubTokenResponse;
+import com.automatedcodereviewtool.dto.GitHubUserInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;

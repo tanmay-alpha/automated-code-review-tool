@@ -1,4 +1,4 @@
-package com.codelens.webhook;
+package com.automatedcodereviewtool.webhook;
 
 /**
  * Thrown when an HMAC verification cannot be performed — for example,

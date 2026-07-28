@@ -1,10 +1,10 @@
-package com.codelens.service;
+package com.automatedcodereviewtool.service;
 
-import com.codelens.dto.GitHubUserInfo;
-import com.codelens.entity.User;
-import com.codelens.repository.UserRepository;
-import com.codelens.security.EncryptionService;
-import com.codelens.service.ApiKeyService;
+import com.automatedcodereviewtool.dto.GitHubUserInfo;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.repository.UserRepository;
+import com.automatedcodereviewtool.security.EncryptionService;
+import com.automatedcodereviewtool.service.ApiKeyService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -73,7 +73,7 @@ public class UserService {
      * Generate a new API key for the user. Returns the raw key — the caller
      * must show it to the user once and then forget it.
      *
-     * <p>Delegates to {@link ApiKeyService#createKey(com.codelens.entity.User, String)}
+     * <p>Delegates to {@link ApiKeyService#createKey(com.automatedcodereviewtool.entity.User, String)}
      * so all keys live in the dedicated {@code api_keys} table. The legacy
      * {@code users.api_key_hash} / {@code users.api_key_prefix} columns are
      * read-only and retained for backward compatibility only.</p>
