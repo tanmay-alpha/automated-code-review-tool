@@ -1,13 +1,14 @@
-package com.codelens.config;
+package com.automatedcodereviewtool.config;
 
-import com.codelens.controller.AuthController;
-import com.codelens.dto.GitHubTokenResponse;
-import com.codelens.dto.GitHubUserInfo;
-import com.codelens.entity.User;
-import com.codelens.security.JwtService;
-import com.codelens.security.JwtBlacklistService;
-import com.codelens.service.GitHubService;
-import com.codelens.service.UserService;
+import com.automatedcodereviewtool.controller.AuthController;
+import com.automatedcodereviewtool.dto.GitHubTokenResponse;
+import com.automatedcodereviewtool.dto.GitHubUserInfo;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.security.JwtService;
+import com.automatedcodereviewtool.security.JwtBlacklistService;
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.service.GitHubService;
+import com.automatedcodereviewtool.service.UserService;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -43,15 +44,23 @@ class LocalWebSecurityTest {
     void oauthCookiesAreUsableOnLocalHttpWhenSecureIsDisabled() {
         List<String> cookies = oauthCookies(false);
 
-        assertThat(cookies).hasSize(2);
-        assertThat(cookies).allMatch(cookie -> !cookie.contains("; Secure"));
-        assertThat(cookies).allMatch(cookie -> cookie.contains("HttpOnly"));
-        assertThat(cookies).allMatch(cookie -> cookie.contains("SameSite=Lax"));
+        // The controller also clears the oauth_state cookie (security hygiene);
+        // filter it out so the assertion targets the auth cookies only.
+        List<String> authCookies = cookies.stream()
+                .filter(c -> !c.startsWith("oauth_state"))
+                .toList();
+
+        assertThat(authCookies).hasSize(2);
+        assertThat(authCookies).allMatch(cookie -> !cookie.contains("; Secure"));
+        assertThat(authCookies).allMatch(cookie -> cookie.contains("HttpOnly"));
+        assertThat(authCookies).allMatch(cookie -> cookie.contains("SameSite=Lax"));
     }
 
     @Test
     void oauthCookiesRemainSecureInProduction() {
-        assertThat(oauthCookies(true)).allMatch(cookie -> cookie.contains("; Secure"));
+        assertThat(oauthCookies(true).stream()
+                .filter(c -> !c.startsWith("oauth_state"))
+                .toList()).allMatch(cookie -> cookie.contains("; Secure"));
     }
 
     @SuppressWarnings("unchecked")
@@ -60,6 +69,7 @@ class LocalWebSecurityTest {
         UserService userService = mock(UserService.class);
         JwtService jwtService = mock(JwtService.class);
         JwtBlacklistService jwtBlacklistService = mock(JwtBlacklistService.class);
+        SecurityEventLogger securityEventLogger = mock(SecurityEventLogger.class);
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOps = mock(ValueOperations.class);
 
@@ -67,7 +77,7 @@ class LocalWebSecurityTest {
         appConfig.setCookieSecure(secure);
         JwtConfig jwtConfig = new JwtConfig();
         jwtConfig.setAccessTokenExpiry(900);
-        jwtConfig.setRefreshTokenExpiry(604800);
+        jwtConfig.setRefreshTokenExpiry(604800L);
 
         User user = User.builder()
                 .id(UUID.randomUUID())
@@ -85,8 +95,13 @@ class LocalWebSecurityTest {
         when(jwtService.generateAccessToken(user.getId(), "alice")).thenReturn("access-jwt");
         when(jwtService.generateRefreshToken(user.getId())).thenReturn("refresh-jwt");
 
+        // Build a request that carries the oauth_state cookie so CSRF check passes.
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/auth/github/callback");
+        jakarta.servlet.http.Cookie oauthState = new jakarta.servlet.http.Cookie("oauth_state", "test-state");
+        request.setCookies(oauthState);
+
         AuthController controller = new AuthController(
-                githubService, userService, jwtService, jwtBlacklistService, appConfig, jwtConfig, redis, null);
-        return controller.oauthCallback("oauth-code").getHeaders().get(HttpHeaders.SET_COOKIE);
+                githubService, userService, jwtService, jwtBlacklistService, appConfig, jwtConfig, redis, securityEventLogger);
+        return controller.oauthCallback("oauth-code", "test-state", request).getHeaders().get(HttpHeaders.SET_COOKIE);
     }
 }

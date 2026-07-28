@@ -1,19 +1,19 @@
-package com.codelens.controller;
+package com.automatedcodereviewtool.controller;
 
-import com.codelens.config.SecurityConfig;
-import com.codelens.entity.Finding;
-import com.codelens.entity.PullRequestEntity;
-import com.codelens.entity.Repository;
-import com.codelens.entity.User;
-import com.codelens.repository.FindingRepository;
-import com.codelens.repository.PullRequestRepository;
-import com.codelens.security.ApiKeyAuthFilter;
-import com.codelens.security.AuthRateLimitFilter;
-import com.codelens.security.JwtAuthFilter;
-import com.codelens.security.JwtService;
-import com.codelens.logging.SecurityEventLogger;
-import com.codelens.monitoring.SecurityMonitor;
-import com.codelens.service.ApiKeyService;
+import com.automatedcodereviewtool.config.SecurityConfig;
+import com.automatedcodereviewtool.entity.Finding;
+import com.automatedcodereviewtool.entity.PullRequestEntity;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.repository.FindingRepository;
+import com.automatedcodereviewtool.repository.PullRequestRepository;
+import com.automatedcodereviewtool.security.ApiKeyAuthFilter;
+import com.automatedcodereviewtool.security.AuthRateLimitFilter;
+import com.automatedcodereviewtool.security.JwtAuthFilter;
+import com.automatedcodereviewtool.security.JwtService;
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.monitoring.SecurityMonitor;
+import com.automatedcodereviewtool.service.ApiKeyService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -57,13 +57,21 @@ class ReviewControllerTest {
     static class PassThroughFilter {
         @org.springframework.context.annotation.Bean
         JwtAuthFilter jwtAuthFilter() {
-            return new JwtAuthFilter(null, null) {
+            return new JwtAuthFilter(null, null, null) {
                 @Override
                 protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res,
                                                 FilterChain chain) throws java.io.IOException, jakarta.servlet.ServletException {
+                    // Inject the actual User entity so controllers using
+                    // {@code @AuthenticationPrincipal User caller} can perform
+                    // ownership checks (isOwnedBy).
+                    com.automatedcodereviewtool.entity.User caller =
+                            com.automatedcodereviewtool.entity.User.builder()
+                                    .githubUsername("test-user")
+                                    .accessToken("dummy")
+                                    .build();
                     SecurityContextHolder.getContext().setAuthentication(
                             new UsernamePasswordAuthenticationToken(
-                                    "test-user", "n/a",
+                                    caller, "n/a",
                                     List.of(new SimpleGrantedAuthority("ROLE_USER"))));
                     try {
                         chain.doFilter(req, res);
@@ -127,7 +135,7 @@ class ReviewControllerTest {
 
         Repository repo = Repository.builder().id(repoId).fullName("o/r").build();
         User owner = User.builder()
-                .id(userId).githubUsername("alice").avatarUrl("https://a.c/a.png")
+                .id(userId).githubUsername("test-user").avatarUrl("https://a.c/a.png").accessToken("dummy")
                 .build();
         repo.setOwner(owner);
 
@@ -162,7 +170,7 @@ class ReviewControllerTest {
                 .andExpect(jsonPath("$.findings.length()").value(2))
                 .andExpect(jsonPath("$.findings[0].antiPattern").value("GodClass"))
                 .andExpect(jsonPath("$.repoFullName").value("o/r"))
-                .andExpect(jsonPath("$.repoOwnerLogin").value("alice"));
+                .andExpect(jsonPath("$.repoOwnerLogin").value("test-user"));
     }
 
     @Test
@@ -178,8 +186,12 @@ class ReviewControllerTest {
     void getReview_emptyFindingsList() throws Exception {
         UUID prId = UUID.randomUUID();
         UUID repoId = UUID.randomUUID();
+        Repository repo = Repository.builder()
+                .id(repoId).fullName("o/r")
+                .owner(User.builder().githubUsername("test-user").accessToken("dummy").build())
+                .build();
         PullRequestEntity pr = PullRequestEntity.builder()
-                .id(prId).repo(Repository.builder().id(repoId).fullName("o/r").build())
+                .id(prId).repo(repo)
                 .githubPrNumber(1).title("t").status("reviewed")
                 .build();
 

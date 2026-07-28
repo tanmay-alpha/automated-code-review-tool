@@ -1,6 +1,6 @@
-package com.codelens.service;
+package com.automatedcodereviewtool.service;
 
-import com.codelens.config.GitHubConfig;
+import com.automatedcodereviewtool.config.GitHubConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.reactive.function.client.WebClient;
 

@@ -1,18 +1,18 @@
-package com.codelens.controller;
+package com.automatedcodereviewtool.controller;
 
-import com.codelens.config.SecurityConfig;
-import com.codelens.repository.ProcessedWebhookRepository;
-import com.codelens.security.ApiKeyAuthFilter;
-import com.codelens.security.AuthRateLimitFilter;
-import com.codelens.security.JwtAuthFilter;
-import com.codelens.security.JwtService;
-import com.codelens.service.ApiKeyService;
-import com.codelens.service.WebhookService;
-import com.codelens.logging.SecurityEventLogger;
-import com.codelens.monitoring.SecurityMonitor;
-import com.codelens.webhook.GitHubWebhookEvent;
-import com.codelens.webhook.HmacVerificationException;
-import com.codelens.webhook.HmacVerifier;
+import com.automatedcodereviewtool.config.SecurityConfig;
+import com.automatedcodereviewtool.repository.ProcessedWebhookRepository;
+import com.automatedcodereviewtool.security.ApiKeyAuthFilter;
+import com.automatedcodereviewtool.security.AuthRateLimitFilter;
+import com.automatedcodereviewtool.security.JwtAuthFilter;
+import com.automatedcodereviewtool.security.JwtService;
+import com.automatedcodereviewtool.service.ApiKeyService;
+import com.automatedcodereviewtool.service.WebhookService;
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.monitoring.SecurityMonitor;
+import com.automatedcodereviewtool.webhook.GitHubWebhookEvent;
+import com.automatedcodereviewtool.webhook.HmacVerificationException;
+import com.automatedcodereviewtool.webhook.HmacVerifier;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
@@ -99,7 +99,7 @@ class WebhookControllerTest {
     static class StubFilterConfig {
         @org.springframework.context.annotation.Bean
         JwtAuthFilter jwtAuthFilter() {
-            return new JwtAuthFilter(null, null) {
+            return new JwtAuthFilter(null, null, null) {
                 @Override
                 protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res,
                                                 FilterChain chain) throws java.io.IOException, jakarta.servlet.ServletException {
