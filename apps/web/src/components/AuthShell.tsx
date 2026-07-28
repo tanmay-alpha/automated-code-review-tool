@@ -39,16 +39,14 @@ export function AuthShell({ children }: AuthShellProps) {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        // Any non-2xx → bounce to landing page.
-        // 401 is the common case; treat everything else (network etc.) the same.
-        void err;
+        // 401/unauthenticated -> bounce to landing page
         setState("unauthed");
         router.replace("/");
       });
     return () => {
       cancelled = true;
     };
-  }, [pathname, router]);
+  }, [pathname]);
 
   if (state !== "authed") {
     return (

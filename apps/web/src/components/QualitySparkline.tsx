@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -30,6 +31,7 @@ export function QualitySparkline({
   height = 32,
   className,
 }: QualitySparklineProps) {
+  const gradientId = useId();
   if (!data || data.length === 0) {
     return (
       <div
@@ -69,7 +71,7 @@ export function QualitySparkline({
         >
           <defs>
             <linearGradient
-              id={`spark-${stroke.replace(/[^a-z0-9]/gi, "")}`}
+              id={`spark-${gradientId}`}
               x1="0"
               y1="0"
               x2="0"
@@ -85,7 +87,7 @@ export function QualitySparkline({
             dataKey="avgQuality"
             stroke={stroke}
             strokeWidth={1.5}
-            fill={`url(#spark-${stroke.replace(/[^a-z0-9]/gi, "")})`}
+            fill={`url(#spark-${gradientId})`}
             isAnimationActive={false}
             connectNulls
           />
