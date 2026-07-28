@@ -1,4 +1,4 @@
-package com.codelens.exception;
+package com.automatedcodereviewtool.exception;
 
 /**
  * Thrown when the ML worker rejects a request with a 4xx — typically

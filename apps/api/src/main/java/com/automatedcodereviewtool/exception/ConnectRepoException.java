@@ -1,11 +1,11 @@
-package com.codelens.exception;
+package com.automatedcodereviewtool.exception;
 
 /**
- * Thrown when {@link com.codelens.service.RepoService#connect}
+ * Thrown when {@link com.automatedcodereviewtool.service.RepoService#connect}
  * cannot complete — e.g. the user does not own the repo, the
  * GitHub App is not installed, or the user has revoked the
  * authorization. Mapped to HTTP 400 by
- * {@link com.codelens.exception.GlobalExceptionHandler}.
+ * {@link com.automatedcodereviewtool.exception.GlobalExceptionHandler}.
  */
 public class ConnectRepoException extends RuntimeException {
 
