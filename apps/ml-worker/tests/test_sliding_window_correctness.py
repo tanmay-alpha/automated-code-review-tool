@@ -8,7 +8,7 @@ _HERE = Path(__file__).resolve().parent
 _ML_WORKER = _HERE.parent
 sys.path.insert(0, str(_ML_WORKER))
 
-from app.tokenizer_utils import aggregate_logits, sliding_window_tokenize
+from app.tokenizer_utils import aggregate_logits, sliding_window_tokenize  # noqa: E402
 
 class FakeTokenizer:
     """Minimal PreTrainedTokenizer stand-in supporting encode/decode."""

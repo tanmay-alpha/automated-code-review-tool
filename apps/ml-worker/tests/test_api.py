@@ -108,7 +108,15 @@ def test_review_accepts_valid_diff(client: TestClient):
 
 
 def test_quality_score_decreases_with_findings():
-    """Pure unit test of compute_quality_score — no FastAPI needed."""
+    """Pure unit test of compute_quality_score — no FastAPI needed.
+
+    Contract (Phase 0):
+      * critical: 20-point penalty × confidence
+      * major:    10-point penalty × confidence
+      * minor:     3-point penalty × confidence
+      * score = max(0, min(100, 100 - sum(penalty * conf)))
+      * rounded to 2 decimals.
+    """
     from app.model import compute_quality_score
 
     assert compute_quality_score([]) == 100.0
@@ -119,7 +127,8 @@ def test_quality_score_decreases_with_findings():
         confidence=0.5,
         explanation="x",
     )]
-    assert compute_quality_score(one_minor) == 97.0
+    # 100 - 3.0*0.5 = 98.5
+    assert compute_quality_score(one_minor) == 98.5
     one_major = [Finding(
         antiPattern="PERFORMANCE_N_PLUS_1",
         category="PERFORMANCE",
@@ -127,7 +136,8 @@ def test_quality_score_decreases_with_findings():
         confidence=0.5,
         explanation="x",
     )]
-    assert compute_quality_score(one_major) == 90.0
+    # 100 - 10.0*0.5 = 95.0
+    assert compute_quality_score(one_major) == 95.0
     one_critical = [Finding(
         antiPattern="SECURITY_HARDCODED_SECRET",
         category="SECURITY",
@@ -135,7 +145,8 @@ def test_quality_score_decreases_with_findings():
         confidence=0.5,
         explanation="x",
     )]
-    assert compute_quality_score(one_critical) == 80.0
+    # 100 - 20.0*0.5 = 90.0
+    assert compute_quality_score(one_critical) == 90.0
     # Floors at 0.
     many = [one_critical[0]] * 10
     assert compute_quality_score(many) == 0.0
