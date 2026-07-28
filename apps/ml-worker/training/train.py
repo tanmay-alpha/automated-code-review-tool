@@ -46,16 +46,38 @@ from transformers import (
 # ----------------------------------------------------------------------
 # Constants — change here, never buried in code (per plan spec).
 # ----------------------------------------------------------------------
+# Label set is the canonical anti-pattern taxonomy. The training script
+# reads taxonomy/anti_patterns.yaml so model output indexes line up 1:1
+# with the IDs the rest of the system uses. The input to the model is
+# the **diff only**; the review comment is held out as a future
+# generation target.
+import os as _os
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_TAXONOMY_PATH = _REPO_ROOT / "taxonomy" / "anti_patterns.yaml"
+
+try:
+    from app.taxonomy import load_taxonomy  # type: ignore[import]
+
+    _TAXONOMY = load_taxonomy(_TAXONOMY_PATH)
+    NUM_LABELS = len(_TAXONOMY.entries)
+    LABEL_NAMES = [ap.id for ap in _TAXONOMY.entries]
+except Exception:  # noqa: BLE001
+    # Inline fallback mirroring taxonomy/anti_patterns.yaml.
+    NUM_LABELS = 10
+    LABEL_NAMES = [
+        "SECURITY_HARDCODED_SECRET",
+        "SECURITY_SQL_INJECTION",
+        "SECURITY_WEAK_CRYPTO",
+        "PERFORMANCE_N_PLUS_ONE",
+        "PERFORMANCE_QUADRATIC_LOOP",
+        "RELIABILITY_BROAD_EXCEPTION",
+        "RELIABILITY_MISSING_TIMEOUT",
+        "READABILITY_MAGIC_NUMBER",
+        "READABILITY_LONG_METHOD",
+        "MAINTAINABILITY_DUPLICATE_CODE",
+    ]
+
 MODEL_NAME = "microsoft/codebert-base"
-NUM_LABELS = 6
-LABEL_NAMES = [
-    "SECURITY",
-    "PERFORMANCE",
-    "ARCHITECTURE",
-    "RELIABILITY",
-    "READABILITY",
-    "MAINTAINABILITY",
-]
 MAX_SEQ_LENGTH = 512
 LEARNING_RATE = 2e-5
 BATCH_SIZE = 16
@@ -121,18 +143,21 @@ class CodeReviewDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         rec = self.records[idx]
-        # Use diff + comment as the model input — diff carries the code
-        # context, comment carries the review signal. Separator mimics
-        # CodeBERT's pretraining format.
-        text = (rec.get("diff") or "") + "\n" + (rec.get("comment") or "")
+        # Model input: diff only. The review comment is held out as a
+        # future generation target — it is never part of the classifier
+        # input at train, eval or inference time.
+        text = rec.get("diff", "") or ""
         encoded = self.tokenizer(
             text,
             max_length=self.max_length,
             truncation=True,
             padding="max_length",
-            return_tensors=None,  # return lists; collator will batch
+            return_tensors=None,
         )
-        labels = [float(x) for x in rec["labels"]]
+        # `anti_patterns` is a list of canonical anti-pattern IDs from
+        # taxonomy/anti_patterns.yaml; convert to multi-hot vector.
+        ap_ids: list[str] = rec.get("anti_patterns", [])
+        labels = [1.0 if ap_id in ap_ids else 0.0 for ap_id in LABEL_NAMES]
         return {
             "input_ids": torch.tensor(encoded["input_ids"], dtype=torch.long),
             "attention_mask": torch.tensor(encoded["attention_mask"], dtype=torch.long),
