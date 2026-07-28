@@ -146,7 +146,7 @@ export function QualityChart({
               >
                 <defs>
                   <linearGradient
-                    id="codelens-critical-area"
+                    id="automated-code-review-tool-critical-area"
                     x1="0"
                     y1="0"
                     x2="0"
@@ -210,7 +210,7 @@ export function QualityChart({
                   name="Critical findings"
                   stroke="rgb(239, 68, 68)"
                   strokeWidth={1.5}
-                  fill="url(#codelens-critical-area)"
+                  fill="url(#automated-code-review-tool-critical-area)"
                   isAnimationActive={false}
                 />
                 <Line

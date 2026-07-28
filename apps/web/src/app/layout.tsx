@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CodeLens — semantic code review",
+  title: "automated-code-review-tool — semantic code review",
   description:
     "Catches what linters miss. AI-powered PR review, repo-level quality trends, and inline anti-pattern annotations.",
 };

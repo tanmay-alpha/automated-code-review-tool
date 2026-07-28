@@ -1,6 +1,6 @@
 // =============================================================================
 // API response types — mirror the Java records under
-// apps/api/src/main/java/com/codelens/dto/{,response/}/*.java.
+// apps/api/src/main/java/com/automatedcodereviewtool/dto/{,response/}/*.java.
 // Keep field names in sync with those records; Java's record component names
 // serialize to JSON verbatim (Jackson defaults).
 // =============================================================================
