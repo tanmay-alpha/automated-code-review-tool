@@ -1,4 +1,4 @@
-package com.codelens.config;
+package com.automatedcodereviewtool.config;
 
 import java.net.URI;
 import org.slf4j.Logger;

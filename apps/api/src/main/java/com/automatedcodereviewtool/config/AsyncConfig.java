@@ -1,4 +1,4 @@
-package com.codelens.config;
+package com.automatedcodereviewtool.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
