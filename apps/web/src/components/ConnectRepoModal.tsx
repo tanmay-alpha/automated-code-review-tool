@@ -72,7 +72,7 @@ export function ConnectRepoModal({
               Connect a repository
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Install the CodeLens webhook on a GitHub repo you own.
+              Install the automated-code-review-tool webhook on a GitHub repo you own.
             </p>
           </div>
           <button
@@ -108,7 +108,7 @@ export function ConnectRepoModal({
               <a
                 href="https://github.com/vercel/next.js"
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 underline"
               >
                 vercel/next.js

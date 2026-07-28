@@ -43,7 +43,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-        <div className="text-lg font-semibold tracking-tight">CodeLens</div>
+        <div className="text-lg font-semibold tracking-tight">automated-code-review-tool</div>
         <Badge variant="outline">Beta</Badge>
       </header>
 
@@ -57,7 +57,7 @@ export default function LandingPage() {
               Semantic code review. Catches what linters miss.
             </h1>
             <p className="text-lg text-muted-foreground">
-              CodeLens is a fine-tuned CodeBERT model that recognises the
+              automated-code-review-tool is a fine-tuned CodeBERT model that recognises the
               13 anti-patterns most likely to ship as tech debt — N+1
               queries, swallowed exceptions, race conditions, and more —
               and explains each finding in plain English.
@@ -65,7 +65,7 @@ export default function LandingPage() {
             <div className="flex flex-wrap items-center gap-3">
               <Button asChild size="lg">
                 {/* Spring Boot serves /api/auth/github as a 302 to GitHub. */}
-                <a href="http://localhost:8080/api/auth/github">
+                <a href={`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080"}/api/auth/github`}>
                   <Github className="mr-2 h-4 w-4" />
                   Login with GitHub
                 </a>
@@ -115,7 +115,7 @@ export default function LandingPage() {
       <Separator />
 
       <footer className="mx-auto max-w-6xl px-6 py-8 text-sm text-muted-foreground">
-        CodeLens · MIT · Built on Spring Boot + Next.js + CodeBERT.
+        automated-code-review-tool · MIT · Built on Spring Boot + Next.js + CodeBERT.
       </footer>
     </div>
   );

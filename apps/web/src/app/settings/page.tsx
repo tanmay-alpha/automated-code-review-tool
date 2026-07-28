@@ -131,7 +131,7 @@ function SettingsContent() {
           <CardHeader>
             <CardDescription>
               Use this key in the VS Code extension (Command Palette →{" "}
-              <span className="font-mono">CodeLens: Set API Key</span>). It
+              <span className="font-mono">automated-code-review-tool: Set API Key</span>). It
               authenticates requests as your account.
             </CardDescription>
           </CardHeader>
@@ -156,7 +156,7 @@ function SettingsContent() {
               <AlertTitle>Keep it secret</AlertTitle>
               <AlertDescription>
                 Treat your API key like a password. Anyone with it can
-                impersonate you to the CodeLens API.
+                impersonate you to the automated-code-review-tool API.
               </AlertDescription>
             </Alert>
             {regenError ? (
@@ -246,10 +246,33 @@ function ApiKeyModal({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [displayKey, setDisplayKey] = useState<string | null>(apiKey);
+  const [countdown, setCountdown] = useState(30);
+
+  useEffect(() => {
+    setDisplayKey(apiKey);
+    setCountdown(30);
+    if (!apiKey) return;
+
+    const interval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setDisplayKey("••••••••••••••••••••••••••••••••");
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [apiKey]);
+
   if (!apiKey) return null;
   const handleCopy = async () => {
+    if (!displayKey || displayKey.startsWith("•")) return;
     try {
-      await navigator.clipboard.writeText(apiKey);
+      await navigator.clipboard.writeText(displayKey);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -269,15 +292,14 @@ function ApiKeyModal({
           <AlertTitle>This key will not be shown again.</AlertTitle>
           <AlertDescription>
             Copy it now and paste it into your VS Code settings or CI
-            secret store. After you close this dialog we only keep the
-            prefix.
+            secret store. {countdown > 0 ? `Key will be hidden in ${countdown}s...` : "Key hidden for security."}
           </AlertDescription>
         </Alert>
         <div className="flex items-center gap-2">
           <code className="flex-1 break-all rounded-md bg-muted px-3 py-2 font-mono text-xs">
-            {apiKey}
+            {displayKey}
           </code>
-          <Button onClick={handleCopy} variant="outline" size="sm">
+          <Button onClick={handleCopy} variant="outline" size="sm" disabled={!displayKey || displayKey.startsWith("•")}>
             <Copy className="mr-1 h-3.5 w-3.5" />
             {copied ? "Copied!" : "Copy"}
           </Button>
