@@ -4,4 +4,4 @@ spring:
 
 logging:
   level:
-    com.codelens: DEBUG
+    com.automatedcodereviewtool: DEBUG
