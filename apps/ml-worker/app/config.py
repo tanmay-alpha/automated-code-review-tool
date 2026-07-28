@@ -1,5 +1,5 @@
 """
-CodeLens — ML worker configuration (Issue #9).
+automated-code-review-tool — ML worker configuration (Issue #9).
 
 Single BaseSettings source-of-truth. Loaded from environment + a .env
 file at startup. Importable as `from app.config import settings`.
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     )
 
     # HuggingFace model to load for inference.
-    MODEL_NAME: str = "tanmay-alpha/codelens-codebert"
+    MODEL_NAME: str = "tanmay-alpha/automated-code-review-tool-codebert"
     # Optional HF token (only needed for private models / first-time push).
     HF_TOKEN: str = ""
     # Shared secret the API gateway uses to authenticate calls.
@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     THRESHOLD: float = 0.5
     # CodeBERT max sequence length; windows beyond this are split.
     MAX_SEQ_LENGTH: int = 512
+    # Max seconds to wait for a single inference before returning 504.
+    ML_INFERENCE_TIMEOUT_S: float = 30.0
+    # Comma-separated list of CORS origins allowed to call this service
+    # from a browser. Empty list disables CORS entirely.
+    ML_CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
 
 
 settings = Settings()
