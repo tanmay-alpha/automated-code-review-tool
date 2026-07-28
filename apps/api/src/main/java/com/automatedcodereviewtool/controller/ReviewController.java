@@ -1,13 +1,13 @@
-package com.codelens.controller;
+package com.automatedcodereviewtool.controller;
 
-import com.codelens.dto.ReviewResponse;
-import com.codelens.entity.PullRequestEntity;
-import com.codelens.entity.Repository;
-import com.codelens.repository.FindingRepository;
-import com.codelens.repository.PullRequestRepository;
+import com.automatedcodereviewtool.dto.ReviewResponse;
+import com.automatedcodereviewtool.entity.PullRequestEntity;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.repository.FindingRepository;
+import com.automatedcodereviewtool.repository.PullRequestRepository;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -44,13 +44,12 @@ public class ReviewController {
      * the existence of out-of-scope PRs.</p>
      */
     @GetMapping("/{prId}")
-    public ResponseEntity<ReviewResponse> getReview(@PathVariable("prId") UUID prId) {
+    public ResponseEntity<ReviewResponse> getReview(@PathVariable("prId") UUID prId,
+                                                    @AuthenticationPrincipal User caller) {
         PullRequestEntity pr = pullRequestRepository.findById(prId)
                 .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException(
                         "Review " + prId + " not found"));
 
-        // Ownership check — mirror ScanController.recordAction() pattern.
-        UserDetails caller = getCurrentUser();
         if (!isOwnedBy(pr, caller)) {
             throw new jakarta.persistence.EntityNotFoundException(
                     "Review " + prId + " not found");
@@ -100,28 +99,15 @@ public class ReviewController {
     // --- helpers -----------------------------------------------------------
 
     /**
-     * Extract the current user from the security context.
-     * Returns {@code null} for unauthenticated callers (defence in depth —
-     * the filter chain should already have rejected them).
-     */
-    private static UserDetails getCurrentUser() {
-        var auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !(auth.getPrincipal() instanceof UserDetails userDetails)) {
-            return null;
-        }
-        return userDetails;
-    }
-
-    /**
      * Returns true when the PR's repository owner matches the caller.
      * Uses 404 semantics (not 403) so we don't leak PR existence to
      * unauthorized callers.
      */
-    private static boolean isOwnedBy(PullRequestEntity pr, UserDetails caller) {
-        if (caller == null || caller.getUsername() == null) return false;
+    private static boolean isOwnedBy(PullRequestEntity pr, User caller) {
+        if (caller == null || caller.getGithubUsername() == null) return false;
         Repository repo = pr.getRepo();
         if (repo == null || repo.getOwner() == null) return false;
         String ownerLogin = repo.getOwner().getGithubUsername();
-        return ownerLogin != null && ownerLogin.equals(caller.getUsername());
+        return ownerLogin != null && ownerLogin.equals(caller.getGithubUsername());
     }
 }
