@@ -1,4 +1,4 @@
-# docker-compose.dev.yml — local development overrides for the CodeLens MVP.
+# docker-compose.dev.yml — local development overrides for the automated-code-review-tool MVP.
 #
 # Start with dev overrides:
 #   docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up

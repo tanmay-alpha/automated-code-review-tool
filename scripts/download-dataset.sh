@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =====================================================
-# CodeLens — Download CodeReviewer dataset (Issue #1)
+# automated-code-review-tool — Download CodeReviewer dataset (Issue #1)
 # =====================================================
 # Clones microsoft/CodeBERT into /tmp/codebert and copies
 # the code-review-data folder into

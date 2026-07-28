@@ -1,6 +1,6 @@
 # infra/
 
-Production and local-dev infrastructure files for CodeLens.
+Production and local-dev infrastructure files for automated-code-review-tool.
 
 | Path                          | Purpose                                                                                       |
 | ----------------------------- | --------------------------------------------------------------------------------------------- |
