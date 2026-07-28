@@ -1,4 +1,4 @@
--- CodeLens — initial schema (V1)
+-- automated-code-review-tool — initial schema (V1)
 -- Exact migration from ENGINEERING_PLAN.md Section 5.
 
 -- ============================================
