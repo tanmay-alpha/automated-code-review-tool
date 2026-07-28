@@ -1,13 +1,13 @@
-package com.codelens.controller;
+package com.automatedcodereviewtool.controller;
 
-import com.codelens.dto.request.ConnectRepoRequest;
-import com.codelens.dto.response.RepoResponse;
-import com.codelens.entity.PullRequestEntity;
-import com.codelens.entity.Repository;
-import com.codelens.entity.User;
-import com.codelens.repository.RepositoryRepository;
-import com.codelens.security.JwtAuthFilter;
-import com.codelens.service.RepoService;
+import com.automatedcodereviewtool.dto.request.ConnectRepoRequest;
+import com.automatedcodereviewtool.dto.response.RepoResponse;
+import com.automatedcodereviewtool.entity.PullRequestEntity;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.repository.RepositoryRepository;
+import com.automatedcodereviewtool.security.JwtAuthFilter;
+import com.automatedcodereviewtool.service.RepoService;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;

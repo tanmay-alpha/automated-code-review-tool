@@ -1,15 +1,15 @@
-package com.codelens.controller;
+package com.automatedcodereviewtool.controller;
 
-import com.codelens.config.AppConfig;
-import com.codelens.config.JwtConfig;
-import com.codelens.dto.GitHubTokenResponse;
-import com.codelens.dto.GitHubUserInfo;
-import com.codelens.dto.UserResponse;
-import com.codelens.entity.User;
-import com.codelens.security.JwtBlacklistService;
-import com.codelens.security.JwtService;
-import com.codelens.service.GitHubService;
-import com.codelens.service.UserService;
+import com.automatedcodereviewtool.config.AppConfig;
+import com.automatedcodereviewtool.config.JwtConfig;
+import com.automatedcodereviewtool.dto.GitHubTokenResponse;
+import com.automatedcodereviewtool.dto.GitHubUserInfo;
+import com.automatedcodereviewtool.dto.UserResponse;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.security.JwtBlacklistService;
+import com.automatedcodereviewtool.security.JwtService;
+import com.automatedcodereviewtool.service.GitHubService;
+import com.automatedcodereviewtool.service.UserService;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.Cookie;
@@ -27,7 +27,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import com.codelens.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
 
 import java.net.URI;
 import java.security.SecureRandom;
@@ -42,7 +42,7 @@ import java.util.UUID;
  * ({@code accessToken} and {@code refreshToken}) and 302-redirects the
  * browser to the configured {@code app.frontend-url}. The browser then
  * authenticates subsequent requests to protected endpoints by sending
- * those cookies back; {@link com.codelens.security.JwtAuthFilter} reads
+ * those cookies back; {@link com.automatedcodereviewtool.security.JwtAuthFilter} reads
  * the {@code accessToken} cookie and populates the security context.</p>
  */
 @RestController
@@ -170,9 +170,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
-    public UserResponse me(@AuthenticationPrincipal UUID userId) {
-        User user = userService.findById(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unknown user"));
+    public UserResponse me(@AuthenticationPrincipal User user) {
         return UserResponse.from(user);
     }
 
@@ -231,13 +229,14 @@ public class AuthController {
      * returned ONCE — there is no way to recover it from the database.
      */
     @PostMapping("/api-key/regenerate")
-    public Map<String, String> regenerateApiKey(@AuthenticationPrincipal UUID userId) {
-        String key = userService.generateApiKey(userId);
+    public Map<String, String> regenerateApiKey(@AuthenticationPrincipal User user) {
+        String key = userService.generateApiKey(user.getId());
         return Map.of("apiKey", key);
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(@AuthenticationPrincipal UUID userId, HttpServletRequest request) {
+    public ResponseEntity<Void> logout(@AuthenticationPrincipal User user, HttpServletRequest request) {
+        UUID userId = user.getId();
         // Get the access token from the current request to blacklist it
         String accessToken = readCookie(request, ACCESS_TOKEN_COOKIE);
         if (accessToken == null && request != null) {

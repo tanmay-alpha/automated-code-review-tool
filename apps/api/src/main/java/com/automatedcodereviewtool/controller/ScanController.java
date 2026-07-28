@@ -1,23 +1,23 @@
-package com.codelens.controller;
+package com.automatedcodereviewtool.controller;
 
-import com.codelens.dto.MlFinding;
-import com.codelens.dto.MlReviewResponse;
-import com.codelens.dto.request.FindingActionRequest;
-import com.codelens.dto.request.ScanFileRequest;
-import com.codelens.dto.response.FindingActionResponse;
-import com.codelens.dto.response.ScanFileResponse;
-import com.codelens.entity.Finding;
-import com.codelens.entity.PullRequestEntity;
-import com.codelens.entity.Repository;
-import com.codelens.repository.FindingRepository;
-import com.codelens.service.MlWorkerService;
+import com.automatedcodereviewtool.dto.MlFinding;
+import com.automatedcodereviewtool.dto.MlReviewResponse;
+import com.automatedcodereviewtool.dto.request.FindingActionRequest;
+import com.automatedcodereviewtool.dto.request.ScanFileRequest;
+import com.automatedcodereviewtool.dto.response.FindingActionResponse;
+import com.automatedcodereviewtool.dto.response.ScanFileResponse;
+import com.automatedcodereviewtool.entity.Finding;
+import com.automatedcodereviewtool.entity.PullRequestEntity;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.repository.FindingRepository;
+import com.automatedcodereviewtool.service.MlWorkerService;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -71,15 +71,21 @@ public class ScanController {
     public ResponseEntity<ScanFileResponse> scanFile(
             @Valid @RequestBody ScanFileRequest req) {
 
+        String language = (req.language() == null || req.language().isBlank())
+                ? MlWorkerService.detectLanguage(req.content())
+                : req.language();
+
         MlReviewResponse ml = mlWorkerService.reviewFile(
                 req.content(),
-                req.language()
+                language
         );
 
         List<MlFinding> findings = ml.findings() == null ? List.of() : ml.findings();
-        BigDecimal quality = ml.qualityScore() == null ? BigDecimal.valueOf(80) : ml.qualityScore();
+        BigDecimal quality = ml.qualityScore() != null
+                ? ml.qualityScore()
+                : MlWorkerService.computeQualityScore(ml);
 
-        return ResponseEntity.ok(new ScanFileResponse(findings, quality, req.language()));
+        return ResponseEntity.ok(new ScanFileResponse(findings, quality, language));
     }
 
     /**
@@ -100,7 +106,7 @@ public class ScanController {
     @PostMapping("/action")
     public ResponseEntity<FindingActionResponse> recordAction(
             @Valid @RequestBody FindingActionRequest req,
-            @AuthenticationPrincipal UserDetails caller) {
+            @AuthenticationPrincipal User caller) {
 
         String action = req.action().toLowerCase(Locale.ROOT);
         if (!VALID_ACTIONS.contains(action)) {
@@ -124,7 +130,7 @@ public class ScanController {
         findingRepository.save(finding);
 
         log.info("Finding {} disposition={} (actor={})",
-                finding.getId(), action, caller == null ? "?" : caller.getUsername());
+                finding.getId(), action, caller == null ? "?" : caller.getGithubUsername());
 
         return ResponseEntity.ok(new FindingActionResponse(
                 finding.getId(), action, finding.getStatus()));
@@ -136,13 +142,13 @@ public class ScanController {
      * as non-owners (defence in depth — the filter chain should already
      * have rejected them).
      */
-    private static boolean isOwnedBy(Finding finding, UserDetails caller) {
-        if (caller == null || caller.getUsername() == null) return false;
+    private static boolean isOwnedBy(Finding finding, User caller) {
+        if (caller == null || caller.getGithubUsername() == null) return false;
         PullRequestEntity pr = finding.getPullRequest();
         if (pr == null) return false;
         Repository repo = pr.getRepo();
         if (repo == null || repo.getOwner() == null) return false;
         String ownerLogin = repo.getOwner().getGithubUsername();
-        return caller.getUsername().equalsIgnoreCase(ownerLogin);
+        return caller.getGithubUsername().equalsIgnoreCase(ownerLogin);
     }
 }

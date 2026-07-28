@@ -1,11 +1,11 @@
-package com.codelens.controller;
+package com.automatedcodereviewtool.controller;
 
-import com.codelens.dto.request.CreateApiKeyRequest;
-import com.codelens.dto.response.ApiKeyResponse;
-import com.codelens.dto.response.CreatedApiKeyResponse;
-import com.codelens.entity.ApiKey;
-import com.codelens.entity.User;
-import com.codelens.service.ApiKeyService;
+import com.automatedcodereviewtool.dto.request.CreateApiKeyRequest;
+import com.automatedcodereviewtool.dto.response.ApiKeyResponse;
+import com.automatedcodereviewtool.dto.response.CreatedApiKeyResponse;
+import com.automatedcodereviewtool.entity.ApiKey;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.service.ApiKeyService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
