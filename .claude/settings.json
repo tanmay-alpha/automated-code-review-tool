@@ -1,5 +1,9 @@
 {
   "permissions": {
-    "allow": []
+    "allow": [],
+    "additionalDirectories": [
+      "C:\\Users\\TANMAY\\.claude"
+    ]
   }
 }
+ 
