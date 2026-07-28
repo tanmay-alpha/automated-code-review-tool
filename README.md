@@ -307,7 +307,8 @@ curl -X POST http://localhost:8080/api/auth/api-key/regenerate \
 > Architected automated-code-review-tool, a multi-surface automated code review platform
 > featuring a Java 21 / Spring Boot REST API with HMAC-SHA256 webhook
 > ingestion, a FastAPI Python service with sliding-window CodeBERT
-> anti-pattern classification across six categories, a VS Code extension,
+> anti-pattern classification across the canonical anti-pattern taxonomy
+> (see `taxonomy/anti_patterns.yaml`), a VS Code extension,
 > and a GitHub Action.
 
 ---
