@@ -1,14 +1,14 @@
 /**
- * CodeLens file reviewer.
+ * automated-code-review-tool file reviewer.
  *
- *  1. Reads the current CodeLens API key + URL from VS Code settings
+ *  1. Reads the current automated-code-review-tool API key + URL from VS Code settings
  *     (see `config.ts`).
  *  2. POSTs the file's text to `{apiUrl}/api/scan/file` with a
  *     `Authorization: Bearer <apiKey>` header.
  *  3. Maps the returned findings onto a `vscode.DiagnosticCollection`
  *     so they show up as squigglies in the editor.
- *  4. Surfaces a status-bar message: "CodeLens: N issues found" or
- *     "CodeLens: ✅ Clean".
+ *  4. Surfaces a status-bar message: "automated-code-review-tool: N issues found" or
+ *     "automated-code-review-tool: ✅ Clean".
  *
  * The reviewer is intentionally tolerant: every failure path surfaces
  * a user-visible message (status bar or error toast) rather than
@@ -20,7 +20,6 @@ import {
   DiagnosticSeverity,
   TextDocument,
   Uri,
-  languages,
   window,
 } from "vscode";
 import { getApiKey, getApiUrl, isEnabled } from "./config";
@@ -62,9 +61,9 @@ let statusBarItem = null as ReturnType<typeof window.createStatusBarItem> | null
 
 function statusBar(): NonNullable<typeof statusBarItem> {
   if (!statusBarItem) {
-    statusBarItem = window.createStatusBarItem("codelens.status", 1);
-    statusBarItem.name = "CodeLens";
-    statusBarItem.command = "codelens.scanFile";
+    statusBarItem = window.createStatusBarItem("automated-code-review-tool.status", 1);
+    statusBarItem.name = "automated-code-review-tool";
+    statusBarItem.command = "automated-code-review-tool.scanFile";
   }
   return statusBarItem;
 }
@@ -81,7 +80,7 @@ export async function scanFile(
   collection: DiagnosticCollection,
 ): Promise<void> {
   if (!isEnabled()) {
-    statusBar().text = "CodeLens: disabled";
+    statusBar().text = "automated-code-review-tool: disabled";
     statusBar().show();
     return;
   }
@@ -89,8 +88,8 @@ export async function scanFile(
   const apiKey = getApiKey();
   if (!apiKey) {
     const msg =
-      "CodeLens: Set your API key in settings (codelens.apiKey)";
-    statusBar().text = "$(error) CodeLens: no API key";
+      "automated-code-review-tool: Set your API key in settings (automated-code-review-tool.apiKey)";
+    statusBar().text = "$(error) automated-code-review-tool: no API key";
     statusBar().tooltip = msg;
     statusBar().show();
     void window.showErrorMessage(msg);
@@ -98,40 +97,78 @@ export async function scanFile(
     return;
   }
 
-  statusBar().text = "$(sync~spin) CodeLens: scanning…";
+  statusBar().text = "$(sync~spin) automated-code-review-tool: scanning…";
   statusBar().show();
 
   try {
-    const response = await fetch(buildUrl(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        content: doc.getText(),
-        language: doc.languageId,
-        filePath: doc.fileName,
-      } satisfies ScanFileRequest),
-    });
+    const response = await postScan({
+      content: doc.getText(),
+      language: doc.languageId,
+      filePath: doc.fileName,
+    }, getApiUrl());
+    applyDiagnostics(doc.uri, response, collection);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    statusBar().text = `$(error) automated-code-review-tool: ${shortError(message)}`;
+    statusBar().tooltip = message;
+    statusBar().show();
+    void window.showErrorMessage(`automated-code-review-tool scan failed: ${message}`);
+    // Don't leave stale diagnostics on failure.
+    collection.set(doc.uri, []);
+  }
+}
 
-    if (!response.ok) {
-      const body = await safeReadText(response);
-      throw new Error(
-        `API returned ${response.status} ${response.statusText}: ${body}`,
+/**
+ * Sends the current document to the automated-code-review-tool API for scanning.
+ *
+ * Wraps `fetch` with a 15-second timeout so a slow or hung API never
+ * stalls the editor's event loop. Also validates the response is JSON
+ * and warns the user if they're pointing at an HTTP URL (non-HTTPS
+ * API calls leak credentials in plaintext over the network).
+ */
+async function postScan(
+  payload: ScanFileRequest,
+  apiUrl: string,
+): Promise<ScanFileResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    if (apiUrl.startsWith("http://")) {
+      void window.showWarningMessage(
+        "automated-code-review-tool: API URL uses plain HTTP — credentials may be exposed on the network.",
       );
     }
 
-    const json = (await response.json()) as ScanFileResponse;
-    applyDiagnostics(doc.uri, json, collection);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    statusBar().text = `$(error) CodeLens: ${shortError(message)}`;
-    statusBar().tooltip = message;
-    statusBar().show();
-    void window.showErrorMessage(`CodeLens scan failed: ${message}`);
-    // Don't leave stale diagnostics on failure.
-    collection.set(doc.uri, []);
+    const res = await fetch(`${apiUrl}/api/scan/file`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getApiKey()}`,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const body = await safeReadText(res);
+      throw new Error(
+        `API returned ${res.status} ${res.statusText}: ${body}`,
+      );
+    }
+
+    // Guard against HTML error pages (e.g. 404 from a dev proxy).
+    const ct = res.headers.get("content-type") ?? "";
+    if (!ct.includes("application/json")) {
+      const body = await safeReadText(res);
+      throw new Error(
+        `Expected JSON but got ${ct.split(";")[0].trim()}: ${body.slice(0, 200)}`,
+      );
+    }
+
+    return (await res.json()) as ScanFileResponse;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -145,10 +182,6 @@ export function clearAll(collection: DiagnosticCollection): void {
 // Internals
 // --------------------------------------------------------------------
 
-function buildUrl(): string {
-  return `${getApiUrl()}/api/scan/file`;
-}
-
 function applyDiagnostics(
   uri: Uri,
   response: ScanFileResponse,
@@ -158,14 +191,14 @@ function applyDiagnostics(
   collection.set(uri, diags);
 
   if (diags.length === 0) {
-    statusBar().text = "CodeLens: ✅ Clean";
+    statusBar().text = "automated-code-review-tool: ✅ Clean";
     statusBar().tooltip = "No issues found in this file.";
   } else {
-    statusBar().text = `CodeLens: ${diags.length} issue${
+    statusBar().text = `automated-code-review-tool: ${diags.length} issue${
       diags.length === 1 ? "" : "s"
     } found`;
     statusBar().tooltip =
-      `${diags.length} CodeLens finding${diags.length === 1 ? "" : "s"}. ` +
+      `${diags.length} automated-code-review-tool finding${diags.length === 1 ? "" : "s"}. ` +
       `Click to re-scan.`;
   }
   statusBar().show();
@@ -173,15 +206,17 @@ function applyDiagnostics(
 
 function toDiagnostic(f: FindingDTO): Diagnostic {
   // lineStart/lineEnd come from the API as 1-based line numbers.
-  // If either is missing, highlight the whole file (line 0, col 0 to
-  // line 0 col 0 is invalid in VS Code; clamp to a 1-char range at
-  // position 0).
+  // VS Code ranges must have start < end; a zero-width range (start == end)
+  // is valid but renders as a single underline marker rather than a
+  // squiggly, which is what we want when the API only knows a line.
   const startLine = Math.max(0, (f.lineStart ?? 1) - 1);
   const endLine = Math.max(startLine, (f.lineEnd ?? f.lineStart ?? 1) - 1);
+  // If we don't have a usable start line, place a tiny range at the very
+  // start of the file rather than a zero-width Range(0,0,0,0).
   const range =
     f.lineStart == null
-      ? new (require("vscode").Range)(0, 0, 0, 0)
-      : new (require("vscode").Range)(startLine, 0, endLine, 999);
+      ? new (require("vscode").Range)(0, 0, 0, 1)
+      : new (require("vscode").Range)(startLine, 0, endLine, Number.MAX_SAFE_INTEGER);
 
   const severity = mapSeverity(f.severity);
 
@@ -194,7 +229,7 @@ function toDiagnostic(f: FindingDTO): Diagnostic {
   const message = `${prettify(f.antiPattern)}${pct}: ${f.explanation}`;
 
   const d = new Diagnostic(range, message, severity);
-  d.source = "CodeLens";
+  d.source = "automated-code-review-tool";
   d.code = f.id ?? f.antiPattern;
 
   return d;
