@@ -21,6 +21,7 @@ import {
   Range,
   TextDocument,
   Uri,
+  languages,
   window,
 } from "vscode";
 import { getApiKey, getApiUrl, isEnabled } from "./config";
