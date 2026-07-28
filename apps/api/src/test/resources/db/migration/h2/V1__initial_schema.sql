@@ -1,4 +1,4 @@
--- CodeLens — initial schema (V1, H2 test dialect)
+-- automated-code-review-tool — initial schema (V1, H2 test dialect)
 --
 -- Test-only mirror of V1__initial_schema.sql for the in-memory H2 database
 -- (PostgreSQL-compatibility mode). Two PostgreSQL-specific constructs

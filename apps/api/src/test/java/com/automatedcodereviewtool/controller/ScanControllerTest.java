@@ -1,19 +1,19 @@
-package com.codelens.controller;
+package com.automatedcodereviewtool.controller;
 
-import com.codelens.config.SecurityConfig;
-import com.codelens.entity.Finding;
-import com.codelens.entity.PullRequestEntity;
-import com.codelens.entity.Repository;
-import com.codelens.entity.User;
-import com.codelens.repository.FindingRepository;
-import com.codelens.service.ApiKeyService;
-import com.codelens.service.MlWorkerService;
-import com.codelens.security.ApiKeyAuthFilter;
-import com.codelens.security.AuthRateLimitFilter;
-import com.codelens.security.JwtAuthFilter;
-import com.codelens.security.JwtService;
-import com.codelens.logging.SecurityEventLogger;
-import com.codelens.monitoring.SecurityMonitor;
+import com.automatedcodereviewtool.config.SecurityConfig;
+import com.automatedcodereviewtool.entity.Finding;
+import com.automatedcodereviewtool.entity.PullRequestEntity;
+import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.repository.FindingRepository;
+import com.automatedcodereviewtool.service.ApiKeyService;
+import com.automatedcodereviewtool.service.MlWorkerService;
+import com.automatedcodereviewtool.security.ApiKeyAuthFilter;
+import com.automatedcodereviewtool.security.AuthRateLimitFilter;
+import com.automatedcodereviewtool.security.JwtAuthFilter;
+import com.automatedcodereviewtool.security.JwtService;
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.monitoring.SecurityMonitor;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -26,7 +26,6 @@ import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -61,20 +60,21 @@ class ScanControllerTest {
     static class PassThroughFilter {
         @org.springframework.context.annotation.Bean
         JwtAuthFilter jwtAuthFilter() {
-            return new JwtAuthFilter(null, null) {
+            return new JwtAuthFilter(null, null, null) {
                 @Override
                 protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res,
                                                 FilterChain chain) throws java.io.IOException, jakarta.servlet.ServletException {
-                    // Use a real UserDetails as the principal so
-                    // @AuthenticationPrincipal UserDetails works in the controller.
-                    UserDetails principal = org.springframework.security.core.userdetails.User
-                            .withUsername(TEST_OWNER)
-                            .password("n/a")
-                            .authorities(List.of(new SimpleGrantedAuthority("ROLE_USER")))
-                            .build();
+                    // Build the actual User entity so controllers that use
+                    // {@code @AuthenticationPrincipal User} (entity) receive
+                    // a populated caller — see isOwnedBy().
+                    com.automatedcodereviewtool.entity.User caller =
+                            com.automatedcodereviewtool.entity.User.builder()
+                                    .githubUsername(TEST_OWNER)
+                                    .accessToken("dummy")
+                                    .build();
                     SecurityContextHolder.getContext().setAuthentication(
                             new UsernamePasswordAuthenticationToken(
-                                    principal, "n/a",
+                                    caller, "n/a",
                                     List.of(new SimpleGrantedAuthority("ROLE_USER"))));
                     try {
                         chain.doFilter(req, res);
@@ -144,8 +144,8 @@ class ScanControllerTest {
     @Test
     void scanFile_returns200_withFindings() throws Exception {
         UUID findingId = UUID.randomUUID();
-        var mlResp = new com.codelens.dto.MlReviewResponse(
-                List.of(new com.codelens.dto.MlFinding(
+        var mlResp = new com.automatedcodereviewtool.dto.MlReviewResponse(
+                List.of(new com.automatedcodereviewtool.dto.MlFinding(
                         10, 20,
                         "GodClass", "structural",
                         "high", new BigDecimal("0.90"),

@@ -1,13 +1,13 @@
-package com.codelens.service;
+package com.automatedcodereviewtool.service;
 
-import com.codelens.dto.MlFinding;
-import com.codelens.dto.MlReviewResponse;
+import com.automatedcodereviewtool.dto.MlFinding;
+import com.automatedcodereviewtool.dto.MlReviewResponse;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.List;
 
-import static com.codelens.service.ReviewService.computeQualityScore;
+import static com.automatedcodereviewtool.service.MlWorkerService.computeQualityScore;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,7 +34,7 @@ class ReviewServiceTest {
                 +print("hello")
                 +x = 1
                 """;
-        assertEquals("python", ReviewService.detectLanguage(diff));
+        assertEquals("python", MlWorkerService.detectLanguage(diff));
     }
 
     @Test
@@ -49,7 +49,7 @@ class ReviewServiceTest {
                 +
                 +public class Main {}
                 """;
-        assertEquals("java", ReviewService.detectLanguage(diff));
+        assertEquals("java", MlWorkerService.detectLanguage(diff));
     }
 
     @Test
@@ -64,7 +64,7 @@ class ReviewServiceTest {
                 +const App = () => <div>hello</div>;
                 +export default App;
                 """;
-        assertEquals("javascript", ReviewService.detectLanguage(diff));
+        assertEquals("javascript", MlWorkerService.detectLanguage(diff));
     }
 
     @Test
@@ -88,20 +88,20 @@ class ReviewServiceTest {
                 +
                 +public class B {}
                 """;
-        assertEquals("python", ReviewService.detectLanguage(diff));
+        assertEquals("python", MlWorkerService.detectLanguage(diff));
     }
 
     @Test
     void testDetectLanguageDefaultPython() {
         // No recognized extension → default python
         String diff = "diff --git a/README.md b/README.md\n+hello";
-        assertEquals("python", ReviewService.detectLanguage(diff));
+        assertEquals("python", MlWorkerService.detectLanguage(diff));
     }
 
     @Test
     void testDetectLanguageEmpty() {
-        assertEquals("python", ReviewService.detectLanguage(""));
-        assertEquals("python", ReviewService.detectLanguage(null));
+        assertEquals("python", MlWorkerService.detectLanguage(""));
+        assertEquals("python", MlWorkerService.detectLanguage(null));
     }
 
     @Test
@@ -116,7 +116,7 @@ class ReviewServiceTest {
                 +const App = () => <div>hello</div>;
                 +export default App;
                 """;
-        assertEquals("javascript", ReviewService.detectLanguage(diff));
+        assertEquals("javascript", MlWorkerService.detectLanguage(diff));
     }
 
     // ---- computeQualityScore ----

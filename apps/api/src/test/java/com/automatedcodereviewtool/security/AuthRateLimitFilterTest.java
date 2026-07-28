@@ -1,4 +1,4 @@
-package com.codelens.security;
+package com.automatedcodereviewtool.security;
 
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.BeforeEach;
