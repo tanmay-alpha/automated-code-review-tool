@@ -1,7 +1,9 @@
-package com.codelens.security;
+package com.automatedcodereviewtool.security;
 
-import com.codelens.logging.SecurityEventLogger;
-import com.codelens.security.JwtBlacklistService;
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.security.JwtBlacklistService;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.repository.UserRepository;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
@@ -14,7 +16,6 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -22,15 +23,6 @@ import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Reads the {@code accessToken} cookie, validates the JWT, and populates
- * the SecurityContext with a {@link UsernamePasswordAuthenticationToken}
- * whose principal is the user {@link UUID}.
- *
- * <p>Public endpoints (auth flow, webhook, actuator health) are skipped
- * before JWT validation; their permitAll status is enforced by
- * {@link com.codelens.config.SecurityConfig}.</p>
- */
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
@@ -38,13 +30,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final JwtBlacklistService jwtBlacklistService;
+    private final UserRepository userRepository;
 
     @Autowired
     private SecurityEventLogger securityEventLogger;
 
-    public JwtAuthFilter(JwtService jwtService, JwtBlacklistService jwtBlacklistService) {
+    public JwtAuthFilter(JwtService jwtService,
+                         JwtBlacklistService jwtBlacklistService,
+                         UserRepository userRepository) {
         this.jwtService = jwtService;
         this.jwtBlacklistService = jwtBlacklistService;
+        this.userRepository = userRepository;
     }
 
     @Override
@@ -86,10 +82,26 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 }
 
                 UUID userId = UUID.fromString(claims.getSubject());
-                UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
-                        userId, null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
-                auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(auth);
+
+                // Look up the full User entity so controllers using
+                // @AuthenticationPrincipal User receive a fully-loaded
+                // entity, not a raw UUID (the same shape ApiKeyAuthFilter
+                // uses). If the user vanished (account deleted, DB reset),
+                // fall through as anonymous — SecurityConfig will reject.
+                User user = userRepository.findById(userId).orElse(null);
+                if (user == null) {
+                    SecurityContextHolder.clearContext();
+                } else {
+                    // Pass the JPA User as principal so controllers can use
+                    // @AuthenticationPrincipal User directly. Use the
+                    // github username for the UserDetails carried in
+                    // setDetails() — defensive wrapper for any controller
+                    // that opts into @AuthenticationPrincipal UserDetails.
+                    UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                            user, null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
+                    auth.setDetails(buildDetails(user));
+                    SecurityContextHolder.getContext().setAuthentication(auth);
+                }
             } catch (JwtException | IllegalArgumentException ex) {
                 // Invalid token: leave context anonymous; SecurityFilterChain will reject.
                 SecurityContextHolder.clearContext();
@@ -108,5 +120,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             }
         }
         return null;
+    }
+
+    /** Wrap the User in a UserDetails so controllers can do
+     *  {@code @AuthenticationPrincipal UserDetails caller}.getUsername()
+     *  to check ownership against {@link User#getGithubUsername()}. */
+    private static org.springframework.security.core.userdetails.UserDetails buildDetails(User u) {
+        return org.springframework.security.core.userdetails.User
+                .withUsername(u.getGithubUsername())
+                .password("")
+                .authorities("ROLE_USER")
+                .build();
     }
 }

@@ -1,4 +1,4 @@
-package com.codelens.logging;
+package com.automatedcodereviewtool.logging;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

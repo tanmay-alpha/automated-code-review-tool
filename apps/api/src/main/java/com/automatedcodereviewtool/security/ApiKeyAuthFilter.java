@@ -1,8 +1,8 @@
-package com.codelens.security;
+package com.automatedcodereviewtool.security;
 
-import com.codelens.entity.ApiKey;
-import com.codelens.entity.User;
-import com.codelens.service.ApiKeyService;
+import com.automatedcodereviewtool.entity.ApiKey;
+import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.service.ApiKeyService;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -27,7 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ArrayDeque;
+import java.util.ArrayDeque;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
 /**

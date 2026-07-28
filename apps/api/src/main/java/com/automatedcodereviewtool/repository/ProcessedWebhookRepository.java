@@ -1,6 +1,6 @@
-package com.codelens.repository;
+package com.automatedcodereviewtool.repository;
 
-import com.codelens.entity.ProcessedWebhook;
+import com.automatedcodereviewtool.entity.ProcessedWebhook;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
