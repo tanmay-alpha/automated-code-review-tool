@@ -1,4 +1,4 @@
-package com.codelens.exception;
+package com.automatedcodereviewtool.exception;
 
 /**
  * Thrown when the ML worker is unreachable, times out, or returns a

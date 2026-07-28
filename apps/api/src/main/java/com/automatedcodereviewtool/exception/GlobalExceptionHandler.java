@@ -1,4 +1,4 @@
-package com.codelens.exception;
+package com.automatedcodereviewtool.exception;
 
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.ConstraintViolation;
