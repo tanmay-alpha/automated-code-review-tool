@@ -1,4 +1,4 @@
-package com.codelens.logging;
+package com.automatedcodereviewtool.logging;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
