@@ -196,9 +196,12 @@ public class MlWorkerService {
 
     /**
      * Compute a quality score from a finding list when the ML worker
-     * omitted one. Applies a simple penalty model:
-     *   critical=20, major=10, minor=5, weighted by confidence.
-     * Result is clamped to [0, 100] and rounded to 2dp.
+     * omitted one. Penalty weights match the canonical Python
+     * implementation (apps/ml-worker/app/scoring.py):
+     *   critical=20, major=10, minor=3, weighted by confidence.
+     * Formula: 100 - sum(weight * confidence), clamped to [0, 100],
+     * rounded to 2dp. See contracts/quality_score_cases.json for the
+     * shared fixture consumed by Python and Java tests.
      */
     public static BigDecimal computeQualityScore(MlReviewResponse response) {
         if (response == null) return BigDecimal.ZERO;
@@ -216,7 +219,7 @@ public class MlWorkerService {
             BigDecimal weight = switch (f.severity() == null ? "minor" : f.severity().toLowerCase(Locale.ROOT)) {
                 case "critical" -> BigDecimal.valueOf(20);
                 case "major" -> BigDecimal.valueOf(10);
-                default -> BigDecimal.valueOf(5);
+                default -> BigDecimal.valueOf(3);
             };
             penalty = penalty.add(weight.multiply(conf));
         }

@@ -48,6 +48,9 @@ public class Finding {
     @Column(name = "anti_pattern", nullable = false, length = 80)
     private String antiPattern;
 
+    @Column(name = "code_sample_id")
+    private UUID codeSampleId;
+
     @Column(name = "category", nullable = false, length = 30)
     private String category;
 
