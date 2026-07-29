@@ -95,7 +95,7 @@ services:
     plan: standard
     runtime: docker
     dockerfilePath: apps/ml-worker/Dockerfile
-    dockerContext: apps/ml-worker
+    dockerContext: .
     healthCheckPath: /ml/health
     healthCheckTimeout: 120
     autoDeploy: true
