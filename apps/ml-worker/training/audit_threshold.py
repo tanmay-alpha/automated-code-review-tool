@@ -1,6 +1,5 @@
 import json
 import sys
-import os
 import numpy as np
 from pathlib import Path
 from sklearn.metrics import precision_score, recall_score, f1_score, classification_report, confusion_matrix
@@ -35,7 +34,6 @@ def run_threshold_sensitivity():
     y_true = np.array([s["labels"] for s in val_data], dtype=np.int32)
 
     # Attempt to load model and run inference to get raw probabilities
-    model_loaded = False
     probs = None
     
     try:
@@ -50,7 +48,6 @@ def run_threshold_sensitivity():
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
-        model_loaded = True
         print(f"[INFO] Model loaded successfully on {device}.")
         
         # Prepare inputs and run inference

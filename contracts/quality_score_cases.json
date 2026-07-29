@@ -1,0 +1,98 @@
+{
+  "$schema": "https://automatedcodereviewtool.dev/schemas/quality-score-cases-v1.json",
+  "description": "Shared fixture for quality-score parity tests. Both Python and Java read this file and must produce identical numeric results for each case.",
+  "formula": "clamp(100 - sum(weight * confidence), 0, 100) rounded to 2dp",
+  "penaltyWeights": {
+    "critical": 20,
+    "major": 10,
+    "minor": 3
+  },
+  "cases": [
+    {
+      "name": "no-findings",
+      "findings": [],
+      "expectedScore": 100.00,
+      "notes": "Zero findings => perfect score regardless of implementation path"
+    },
+    {
+      "name": "single-critical-full-confidence",
+      "findings": [
+        { "severity": "critical", "confidence": 1.0 }
+      ],
+      "expectedScore": 80.00,
+      "notes": "20 * 1.0 = 20 penalty"
+    },
+    {
+      "name": "single-major-half-confidence",
+      "findings": [
+        { "severity": "major", "confidence": 0.5 }
+      ],
+      "expectedScore": 95.00,
+      "notes": "10 * 0.5 = 5 penalty"
+    },
+    {
+      "name": "single-minor-quarter-confidence",
+      "findings": [
+        { "severity": "minor", "confidence": 0.25 }
+      ],
+      "expectedScore": 99.25,
+      "notes": "3 * 0.25 = 0.75 penalty"
+    },
+    {
+      "name": "mixed-severities",
+      "findings": [
+        { "severity": "critical", "confidence": 0.8 },
+        { "severity": "major", "confidence": 0.6 },
+        { "severity": "minor", "confidence": 0.4 }
+      ],
+      "expectedScore": 72.80,
+      "notes": "20*0.8 + 10*0.6 + 3*0.4 = 16 + 6 + 1.2 = 23.2 penalty => 76.80"
+    },
+    {
+      "name": "null-confidence-defaults-to-zero",
+      "findings": [
+        { "severity": "critical", "confidence": null },
+        { "severity": "major", "confidence": null }
+      ],
+      "expectedScore": 100.00,
+      "notes": "null confidence contributes 0 penalty"
+    },
+    {
+      "name": "null-severity-defaults-to-minor",
+      "findings": [
+        { "severity": null, "confidence": 1.0 }
+      ],
+      "expectedScore": 97.00,
+      "notes": "null severity -> minor weight (3) * 1.0 = 3 penalty"
+    },
+    {
+      "name": "clamp-below-zero",
+      "findings": [
+        { "severity": "critical", "confidence": 1.0 },
+        { "severity": "critical", "confidence": 1.0 },
+        { "severity": "critical", "confidence": 1.0 },
+        { "severity": "critical", "confidence": 1.0 },
+        { "severity": "critical", "confidence": 1.0 },
+        { "severity": "critical", "confidence": 1.0 }
+      ],
+      "expectedScore": 0.00,
+      "notes": "6 * 20 = 120 penalty, clamped to 0"
+    },
+    {
+      "name": "rounding-to-two-dp",
+      "findings": [
+        { "severity": "minor", "confidence": 1.0 / 3.0 }
+      ],
+      "expectedScore": 99.00,
+      "notes": "3 * (1/3) = 1.0 penalty exactly, no rounding needed"
+    },
+    {
+      "name": "rounding-to-two-dp-non-terminating",
+      "findings": [
+        { "severity": "minor", "confidence": 0.3 }
+      ],
+      "expectedScore": 99.10,
+      "notes": "3 * 0.3 = 0.9 penalty => 99.10 (half-up rounding)"
+    }
+  ]
+}

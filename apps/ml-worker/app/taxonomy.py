@@ -1,5 +1,5 @@
 """
-automated-code-review-tool — Taxonomy loader (Phase 0).
+automated-code-review-tool — Taxonomy loader (Phase 1A).
 
 Loads the canonical anti-pattern taxonomy from
 ``taxonomy/anti_patterns.yaml`` and exposes it as a small dataclass
@@ -15,17 +15,35 @@ Use :func:`load_taxonomy` to get a :class:`Taxonomy` instance.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    import yaml  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - yaml is in requirements-train.txt
+    import yaml  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover - yaml is in requirements-test.txt
     yaml = None  # type: ignore[assignment]
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TAXONOMY_PATH = REPO_ROOT / "taxonomy" / "anti_patterns.yaml"
+
+_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+_VALID_CATEGORIES = frozenset({
+    "SECURITY",
+    "PERFORMANCE",
+    "ARCHITECTURE",
+    "RELIABILITY",
+    "READABILITY",
+    "MAINTAINABILITY",
+})
+_VALID_SEVERITIES = frozenset({"critical", "major", "minor"})
+_REQUIRED_FIELDS = ("id", "display_name", "category", "default_severity", "trainable")
+_ID_PATTERN = re.compile(r"^[A-Z][A-Z0-9]+(_[A-Z0-9]+)+$")
+
+
+class TaxonomyError(Exception):
+    """Raised when the taxonomy file is missing, malformed, or violates the contract."""
 
 
 @dataclass(frozen=True)
@@ -37,6 +55,7 @@ class AntiPattern:
     category: str
     default_severity: str
     description: str
+    trainable: bool = False
 
 
 @dataclass(frozen=True)
@@ -55,10 +74,14 @@ class Taxonomy:
     def ids(self) -> list[str]:
         return [e.id for e in self.entries]
 
+    def trainable_ids(self) -> list[str]:
+        """Return the IDs of entries with ``trainable: true`` in taxonomy order."""
+        return [e.id for e in self.entries if e.trainable]
+
 
 def _default_yaml_parser():
     if yaml is None:
-        raise RuntimeError(
+        raise TaxonomyError(
             "PyYAML is required to load the taxonomy. "
             "Install it with `pip install pyyaml`."
         )
@@ -68,36 +91,124 @@ def _default_yaml_parser():
 def load_taxonomy(path: Path | str | None = None) -> Taxonomy:
     """Load the canonical taxonomy from YAML.
 
+    Performs strict validation:
+
+    * YAML file must exist.
+    * ``version`` must be a non-empty semantic-version string (e.g. ``1.0.0``).
+    * ``anti_patterns`` must be a list with at least one entry.
+    * Every entry must have all required fields: id, display_name, category,
+      default_severity, trainable.
+    * IDs must be unique.
+    * IDs must match ``^[A-Z][A-Z0-9]+(_[A-Z0-9]+)+$``.
+    * Categories must be one of the six allowed categories.
+    * Severities must be one of the three allowed severities.
+    * ``trainable`` must be a boolean.
+    * At least one entry must have ``trainable: true``.
+    * Trainable entries must appear in deterministic order (i.e., the YAML order).
+
     Args:
         path: Optional override path. Defaults to
             ``<repo-root>/taxonomy/anti_patterns.yaml``.
 
     Raises:
         FileNotFoundError: If the YAML file does not exist.
-        RuntimeError: If PyYAML is not installed or the YAML is malformed.
-        ValueError: If a required field is missing from an entry.
+        TaxonomyError: If the YAML is malformed or violates the contract.
     """
     yaml_path = Path(path) if path else DEFAULT_TAXONOMY_PATH
     if not yaml_path.exists():
         raise FileNotFoundError(f"Taxonomy file not found: {yaml_path}")
+
     parser = _default_yaml_parser()
     with yaml_path.open("r", encoding="utf-8") as f:
         data = parser(f)
+
+    if not isinstance(data, dict):
+        raise TaxonomyError("Taxonomy YAML must be a top-level mapping")
+
+    # --- version ---
+    raw_version = data.get("version")
+    if not raw_version or not isinstance(raw_version, str):
+        raise TaxonomyError(
+            f"Taxonomy 'version' must be a non-empty string, got {raw_version!r}"
+        )
+    raw_version = raw_version.strip()
+    if not _SEMVER_RE.match(raw_version):
+        raise TaxonomyError(
+            f"Taxonomy 'version' must be a semantic version (e.g. '1.0.0'), "
+            f"got {raw_version!r}"
+        )
+
+    # --- anti_patterns list ---
     raw_entries = data.get("anti_patterns", [])
+    if not isinstance(raw_entries, list):
+        raise TaxonomyError("'anti_patterns' must be a list")
+    if not raw_entries:
+        raise TaxonomyError("'anti_patterns' must contain at least one entry")
+
     entries: list[AntiPattern] = []
+    seen_ids: set[str] = set()
+
     for raw in raw_entries:
-        for required in ("id", "display_name", "category", "default_severity"):
+        if not isinstance(raw, dict):
+            raise TaxonomyError(f"Taxonomy entry must be a mapping, got {type(raw).__name__}: {raw}")
+
+        for required in _REQUIRED_FIELDS:
             if required not in raw:
-                raise ValueError(
+                raise TaxonomyError(
                     f"Taxonomy entry missing '{required}': {raw}"
                 )
-        entries.append(
-            AntiPattern(
-                id=raw["id"],
-                display_name=raw["display_name"],
-                category=raw["category"],
-                default_severity=raw["default_severity"],
-                description=raw.get("description", "").strip(),
+
+        ap_id = str(raw["id"]).strip()
+        if not ap_id:
+            raise TaxonomyError("Taxonomy entry 'id' must not be empty")
+
+        if ap_id in seen_ids:
+            raise TaxonomyError(f"Duplicate taxonomy entry ID: {ap_id!r}")
+        seen_ids.add(ap_id)
+
+        if not _ID_PATTERN.match(ap_id):
+            raise TaxonomyError(
+                f"Taxonomy entry ID {ap_id!r} does not match "
+                f"required pattern {_ID_PATTERN.pattern!r}"
             )
+
+        category = str(raw["category"]).strip().upper()
+        if category not in _VALID_CATEGORIES:
+            raise TaxonomyError(
+                f"Taxonomy entry {ap_id!r} has invalid category {category!r}. "
+                f"Allowed: {sorted(_VALID_CATEGORIES)}"
+            )
+
+        severity = str(raw["default_severity"]).strip().lower()
+        if severity not in _VALID_SEVERITIES:
+            raise TaxonomyError(
+                f"Taxonomy entry {ap_id!r} has invalid default_severity "
+                f"{severity!r}. Allowed: {sorted(_VALID_SEVERITIES)}"
+            )
+
+        trainable_raw = raw["trainable"]
+        if not isinstance(trainable_raw, bool):
+            raise TaxonomyError(
+                f"Taxonomy entry {ap_id!r} 'trainable' must be a boolean, "
+                f"got {type(trainable_raw).__name__}"
+            )
+
+        display_name = str(raw["display_name"]).strip()
+        description = str(raw.get("description", "")).strip()
+
+        entries.append(AntiPattern(
+            id=ap_id,
+            display_name=display_name,
+            category=category,
+            default_severity=severity,
+            description=description,
+            trainable=trainable_raw,
+        ))
+
+    trainable_count = sum(1 for e in entries if e.trainable)
+    if trainable_count == 0:
+        raise TaxonomyError(
+            "Taxonomy must contain at least one entry with trainable: true"
         )
-    return Taxonomy(entries=tuple(entries), version="phase-0")
+
+    return Taxonomy(entries=tuple(entries), version=raw_version)
