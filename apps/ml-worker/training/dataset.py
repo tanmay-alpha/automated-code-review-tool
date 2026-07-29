@@ -104,7 +104,7 @@ def print_stats(samples: list[dict]) -> None:
 
     print("\n=== DATASET STATS ===")
     print(f"Total samples:                 {total}")
-    print(f"Files loaded:                  (see raw/ directory)")
+    print("Files loaded:                  (see raw/ directory)")
     print(f"Avg comment length (chars):    {mean(comment_lengths):.1f}")
     print(f"Median comment length (chars): {median(comment_lengths):.1f}")
     print(f"Avg diff length (chars):       {mean(diff_lengths):.1f}")

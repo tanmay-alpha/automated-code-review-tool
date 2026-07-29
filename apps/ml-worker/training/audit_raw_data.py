@@ -1,5 +1,4 @@
 import json
-import sys
 from pathlib import Path
 from statistics import mean, median
 
@@ -25,7 +24,7 @@ def audit_raw_data():
                     for pr_id, samples in data.items():
                         if isinstance(samples, list):
                             raw_samples.extend(samples)
-            except Exception as e:
+            except Exception:
                 continue
                 
     total_raw = len(raw_samples)
@@ -33,7 +32,7 @@ def audit_raw_data():
     
     # 1. Total samples check
     # Note: 50K+ is expected for the production dataset.
-    print(f"\n1. Expected Count Check:")
+    print("\n1. Expected Count Check:")
     if total_raw >= 50000:
         print(f"   PASS: Raw dataset has {total_raw} samples (>= 50K).")
     else:
@@ -41,7 +40,7 @@ def audit_raw_data():
         
     # 2. Empty diff check
     empty_diffs = sum(1 for s in raw_samples if not (s.get("diff") or "").strip())
-    print(f"\n2. Empty Diff Check:")
+    print("\n2. Empty Diff Check:")
     print(f"   Samples with empty diffs: {empty_diffs}")
     if empty_diffs == 0:
         print("   PASS: No empty diffs found.")
@@ -57,7 +56,7 @@ def audit_raw_data():
             duplicates += 1
         seen_contents.add(content)
         
-    print(f"\n3. Duplicate Check:")
+    print("\n3. Duplicate Check:")
     print(f"   Duplicate (diff + comment) pairs: {duplicates} ({duplicates / max(total_raw, 1) * 100:.1f}%)")
     
     # 4. Diff length distribution (using approximate whitespace-token count)
@@ -68,17 +67,17 @@ def audit_raw_data():
         lengths.append(tokens_approx)
         
     bins = {"<100": 0, "100-256": 0, "256-512": 0, "512+": 0}
-    for l in lengths:
-        if l < 100:
+    for length in lengths:
+        if length < 100:
             bins["<100"] += 1
-        elif l <= 256:
+        elif length <= 256:
             bins["100-256"] += 1
-        elif l <= 512:
+        elif length <= 512:
             bins["256-512"] += 1
         else:
             bins["512+"] += 1
             
-    print(f"\n4. Diff Length Distribution (approx. tokens):")
+    print("\n4. Diff Length Distribution (approx. tokens):")
     for k, v in bins.items():
         pct = v / max(total_raw, 1) * 100
         print(f"   {k:<10}: {v:>4} ({pct:.1f}%)")
@@ -90,7 +89,7 @@ def audit_raw_data():
     for s in raw_samples:
         diff = (s.get("diff") or "").lower()
         # Heuristic rules
-        if "def " in diff or "import " in diff and not "import java" in diff and not "require" in diff:
+        if "def " in diff or "import " in diff and "import java" not in diff and "require" not in diff:
             languages["python"] += 1
         elif "const " in diff or "let " in diff or "function(" in diff:
             languages["javascript"] += 1
@@ -99,7 +98,7 @@ def audit_raw_data():
         else:
             languages["other"] += 1
             
-    print(f"\n5. Language Distribution:")
+    print("\n5. Language Distribution:")
     for lang, count in languages.items():
         pct = count / max(total_raw, 1) * 100
         print(f"   {lang:<12}: {count:>4} ({pct:.1f}%)")
@@ -108,10 +107,10 @@ def audit_raw_data():
     comment_lens = [len((s.get("comment") or "").strip()) for s in raw_samples]
     avg_len = mean(comment_lens) if comment_lens else 0
     med_len = median(comment_lens) if comment_lens else 0
-    above_50 = sum(1 for l in comment_lens if l > 50)
+    above_50 = sum(1 for length in comment_lens if length > 50)
     above_50_pct = above_50 / max(total_raw, 1) * 100
-    
-    print(f"\n6. Comment Quality:")
+
+    print("\n6. Comment Quality:")
     print(f"   Average comment length: {avg_len:.1f} chars")
     print(f"   Median comment length:  {med_len:.1f} chars")
     print(f"   Comments > 50 chars:    {above_50} ({above_50_pct:.1f}%)")

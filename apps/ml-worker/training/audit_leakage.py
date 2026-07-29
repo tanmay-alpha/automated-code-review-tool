@@ -39,7 +39,7 @@ def check_leakage():
     train_test_overlap = train_hashes & test_hashes
     val_test_overlap = val_hashes & test_hashes
     
-    print(f"\nLeakage Analysis:")
+    print("\nLeakage Analysis:")
     print(f"Train-Val overlap: {len(train_val_overlap)} samples ({len(train_val_overlap)/max(len(val_data),1)*100:.1f}% of val)")
     print(f"Train-Test overlap: {len(train_test_overlap)} samples ({len(train_test_overlap)/max(len(test_data),1)*100:.1f}% of test)")
     print(f"Val-Test overlap: {len(val_test_overlap)} samples ({len(val_test_overlap)/max(len(test_data),1)*100:.1f}% of test)")
@@ -56,7 +56,7 @@ def check_leakage():
         for split_name, split_data in [("Train", train_data), ("Val", val_data), ("Test", test_data)]:
             labels = [s["labels"] for s in split_data if "labels" in s]
             if labels:
-                counts = [sum(l[i] for l in labels) for i in range(len(categories))]
+                counts = [sum(label_row[i] for label_row in labels) for i in range(len(categories))]
                 print(f"\n{split_name} label distribution:")
                 for cat, count in zip(categories, counts):
                     print(f"  {cat}: {count} ({count/len(labels)*100:.1f}%)")
