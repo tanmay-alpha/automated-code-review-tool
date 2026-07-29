@@ -23,3 +23,9 @@ numpy==2.4.6
 pydantic==2.13.4
 pydantic-settings==2.14.2
 python-dotenv==1.2.2
+
+# --- Canonical taxonomy loader ---
+# Pinned explicitly — the runtime depends on this exact version, not a
+# transitive install. Without this line the worker would fail to load
+# `taxonomy/anti_patterns.yaml` and health would report `degraded`.
+PyYAML==6.0.3

@@ -1,11 +1,15 @@
 # syntax=docker/dockerfile:1
+#
+# Build context: repository root (render.yaml sets `dockerContext: .`).
+# All COPY paths below are relative to that root so the image can ship
+# both the worker code AND the canonical taxonomy file together.
 FROM python:3.11-slim
 WORKDIR /app
 
-# System deps (curl for healthcheck, build-essential as a fallback for
-# any wheel that needs compilation).
+# System deps (curl for healthcheck, libyaml for PyYAML wheel).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
+        libyaml-0-2 \
     && rm -rf /var/lib/apt/lists/*
 
 # CPU-only PyTorch to keep the image ~500MB instead of ~5GB.
@@ -14,12 +18,16 @@ RUN pip install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cpu \
       torch==2.12.1+cpu
 
-# Install the rest of the requirements.
-COPY requirements.txt .
-RUN pip install --no-cache-dir --retries 10 --timeout 120 -r requirements.txt
+# Install the rest of the requirements (PyYAML is pinned explicitly).
+COPY apps/ml-worker/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --retries 10 --timeout 120 -r /tmp/requirements.txt
 
-# Copy the application code.
-COPY app/ ./app/
+# Application code (worker) + canonical taxonomy YAML.
+COPY apps/ml-worker/app/ /app/app/
+COPY taxonomy/anti_patterns.yaml /app/taxonomy/anti_patterns.yaml
+
+# Training utilities (dataset builder, evaluation). Read-only at runtime.
+COPY apps/ml-worker/training/ /app/training/
 
 # Create non-root user with a writable HF cache directory.
 RUN useradd --create-home --uid 10001 automated-code-review-tool \
