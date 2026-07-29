@@ -165,6 +165,16 @@
 
     <build>
         <finalName>automated-code-review-tool-api</finalName>
+        <!-- Phase 1A: expose contracts/ to the test classpath so that
+             Java parity tests read the same fixtures as Python tests. -->
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <directory>../../contracts</directory>
+            </testResource>
+        </testResources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
