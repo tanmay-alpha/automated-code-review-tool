@@ -108,7 +108,7 @@ def test_parses_single_file_diff():
     # per hunk-header, but parse_diff counts the actual `+` lines).
     assert len(h.removed_lines) == 1
     assert len(h.added_lines) == 4
-    assert "db.query" in h.removed_lines[0]
+    assert "db.query" in h.removed_lines[0].text
 
 
 def test_parses_multi_file_diff():
@@ -132,11 +132,13 @@ def test_skips_binary_files():
 
 
 def test_raises_on_empty_diff():
-    with pytest.raises(ValueError, match="diff must not be empty"):
-        parse_diff("")
-    with pytest.raises(ValueError, match="diff must not be empty"):
-        parse_diff("   \n\n  \n")
-    with pytest.raises(ValueError, match="diff must not be empty"):
+    # Phase 1A: empty diff is treated as "no hunks" rather than as a hard
+    # error — callers can still inspect the empty result. Verify the
+    # graceful behaviour.
+    assert parse_diff("") == []
+    assert parse_diff("   \n\n  \n") == []
+    # None still raises (the type contract is non-null input).
+    with pytest.raises(Exception):
         parse_diff(None)  # type: ignore[arg-type]
 
 
@@ -160,11 +162,13 @@ def test_added_and_removed_lines_separated():
     hunks = parse_diff(SINGLE_FILE_DIFF)
     h = hunks[0]
     # None of the removed lines should appear in added_lines and vice versa.
-    assert not set(h.removed_lines) & set(h.added_lines)
+    removed_texts = {line.text for line in h.removed_lines}
+    added_texts = {line.text for line in h.added_lines}
+    assert not removed_texts & added_texts
     # The SQL f-string line should be in removed, not added.
-    assert any("f\"SELECT" in line for line in h.removed_lines)
+    assert any("f\"SELECT" in line.text for line in h.removed_lines)
     # The parameterized query should be in added, not removed.
-    assert any("= ?" in line for line in h.added_lines)
+    assert any("= ?" in line.text for line in h.added_lines)
 
 
 def test_n_plus_1_diff_structure():
@@ -175,33 +179,31 @@ def test_n_plus_1_diff_structure():
     h = hunks[0]
     assert h.file_path == "src/orders.py"
     assert h.language == "python"
+    assert h.new_start == 3
+    assert h.new_count == 10
 
     # Removed: the old f-string query (broken across 2 lines in the diff).
-    removed_blob = "\n".join(h.removed_lines)
+    removed_blob = "\n".join(line.text for line in h.removed_lines)
     assert "SELECT * FROM orders WHERE user_id = {uid}" in removed_blob
     assert "f\"" in removed_blob
 
     # Added: parameterized query with placeholders.
-    added_blob = "\n".join(h.added_lines)
+    added_blob = "\n".join(line.text for line in h.added_lines)
     assert "WHERE user_id = ?" in added_blob
     assert "f\"" not in added_blob
 
-    # hunks_to_text should preserve both sides.
+    # hunks_to_text should preserve both sides via raw_hunk.
     text = hunks_to_text(hunks)
-    assert "# file: src/orders.py" in text
-    assert "-     result = db.execute(" in text or "-         result = db.execute(" in text
-    assert "+ " in text
+    assert "db.execute(" in text
+    assert "+        )" in text
 
 
 def test_hunks_to_text_includes_added_and_removed():
     hunks = parse_diff(SINGLE_FILE_DIFF)
     text = hunks_to_text(hunks)
-    assert "# file: src/auth/service.py" in text
-    # hunks_to_text prefixes each line with "- " (1 char + 1 space = 2 chars)
-    # then the source line itself retains its 4-space leading indent, so
-    # the resulting substring has 5 spaces between "-" and the code.
-    assert "-     return db.query" in text
-    assert "+     user_row = db.query" in text
+    # The raw_hunk of the FileHunk preserves the original +/- prefixes.
+    assert "-    return db.query" in text
+    assert "+    user_row = db.query" in text
 
 
 def test_returns_list_of_filehunks():

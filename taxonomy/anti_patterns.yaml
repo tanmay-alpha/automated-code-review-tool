@@ -1,13 +1,26 @@
-version: phase-0
+version: "1.0.0"
+
 description: |
   Canonical anti-pattern taxonomy for automated-code-review-tool.
   All Python inference, fallback scanner, Java persistence, SQL seeds, and tests
-  MUST use IDs from this file.
+  MUST use IDs from this file. The semantic version MUST be incremented for any
+  structural change (add/remove/reorder entries).
+
+  Trainability:
+    trainable: true  — the model may learn to detect this pattern.
+    trainable: false — the pattern is enforced only by the fallback rule engine
+                       (e.g., operational checks that are not suitable for
+                       ML training).
+
+  The model label order contains ONLY entries with trainable: true, in the
+  order they appear below. The fallback scanner may use both trainable and
+  non-trainable entries.
 anti_patterns:
   - id: SECURITY_HARDCODED_SECRET
     display_name: "Hardcoded Secret"
     category: SECURITY
     default_severity: critical
+    trainable: true
     description: |
       A credential such as an API key, password, or token is hard-coded into
       the source tree. Such credentials should be loaded from an environment
@@ -17,6 +30,7 @@ anti_patterns:
     display_name: "SQL Injection"
     category: SECURITY
     default_severity: major
+    trainable: true
     description: |
       User-controlled input is concatenated into a SQL string passed to
       execute() or similar. Use parameterised queries or an ORM instead.
@@ -25,6 +39,7 @@ anti_patterns:
     display_name: "Weak Cryptography"
     category: SECURITY
     default_severity: major
+    trainable: true
     description: |
       Use of weak or broken cryptographic primitives (MD5, SHA-1, DES, RC4,
       Math.random, etc.). Use SHA-256+, AES, or a vetted crypto library.
@@ -33,6 +48,7 @@ anti_patterns:
     display_name: "N+1 Query"
     category: PERFORMANCE
     default_severity: major
+    trainable: true
     description: |
       A loop performs a per-iteration database or remote call that should be
       batched into a single query or lookup.
@@ -41,6 +57,7 @@ anti_patterns:
     display_name: "Quadratic Loop"
     category: PERFORMANCE
     default_severity: major
+    trainable: true
     description: |
       Nested iteration with O(n^2) or worse complexity. Consider a hashmap
       lookup, sorting, or a single pass.
@@ -49,6 +66,7 @@ anti_patterns:
     display_name: "Broad Exception"
     category: RELIABILITY
     default_severity: major
+    trainable: true
     description: |
       A bare except, catch-all Exception, or Java catch (Exception|Throwable)
       that swallows errors and obscures root causes.
@@ -57,6 +75,7 @@ anti_patterns:
     display_name: "Missing Timeout"
     category: RELIABILITY
     default_severity: minor
+    trainable: true
     description: |
       External call (HTTP, DB, lock, queue) has no timeout, which may cause
       indefinite blocking.
@@ -65,6 +84,7 @@ anti_patterns:
     display_name: "Magic Number"
     category: READABILITY
     default_severity: minor
+    trainable: true
     description: |
       Unexplained numeric literal in code. Extract into a named constant so
       its purpose is obvious.
@@ -73,6 +93,7 @@ anti_patterns:
     display_name: "Long Statement"
     category: READABILITY
     default_severity: minor
+    trainable: true
     description: |
       A single statement or line that exceeds reasonable length, often a
       sign it should be split into smaller pieces.
@@ -81,22 +102,26 @@ anti_patterns:
     display_name: "Duplicate Code"
     category: MAINTAINABILITY
     default_severity: minor
+    trainable: true
     description: |
       Identical or near-identical logic appears in multiple places. Extract
       a shared helper so future changes only need to be made once.
-
-  - id: PRINT_TO_STDOUT
-    display_name: "Print to Stdout"
-    category: PRINT
-    default_severity: minor
-    description: |
-      Direct print() or console.log() in code paths that should use
-      structured logging (logging module, winston, pino).
 
   - id: MAINTAINABILITY_COMMENTED_CODE
     display_name: "Commented-Out Code"
     category: MAINTAINABILITY
     default_severity: minor
+    trainable: false
     description: |
       Multi-line blocks of commented-out code. Remove them; version control
       preserves the previous logic if you ever need to restore it.
+
+  - id: MAINTAINABILITY_PRINT_STATEMENT
+    display_name: "Print Statement"
+    category: MAINTAINABILITY
+    default_severity: minor
+    trainable: false
+    description: |
+      A bare ``print()`` (Python) or ``console.log`` (JS/TS) remains in
+      production code. Use structured logging (``logging`` / ``winston`` /
+      ``pino``) so output is controllable in production.

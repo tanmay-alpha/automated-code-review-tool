@@ -37,7 +37,7 @@ def check_label_quality():
         if predicted == s["labels"]:
             agreements += 1
     agreement_rate = agreements / len(sample_subset) * 100
-    print(f"\n1. Inter-rater Reliability Simulation:")
+    print("\n1. Inter-rater Reliability Simulation:")
     print(f"   Agreement rate with mapper rules: {agreement_rate:.1f}%")
     if agreement_rate >= 80:
         print("   PASS: Agreement rate is above 80%.")
@@ -45,7 +45,7 @@ def check_label_quality():
         print("   FAIL: Agreement rate is below 80%.")
         
     # 2. Label imbalance check
-    print(f"\n2. Label Prevalence and Imbalance Check:")
+    print("\n2. Label Prevalence and Imbalance Check:")
     counts = {c: 0 for c in CATEGORIES}
     for s in all_data:
         for i, val in enumerate(s["labels"]):
@@ -72,7 +72,7 @@ def check_label_quality():
         
     # 3. Empty label check
     empty_label_samples = sum(1 for s in all_data if sum(s["labels"]) == 0)
-    print(f"\n3. Empty Label Check:")
+    print("\n3. Empty Label Check:")
     print(f"   Samples with 0 active labels: {empty_label_samples}")
     if empty_label_samples == 0:
         print("   PASS: No empty label samples present after split filtering.")
@@ -82,7 +82,7 @@ def check_label_quality():
     # 4. Multi-label statistics
     multi_label_counts = [sum(s["labels"]) for s in all_data]
     multi_label_pct = sum(1 for c in multi_label_counts if c >= 2) / total_samples * 100
-    print(f"\n4. Multi-label Statistics:")
+    print("\n4. Multi-label Statistics:")
     print(f"   Avg labels per sample: {mean(multi_label_counts):.2f}")
     print(f"   Samples with 2+ labels: {multi_label_pct:.1f}%")
 

@@ -15,7 +15,7 @@ RELIABILITY_BROAD_EXCEPTION — bare ``except:`` or ``except Exception:``
 PERFORMANCE_QUADRATIC_LOOP  — nested loop depth ≥ 2 in Python/Java
 READABILITY_MAGIC_NUMBER    — unexplained numeric literals in added code
 READABILITY_LONG_METHOD     — single-line additions > 200 chars
-PRINT_TO_STDOUT             — bare ``print(`` in Python, ``console.log`` in JS/TS
+MAINTAINABILITY_PRINT_STATEMENT             — bare ``print(`` in Python, ``console.log`` in JS/TS
 MAINTAINABILITY_COMMENTED_CODE — blocks of commented-out code
 
 The scanner is intentionally conservative: it favours precision over recall.
@@ -130,7 +130,7 @@ _RULE_CONFIG: dict[str, dict] = {
             "long or complex statement worth refactoring."
         ),
     },
-    "PRINT_TO_STDOUT": {
+    "MAINTAINABILITY_PRINT_STATEMENT": {
         "severity": "minor",
         "confidence": 0.65,
         "explanation": (
@@ -286,7 +286,7 @@ def fallback_scan(diff: str, language: str = "unknown") -> ReviewResponse:
         ("PERFORMANCE_QUADRATIC_LOOP", lambda: _check_nested_loops(added)),
         ("READABILITY_MAGIC_NUMBER", lambda: _check_magic_number(added)),
         ("READABILITY_LONG_METHOD", lambda: _check_long_lines(added)),
-        ("PRINT_TO_STDOUT", lambda: _check_print_to_stdout(added, language)),
+        ("MAINTAINABILITY_PRINT_STATEMENT", lambda: _check_print_to_stdout(added, language)),
         ("MAINTAINABILITY_COMMENTED_CODE", lambda: _check_commented_code(added)),
     ]
 
