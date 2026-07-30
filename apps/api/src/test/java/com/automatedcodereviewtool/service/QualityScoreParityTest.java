@@ -66,6 +66,45 @@ class QualityScoreParityTest {
         assertThat(taxonomyService.contains("PERFORMANCE_N_PLUS_ONE")).isTrue();
     }
 
+    @Test
+    void confidenceAboveOneIsClamped() {
+        // A confidence of 2.5 (e.g. from a misconfigured model head) must
+        // be treated identically to 1.0 so that the score stays in [0,100].
+        BigDecimal clamped = MlWorkerService.computeQualityScore(
+                new com.automatedcodereviewtool.dto.MlReviewResponse(
+                        List.of(new com.automatedcodereviewtool.dto.MlFinding(
+                                "TEST_FINDING", "major", new BigDecimal("2.5"), 1, 1, "path", null)),
+                        null, 0, 0,
+                        "model", "v1", "1.0.0"));
+        BigDecimal atOne = MlWorkerService.computeQualityScore(
+                new com.automatedcodereviewtool.dto.MlReviewResponse(
+                        List.of(new com.automatedcodereviewtool.dto.MlFinding(
+                                "TEST_FINDING", "major", BigDecimal.ONE, 1, 1, "path", null)),
+                        null, 0, 0,
+                        "model", "v1", "1.0.0"));
+        assertThat(clamped).isEqualByComparingTo(atOne);
+        assertThat(clamped).isGreaterThan(BigDecimal.ZERO);
+    }
+
+    @Test
+    void confidenceBelowZeroIsClamped() {
+        // A negative confidence (e.g. -0.4 from a buggy regression head) must
+        // be clamped to 0 so it never *increases* the penalty.
+        BigDecimal clamped = MlWorkerService.computeQualityScore(
+                new com.automatedcodereviewtool.dto.MlReviewResponse(
+                        List.of(new com.automatedcodereviewtool.dto.MlFinding(
+                                "TEST_FINDING", "major", new BigDecimal("-0.4"), 1, 1, "path", null)),
+                        null, 0, 0,
+                        "model", "v1", "1.0.0"));
+        BigDecimal atZero = MlWorkerService.computeQualityScore(
+                new com.automatedcodereviewtool.dto.MlReviewResponse(
+                        List.of(new com.automatedcodereviewtool.dto.MlFinding(
+                                "TEST_FINDING", "major", BigDecimal.ZERO, 1, 1, "path", null)),
+                        null, 0, 0,
+                        "model", "v1", "1.0.0"));
+        assertThat(clamped).isEqualByComparingTo(atZero);
+    }
+
     private record Finding(String antiPattern, String severity, BigDecimal confidence) {
         private Finding { if (confidence == null) confidence = BigDecimal.ZERO; }
     }
