@@ -3,6 +3,7 @@ package com.automatedcodereviewtool.service;
 import com.automatedcodereviewtool.dto.MlFinding;
 import com.automatedcodereviewtool.dto.MlReviewResponse;
 import com.automatedcodereviewtool.dto.ReviewResult;
+import com.automatedcodereviewtool.entity.CodeSample;
 import com.automatedcodereviewtool.entity.Finding;
 import com.automatedcodereviewtool.entity.PullRequestEntity;
 import com.automatedcodereviewtool.entity.QualityMetric;
@@ -51,19 +52,22 @@ public class ReviewService {
     private final QualityMetricRepository qualityMetricRepository;
     private final RepositoryRepository repositoryRepository;
     private final GitHubService gitHubService;
+    private final ReviewSampleBridge reviewSampleBridge;
 
     public ReviewService(MlWorkerService mlWorkerService,
                          FindingRepository findingRepository,
                          PullRequestRepository pullRequestRepository,
                          QualityMetricRepository qualityMetricRepository,
                          RepositoryRepository repositoryRepository,
-                         GitHubService gitHubService) {
+                         GitHubService gitHubService,
+                         ReviewSampleBridge reviewSampleBridge) {
         this.mlWorkerService = mlWorkerService;
         this.findingRepository = findingRepository;
         this.pullRequestRepository = pullRequestRepository;
         this.qualityMetricRepository = qualityMetricRepository;
         this.repositoryRepository = repositoryRepository;
         this.gitHubService = gitHubService;
+        this.reviewSampleBridge = reviewSampleBridge;
     }
 
     /**
@@ -98,26 +102,48 @@ public class ReviewService {
 
         // -- persist findings (batch delete + save) ------------------------
         findingRepository.deleteAllByPullRequestId(pr.getId());
+
+        // Persist hunk-level samples before the ML response is consumed,
+        // then stamp findings with the corresponding code sample ids.
+        List<CodeSample> samples = reviewSampleBridge.persistHunksForReview(
+                pr.getRepo().getId(), pr.getId(), pr.getHeadSha(), diff);
+
         List<Finding> saved = new ArrayList<>();
         BigDecimal score = MlWorkerService.computeQualityScore(mlResponse);
 
         if (mlResponse.findings() != null) {
             for (MlFinding ml : mlResponse.findings()) {
+                String resolvedPath = resolveFilePath(ml, parsed);
+                if (resolvedPath == null) {
+                    log.warn("Dropping ML finding {} — line {} does not match any file in the diff",
+                            ml.antiPattern(), ml.lineStart());
+                    continue;
+                }
+                BigDecimal rawConfidence = ml.confidence();
+                BigDecimal clampedConfidence = (rawConfidence == null ? BigDecimal.ZERO
+                        : rawConfidence.max(BigDecimal.ZERO).min(BigDecimal.ONE));
                 Finding f = Finding.builder()
                         .pullRequest(pr)
-                        .filePath(resolveFilePath(ml, parsed))
+                        .filePath(resolvedPath)
                         .lineStart(ml.lineStart())
                         .lineEnd(ml.lineEnd())
                         .antiPattern(ml.antiPattern() == null ? "UNKNOWN" : ml.antiPattern())
                         .category(ml.category() == null ? "unknown" : ml.category())
                         .severity(ml.severity() == null ? "minor" : ml.severity())
-                        .confidence(ml.confidence() == null ? BigDecimal.ZERO : ml.confidence())
+                        .confidence(clampedConfidence)
                         .explanation(ml.explanation())
                         .codeSnippet(extractCodeSnippet(ml, parsed))
+                        .engine(mlResponse.engine())
+                        .modelVersion(mlResponse.modelVersion())
+                        .taxonomyVersion(mlResponse.taxonomyVersion())
                         .build();
                 saved.add(findingRepository.save(f));
             }
         }
+
+        // Attach the persisted code sample ids on every matched finding so
+        // downstream analysts can re-link a finding to the exact diff hunk.
+        reviewSampleBridge.stampFindings(saved, samples, mlResponse);
 
         // -- update PR ----------------------------------------------------
         pr.setQualityScore(score);
@@ -204,13 +230,17 @@ public class ReviewService {
 
     /**
      * Resolve the file path for a finding based on its line number.
+     *
+     * <p>Returns {@code null} when the line number does not map to any
+     * file in the diff and no diff files exist at all. Callers must
+     * drop these findings instead of guessing the first file — picking
+     * the first file would mis-attribute findings to unrelated paths.</p>
      */
     private String resolveFilePath(MlFinding ml, DiffParseResult parsed) {
         if (ml.lineStart() == null) {
-            return parsed.fileOrder.isEmpty() ? "unknown" : parsed.fileOrder.get(0);
+            return null;
         }
-        String path = parsed.lineToFile().get(ml.lineStart());
-        return path != null ? path : (parsed.fileOrder.isEmpty() ? "unknown" : parsed.fileOrder.get(0));
+        return parsed.lineToFile().get(ml.lineStart());
     }
 
     /**

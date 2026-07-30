@@ -35,11 +35,15 @@ public class FeedbackAnnotationService {
     public boolean annotateFromFinding(Finding finding) {
         if (finding == null || finding.getId() == null) return false;
 
-        boolean exists = annotationRepository.existsBySource("finding_feedback")
-                && annotationRepository.findAll().stream()
-                        .anyMatch(a -> a.getRationale() != null
-                                && a.getRationale().contains(finding.getId().toString()));
-        if (exists) return false;
+        // Idempotency: skip if an annotation for this exact finding already exists.
+        // We match on the finding UUID embedded in the rationale rather than
+        // introducing another repository query — the rationale is the primary
+        // key-side discriminator for feedback annotations.
+        boolean alreadyAnnotated = annotationRepository.findAll().stream()
+                .filter(a -> "finding_feedback".equals(a.getSource()))
+                .anyMatch(a -> a.getRationale() != null
+                        && a.getRationale().contains("finding_id=" + finding.getId()));
+        if (alreadyAnnotated) return false;
 
         String disposition = switch (finding.getStatus()) {
             case "accepted" -> {
