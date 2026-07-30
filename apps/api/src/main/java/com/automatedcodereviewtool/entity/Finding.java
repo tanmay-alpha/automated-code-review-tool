@@ -66,6 +66,18 @@ public class Finding {
     @Column(name = "code_snippet", columnDefinition = "TEXT")
     private String codeSnippet;
 
+    /** ML engine identifier (e.g. "semgrep", "ml-worker"). */
+    @Column(name = "engine", length = 60)
+    private String engine;
+
+    /** Model version that produced this finding. */
+    @Column(name = "model_version", length = 40)
+    private String modelVersion;
+
+    /** Taxonomy version used by the model at inference time. */
+    @Column(name = "taxonomy_version", length = 40)
+    private String taxonomyVersion;
+
     /**
      * User disposition: {@code "open"}, {@code "accepted"},
      * {@code "dismissed"}, {@code "fixed"}.

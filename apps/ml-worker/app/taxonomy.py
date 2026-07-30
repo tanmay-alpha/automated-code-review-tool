@@ -25,8 +25,24 @@ except ImportError:  # pragma: no cover - yaml is in requirements-test.txt
     yaml = None  # type: ignore[assignment]
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_TAXONOMY_PATH = REPO_ROOT / "taxonomy" / "anti_patterns.yaml"
+def _find_default_taxonomy_path() -> Path:
+    """Locate ``taxonomy/anti_patterns.yaml`` relative to this file.
+
+    Walks upward from the module's directory looking for a sibling
+    ``taxonomy/anti_patterns.yaml``. This works both in development
+    (``apps/ml-worker/app/taxonomy.py`` -> 3 levels up) and in the
+    Docker image where the directory layout is flattened to ``/app``.
+    """
+    here = Path(__file__).resolve().parent
+    for ancestor in (here, *here.parents):
+        candidate = ancestor / "taxonomy" / "anti_patterns.yaml"
+        if candidate.exists():
+            return candidate
+    # Fall back to the conventional dev layout (parents[3]).
+    return here.parents[3] / "taxonomy" / "anti_patterns.yaml"
+
+
+DEFAULT_TAXONOMY_PATH = _find_default_taxonomy_path()
 
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 _VALID_CATEGORIES = frozenset({
@@ -212,3 +228,31 @@ def load_taxonomy(path: Path | str | None = None) -> Taxonomy:
         )
 
     return Taxonomy(entries=tuple(entries), version=raw_version)
+
+
+def load_canonical_taxonomy(path: Path | str | None = None) -> dict:
+    """Convenience wrapper returning the canonical taxonomy as a plain dict.
+
+    Equivalent to ``{**{"version": t.version}, "entries": [...]}`` but
+    the shape matches what training/eval tests expect.
+    """
+    tax = load_taxonomy(path)
+    return {
+        "version": tax.version,
+        "entries": [
+            {
+                "id": e.id,
+                "display_name": e.display_name,
+                "category": e.category,
+                "default_severity": e.default_severity,
+                "trainable": e.trainable,
+                "description": e.description,
+            }
+            for e in tax.entries
+        ],
+    }
+
+
+def trainable_ids(path: Path | str | None = None) -> tuple[str, ...]:
+    """Return the deterministic tuple of trainable label IDs, in YAML order."""
+    return tuple(e.id for e in load_taxonomy(path).entries if e.trainable)

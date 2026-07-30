@@ -216,12 +216,16 @@ public class MlWorkerService {
         BigDecimal penalty = BigDecimal.ZERO;
         for (MlFinding f : response.findings()) {
             BigDecimal conf = f.confidence() == null ? BigDecimal.ZERO : f.confidence();
+            // Clamp to [0,1] so a misbehaving model head cannot drag the
+            // computed score below zero or distort the mean (issue: parity
+            // regression when ML worker returned conf > 1.0).
+            BigDecimal clamped = conf.max(BigDecimal.ZERO).min(BigDecimal.ONE);
             BigDecimal weight = switch (f.severity() == null ? "minor" : f.severity().toLowerCase(Locale.ROOT)) {
                 case "critical" -> BigDecimal.valueOf(20);
                 case "major" -> BigDecimal.valueOf(10);
                 default -> BigDecimal.valueOf(3);
             };
-            penalty = penalty.add(weight.multiply(conf));
+            penalty = penalty.add(weight.multiply(clamped));
         }
         BigDecimal score = BigDecimal.valueOf(100).subtract(penalty);
         return score.max(BigDecimal.ZERO).min(BigDecimal.valueOf(100))
