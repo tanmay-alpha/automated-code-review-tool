@@ -27,7 +27,6 @@ import json
 import os
 import random
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -45,22 +44,16 @@ from transformers import (
 # ----------------------------------------------------------------------
 # Constants — change here, never buried in code (per plan spec).
 # ----------------------------------------------------------------------
-# Label set is the canonical anti-pattern taxonomy. The training script
-# reads taxonomy/anti_patterns.yaml so model output indexes line up 1:1
-# with the IDs the rest of the system uses. The input to the model is
-# the **diff only**; the review comment is held out as a future
-# generation target.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _TAXONOMY_PATH = _REPO_ROOT / "taxonomy" / "anti_patterns.yaml"
 
 try:
-    from app.taxonomy import load_taxonomy  # type: ignore[import]
+    from app.taxonomy import load_taxonomy
 
     _TAXONOMY = load_taxonomy(_TAXONOMY_PATH)
     NUM_LABELS = len(_TAXONOMY.entries)
     LABEL_NAMES = [ap.id for ap in _TAXONOMY.entries]
 except Exception:  # noqa: BLE001
-    # Inline fallback mirroring taxonomy/anti_patterns.yaml.
     NUM_LABELS = 10
     LABEL_NAMES = [
         "SECURITY_HARDCODED_SECRET",
@@ -112,26 +105,23 @@ def _load_split(path: Path) -> list[dict]:
     with path.open("r", encoding="utf-8") as f:
         payload = json.load(f)
     if isinstance(payload, dict) and "data" in payload and isinstance(payload["data"], list):
-        payload = payload["data"]
-    if not isinstance(payload, list):
-        raise ValueError(f"{path}: expected a JSON list, got {type(payload).__name__}")
-    return payload
+        return payload["data"]
+    if isinstance(payload, list):
+        return payload
+    raise ValueError(f"Unexpected split format in {path}: type is {type(payload).__name__}")
 
 
 # ----------------------------------------------------------------------
-# Dataset
+# Dataset definition
 # ----------------------------------------------------------------------
-@dataclass
-class TokenizedRecord:
-    input_ids: list[int]
-    attention_mask: list[int]
-    labels: list[float]
-
-
 class CodeReviewDataset(Dataset):
-    """Torch Dataset wrapping pre-tokenized CodeReviewer samples."""
+    """PyTorch Dataset for multi-label CodeBERT fine-tuning.
 
-    def __init__(self, records: list[dict], tokenizer, max_length: int = MAX_SEQ_LENGTH):
+    Input to tokenizer: diff text ONLY.
+    Target: float multi-hot tensor of shape (NUM_LABELS,).
+    """
+
+    def __init__(self, records: list[dict], tokenizer: AutoTokenizer, max_length: int = MAX_SEQ_LENGTH) -> None:
         self.records = records
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -141,212 +131,157 @@ class CodeReviewDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         rec = self.records[idx]
-        # Model input: diff only. The review comment is held out as a
-        # future generation target — it is never part of the classifier
-        # input at train, eval or inference time.
-        text = rec.get("diff", "") or ""
-        encoded = self.tokenizer(
-            text,
-            max_length=self.max_length,
+        diff_text = rec.get("diff", "")
+
+        enc = self.tokenizer(
+            diff_text,
             truncation=True,
+            max_length=self.max_length,
             padding="max_length",
-            return_tensors=None,
+            return_tensors="pt",
         )
-        # `anti_patterns` is a list of canonical anti-pattern IDs from
-        # taxonomy/anti_patterns.yaml; convert to multi-hot vector.
-        ap_ids: list[str] = rec.get("anti_patterns", [])
-        labels = [1.0 if ap_id in ap_ids else 0.0 for ap_id in LABEL_NAMES]
-        return {
-            "input_ids": torch.tensor(encoded["input_ids"], dtype=torch.long),
-            "attention_mask": torch.tensor(encoded["attention_mask"], dtype=torch.long),
-            "labels": torch.tensor(labels, dtype=torch.float),
-        }
+
+        labels: np.ndarray = np.zeros(NUM_LABELS, dtype=np.float32)
+        for label_name in rec.get("labels", []):
+            if label_name in LABEL_NAMES:
+                labels[LABEL_NAMES.index(label_name)] = 1.0
+
+        item = {key: val.squeeze(0) for key, val in enc.items()}
+        item["labels"] = torch.tensor(labels, dtype=torch.float32)
+        return item
 
 
 # ----------------------------------------------------------------------
-# Metrics
+# Metrics computation for HF Trainer
 # ----------------------------------------------------------------------
-def compute_metrics(eval_pred) -> dict[str, float]:
-    """
-    Compute per-label precision/recall/F1 plus macro-F1.
-
-    Trainer calls this with `eval_pred` being an EvalPrediction
-    (predictions, label_ids). Predictions are raw logits; we apply
-    sigmoid + threshold.
-    """
+def compute_metrics(eval_pred: tuple[np.ndarray, np.ndarray]) -> dict[str, float]:
+    """Compute per-label F1 and macro F1 using THRESHOLD on sigmoid logits."""
     logits, labels = eval_pred
-    if isinstance(logits, tuple):
-        logits = logits[0]
-    sigmoid = 1.0 / (1.0 + np.exp(-logits))
-    preds = (sigmoid >= THRESHOLD).astype(np.int32)
-    labels = labels.astype(np.int32)
+    probs = 1.0 / (1.0 + np.exp(-logits))
+    preds = (probs >= THRESHOLD).astype(int)
 
-    macro_f1 = float(
-        f1_score(labels, preds, average="macro", zero_division=0)
-    )
-    per_label = {
-        f"f1_{name}": float(
-            f1_score(labels[:, i], preds[:, i], zero_division=0)
-        )
-        for i, name in enumerate(LABEL_NAMES)
-    }
-    return {"f1_macro": macro_f1, **per_label}
+    per_label_f1 = f1_score(labels, preds, average=None, zero_division=0)
+    macro_f1 = f1_score(labels, preds, average="macro", zero_division=0)
+
+    metrics = {"macro_f1": float(macro_f1)}
+    for name, score in zip(LABEL_NAMES, per_label_f1):
+        metrics[f"f1_{name}"] = float(score)
+
+    return metrics
 
 
 # ----------------------------------------------------------------------
-# Custom Trainer — explicit BCEWithLogitsLoss (per plan spec)
+# Custom Trainer to override loss to BCEWithLogitsLoss
 # ----------------------------------------------------------------------
-class MultiLabelTrainer(Trainer):
-    """Trainer that computes BCEWithLogitsLoss explicitly.
+class MultilabelTrainer(Trainer):
+    """Overrides compute_loss to use BCEWithLogitsLoss for multi-label."""
 
-    The HF model already uses BCEWithLogitsLoss when
-    problem_type="multi_label_classification" is set, but per the plan
-    we make the loss function visible in code (not buried in HF defaults)
-    so a reviewer can confirm the choice at a glance.
-    """
-
-    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+    def compute_loss(
+        self,
+        model: torch.nn.Module,
+        inputs: dict[str, torch.Tensor],
+        return_outputs: bool = False,
+        **kwargs,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         labels = inputs.pop("labels")
         outputs = model(**inputs)
         logits = outputs.logits
         loss_fct = torch.nn.BCEWithLogitsLoss()
         loss = loss_fct(logits, labels)
+
         return (loss, outputs) if return_outputs else loss
-
-
-# ----------------------------------------------------------------------
-# Data loading
-# ----------------------------------------------------------------------
-def load_datasets(tokenizer) -> tuple[CodeReviewDataset, CodeReviewDataset]:
-    data_dir = Path(DATA_DIR)
-    train_path = data_dir / TRAIN_FILE
-    val_path = data_dir / VAL_FILE
-    if not train_path.exists():
-        raise FileNotFoundError(
-            f"Train file not found: {train_path}\n"
-            "Run apps/ml-worker/training/split.py first."
-        )
-    if not val_path.exists():
-        raise FileNotFoundError(
-            f"Val file not found: {val_path}\n"
-            "Run apps/ml-worker/training/split.py first."
-        )
-    train_records = _load_split(train_path)
-    val_records = _load_split(val_path)
-    print(f"Loaded {len(train_records)} train, {len(val_records)} val records.")
-    return (
-        CodeReviewDataset(train_records, tokenizer),
-        CodeReviewDataset(val_records, tokenizer),
-    )
 
 
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
-def main() -> int:
+def main() -> None:
     set_seed(SEED)
 
-    # ---- Tokenizer ----
-    print(f"Loading tokenizer from {MODEL_NAME} ...")
+    train_path = Path(DATA_DIR) / TRAIN_FILE
+    val_path = Path(DATA_DIR) / VAL_FILE
+
+    if not train_path.exists() or not val_path.exists():
+        print(
+            f"Error: dataset files not found at {train_path} or {val_path}.\n"
+            "Run apps/ml-worker/training/split.py first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print(f"Loading train split from {train_path}...")
+    train_records = _load_split(train_path)
+    print(f"Loaded {len(train_records)} train records.")
+
+    print(f"Loading val split from {val_path}...")
+    val_records = _load_split(val_path)
+    print(f"Loaded {len(val_records)} val records.")
+
+    print(f"Initializing tokenizer: {MODEL_NAME}...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
-    # ---- Data ----
-    train_ds, val_ds = load_datasets(tokenizer)
+    train_dataset = CodeReviewDataset(train_records, tokenizer)
+    val_dataset = CodeReviewDataset(val_records, tokenizer)
 
-    # ---- Model ----
-    print(f"Loading model {MODEL_NAME} with num_labels={NUM_LABELS} "
-          f"problem_type='multi_label_classification' ...")
+    print(f"Initializing model: {MODEL_NAME} with {NUM_LABELS} binary heads...")
     model = AutoModelForSequenceClassification.from_pretrained(
         MODEL_NAME,
         num_labels=NUM_LABELS,
         problem_type="multi_label_classification",
+        id2label={i: name for i, name in enumerate(LABEL_NAMES)},
+        label2id={name: i for i, name in enumerate(LABEL_NAMES)},
     )
 
-    # ---- TrainingArguments ----
-    args = TrainingArguments(
+    training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
-        num_train_epochs=NUM_EPOCHS,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        learning_rate=LEARNING_RATE,
         per_device_train_batch_size=BATCH_SIZE,
         per_device_eval_batch_size=BATCH_SIZE,
-        learning_rate=LEARNING_RATE,
+        num_train_epochs=NUM_EPOCHS,
         weight_decay=WEIGHT_DECAY,
         warmup_ratio=WARMUP_RATIO,
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
         load_best_model_at_end=True,
-        metric_for_best_model="f1_macro",
+        metric_for_best_model="macro_f1",
         greater_is_better=True,
-        logging_strategy="epoch",
-        report_to=[],  # no W&B / TensorBoard by default; enable manually
+        logging_steps=50,
+        save_total_limit=2,
         seed=SEED,
-        fp16=torch.cuda.is_available(),  # speed up on T4
+        report_to="none",
     )
 
-    # ---- Trainer ----
-    trainer = MultiLabelTrainer(
+    trainer = MultilabelTrainer(
         model=model,
-        args=args,
-        train_dataset=train_ds,
-        eval_dataset=val_ds,
-        tokenizer=tokenizer,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        processing_class=tokenizer,
         compute_metrics=compute_metrics,
     )
 
-    # ---- Train ----
-    print("Starting training ...")
-    train_result = trainer.train()
+    print("Starting training...")
+    trainer.train()
+
+    print("Evaluating best model on validation set...")
+    eval_metrics = trainer.evaluate()
+    print("Final validation metrics:")
+    for k, v in eval_metrics.items():
+        print(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
+
+    print(f"Saving best model locally to {OUTPUT_DIR}...")
     trainer.save_model(OUTPUT_DIR)
     tokenizer.save_pretrained(OUTPUT_DIR)
-    print("Training complete. Best checkpoint saved to", OUTPUT_DIR)
 
-    # ---- Final eval on val (best model) ----
-    print("\nRunning final evaluation on val (best model) ...")
-    eval_metrics = trainer.evaluate()
-    val_macro_f1 = float(eval_metrics.get("eval_f1_macro", 0.0))
-    print(f"\nFinal val macro-F1: {val_macro_f1:.4f}")
-
-    # ---- Push to HuggingFace Hub ----
-    hf_token = os.environ.get("HF_TOKEN")
-    if hf_token:
-        print(f"\nPushing best model + tokenizer to {HF_REPO} ...")
-        try:
-            trainer.model.push_to_hub(
-                HF_REPO, use_auth_token=hf_token, commit_message="automated-code-review-tool fine-tuned CodeBERT (Issue #5)"
-            )
-            tokenizer.push_to_hub(
-                HF_REPO, use_auth_token=hf_token, commit_message="automated-code-review-tool tokenizer"
-            )
-            print(f"Pushed to https://huggingface.co/{HF_REPO}")
-        except Exception as e:
-            print(f"[WARN] push_to_hub failed: {e}", file=sys.stderr)
+    token = os.environ.get("HF_TOKEN")
+    if token:
+        print(f"Pushing model and tokenizer to HuggingFace Hub: {HF_REPO}...")
+        model.push_to_hub(HF_REPO, token=token)
+        tokenizer.push_to_hub(HF_REPO, token=token)
+        print("Successfully pushed to HuggingFace Hub!")
     else:
-        print(
-            "\n[INFO] HF_TOKEN not set — skipping push to HuggingFace Hub.\n"
-            f"       Best model is saved locally at: {OUTPUT_DIR}\n"
-            f"       Set HF_TOKEN and re-run, or call trainer.model.push_to_hub('{HF_REPO}') manually."
-        )
-
-    # ---- Summary metrics file ----
-    summary = {
-        "model_name": MODEL_NAME,
-        "hf_repo": HF_REPO,
-        "output_dir": OUTPUT_DIR,
-        "num_train_epochs": NUM_EPOCHS,
-        "batch_size": BATCH_SIZE,
-        "learning_rate": LEARNING_RATE,
-        "val_macro_f1": val_macro_f1,
-        "val_metrics": {k: float(v) for k, v in eval_metrics.items()},
-        "train_metrics": {
-            "train_runtime": float(getattr(train_result, "train_runtime", 0.0)),
-            "train_loss": float(getattr(train_result, "training_loss", 0.0) or 0.0),
-        },
-    }
-    summary_path = Path(OUTPUT_DIR) / "training_summary.json"
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print(f"Wrote {summary_path}")
-    return 0
+        print("HF_TOKEN environment variable not set; skipping Hub push.")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

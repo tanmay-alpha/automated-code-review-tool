@@ -90,8 +90,9 @@ public class ReviewSampleBridge {
     }
 
     private CodeSample findMatch(List<CodeSample> samples, MlFinding mf) {
+        if (samples.isEmpty()) return null;
         if (mf == null || mf.lineStart() == null) {
-            return samples.isEmpty() ? null : samples.get(0);
+            return null;
         }
         for (CodeSample s : samples) {
             if (s.getNewStart() <= mf.lineStart()
@@ -100,6 +101,6 @@ public class ReviewSampleBridge {
                 return s;
             }
         }
-        return samples.isEmpty() ? null : samples.get(0);
+        return null;
     }
 }

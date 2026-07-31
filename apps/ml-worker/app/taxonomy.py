@@ -20,9 +20,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    import yaml  # type: ignore[import-untyped]
+    import yaml
 except ImportError:  # pragma: no cover - yaml is in requirements-test.txt
-    yaml = None  # type: ignore[assignment]
+    yaml = None
 
 
 def _find_default_taxonomy_path() -> Path:
