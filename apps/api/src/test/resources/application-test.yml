@@ -17,11 +17,9 @@ spring:
         format_sql: true
   flyway:
     enabled: true
-    # Use the h2/ subfolder of migrations — those are H2-compatible
-    # variants of the same V1/V2/V3 the production Postgres DB uses.
-    # The base db/migration/ files are PostgreSQL-flavored (use
-    # pgcrypto + gen_random_uuid) which H2 doesn't support.
-    locations: classpath:db/migration/h2
+    # Use the migration_h2/ folder for H2-compatible migrations
+    # to avoid path collision with Postgres db/migration.
+    locations: classpath:db/migration_h2
   data:
     redis:
       host: localhost
