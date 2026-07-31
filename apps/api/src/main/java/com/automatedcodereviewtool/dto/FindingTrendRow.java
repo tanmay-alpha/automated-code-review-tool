@@ -14,6 +14,33 @@ public record FindingTrendRow(
         String severity
 ) {
 
+    public FindingTrendRow(Object date, long count, String severity) {
+        this(
+            date instanceof java.sql.Date sqlDate ? sqlDate.toLocalDate() :
+            date instanceof java.util.Date utilDate ? utilDate.toInstant().atZone(java.time.ZoneOffset.UTC).toLocalDate() :
+            date instanceof java.time.LocalDate localDate ? localDate :
+            date != null ? java.time.LocalDate.parse(date.toString()) : null,
+            count,
+            severity
+        );
+    }
+
+    public FindingTrendRow(java.util.Date date, long count, String severity) {
+        this(
+            date != null ? date.toInstant().atZone(java.time.ZoneOffset.UTC).toLocalDate() : null,
+            count,
+            severity
+        );
+    }
+
+    public FindingTrendRow(java.sql.Date date, long count, String severity) {
+        this(
+            date != null ? date.toLocalDate() : null,
+            count,
+            severity
+        );
+    }
+
     /**
      * Returns the daily rate as a BigDecimal (count / totalDays * 100).
      */
