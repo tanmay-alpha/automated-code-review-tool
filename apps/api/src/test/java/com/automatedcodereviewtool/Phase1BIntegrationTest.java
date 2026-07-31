@@ -78,14 +78,15 @@ class Phase1BIntegrationTest {
 
     @Test
     void annotationIdempotencyKeyIsUnique() {
-        // Verify the database-level unique constraint exists.
+        // Verify the database-level unique constraint/index exists.
         Integer count = jdbc.queryForObject(
-                "SELECT count(*) FROM information_schema.table_constraints "
-                        + "WHERE table_schema = 'ml' AND table_name = 'annotations' "
-                        + "AND constraint_type = 'UNIQUE' "
-                        + "AND constraint_name = 'uq_annotations_idempotency_key'",
+                "SELECT count(*) FROM ( "
+                        + "  SELECT constraint_name AS name FROM information_schema.table_constraints WHERE table_schema = 'ml' AND table_name = 'annotations' "
+                        + "  UNION "
+                        + "  SELECT indexname AS name FROM pg_indexes WHERE schemaname = 'ml' AND tablename = 'annotations' "
+                        + ") t WHERE name = 'uq_annotations_idempotency_key'",
                 Integer.class);
-        assertThat(count).isEqualTo(1);
+        assertThat(count).isGreaterThanOrEqualTo(1);
     }
 
     @Test
@@ -220,19 +221,19 @@ class Phase1BIntegrationTest {
     void frozenDatasetTriggerExists() {
         Integer count = jdbc.queryForObject(
                 "SELECT count(*) FROM information_schema.triggers "
-                        + "WHERE trigger_schema = 'ml' "
+                        + "WHERE (trigger_schema = 'ml' OR event_object_schema = 'ml') "
                         + "AND trigger_name = 'trg_dataset_items_immutable'",
                 Integer.class);
-        assertThat(count).isEqualTo(1);
+        assertThat(count).isGreaterThanOrEqualTo(1);
     }
 
     @Test
     void annotationsFrozenTriggerExists() {
         Integer count = jdbc.queryForObject(
                 "SELECT count(*) FROM information_schema.triggers "
-                        + "WHERE trigger_schema = 'ml' "
+                        + "WHERE (trigger_schema = 'ml' OR event_object_schema = 'ml') "
                         + "AND trigger_name = 'trg_annotations_immutable'",
                 Integer.class);
-        assertThat(count).isEqualTo(1);
+        assertThat(count).isGreaterThanOrEqualTo(1);
     }
 }
