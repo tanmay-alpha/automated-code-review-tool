@@ -2,8 +2,8 @@ CREATE SCHEMA IF NOT EXISTS ml;
 
 CREATE TABLE IF NOT EXISTS ml.code_samples (
     id                  UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
-    repository_id       UUID         NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    pull_request_id     UUID         NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
+    repository_id       UUID         NOT NULL REFERENCES PUBLIC.repositories(id) ON DELETE CASCADE,
+    pull_request_id     UUID         NOT NULL REFERENCES PUBLIC.pull_requests(id) ON DELETE CASCADE,
     commit_sha          VARCHAR(40)  NOT NULL,
     file_path           TEXT         NOT NULL,
     language            VARCHAR(30)  NOT NULL,
