@@ -21,11 +21,15 @@ The three user surfaces are:
 - **GitHub Action** — PR review annotations on pull_request events
 - **Next.js Web Dashboard** — repo-level quality trends and finding history
 
-The platform ships with two detection engines. A fine-tuned CodeBERT model is
-the primary detector; when the model cannot be loaded (for example on
-memory-constrained deploys), a rule-based scanner covering the most common
-anti-patterns — hardcoded credentials, SQL injection, bare except, sync-in-async
-— takes over so the platform remains functional.
+Production detector: deterministic fallback scanner
+Fine-tuned checkpoint: not available
+Model training pipeline: under validation
+Real frozen dataset: not available
+Verified evaluation artifact: not available
+Redis rate limiting: implemented
+Hunk-level localisation: implemented
+
+The platform ships with a deterministic fallback scanner as its primary production detector. A fine-tuned CodeBERT model pipeline is under validation.
 
 ---
 
