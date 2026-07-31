@@ -38,7 +38,7 @@ public class DatasetVersion {
     @Column(name = "generation_config", nullable = false, columnDefinition = "JSONB")
     private String generationConfig;
 
-    @Column(name = "manifest_sha256", nullable = false, columnDefinition = "CHAR(64)", length = 64)
+    @Column(name = "manifest_sha256", nullable = false, length = 64)
     private String manifestSha256;
 
     @Column(name = "sample_count", nullable = false)
