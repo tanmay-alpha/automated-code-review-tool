@@ -11,6 +11,8 @@ import java.math.BigDecimal;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record MlFinding(
+        @JsonProperty("filePath") String filePath,
+        @JsonProperty("hunkHash") String hunkHash,
         @JsonProperty("lineStart") Integer lineStart,
         @JsonProperty("lineEnd") Integer lineEnd,
         @JsonProperty("antiPattern") String antiPattern,

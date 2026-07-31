@@ -2,7 +2,10 @@ package com.automatedcodereviewtool.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
 import java.time.OffsetDateTime;
@@ -21,6 +24,7 @@ import java.util.UUID;
 public class IngestionOutbox {
 
     @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
@@ -37,11 +41,9 @@ public class IngestionOutbox {
     private String payload;
 
     @Column(name = "status", nullable = false, length = 20)
-    @Builder.Default
     private String status = "pending";
 
     @Column(name = "attempt_count", nullable = false)
-    @Builder.Default
     private Integer attemptCount = 0;
 
     @Column(name = "available_at", nullable = false)
@@ -55,6 +57,26 @@ public class IngestionOutbox {
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
+
+    @PrePersist
+    public void prePersist() {
+        if (id == null) {
+            id = UUID.randomUUID();
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        if (createdAt == null) {
+            createdAt = now;
+        }
+        if (availableAt == null) {
+            availableAt = now;
+        }
+        if (status == null) {
+            status = "pending";
+        }
+        if (attemptCount == null) {
+            attemptCount = 0;
+        }
+    }
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
