@@ -66,14 +66,13 @@ def compute_quality_score(findings: list[Finding]) -> float:
 # Label configuration (index → finding metadata)
 # ----------------------------------------------------------------------
 def build_label_config() -> list[dict[str, str]]:
-    """Build LABEL_CONFIG from the canonical taxonomy YAML.
+    """Build LABEL_CONFIG from the canonical taxonomy YAML for trainable IDs only.
 
     Ensures that model output index ``i`` always maps to the same
-    anti-pattern ID the rest of the system uses. If the YAML changes,
-    the model becomes incompatible and ``validate_checkpoint_compatibility``
-    reports it degraded.
+    anti-pattern ID the rest of the system uses.
     """
     taxonomy = load_taxonomy()
+    trainable_entries = [ap for ap in taxonomy.entries if ap.trainable]
     return [
         {
             "name": ap.id,
@@ -85,7 +84,7 @@ def build_label_config() -> list[dict[str, str]]:
                 else f"{ap.display_name} detected."
             ),
         }
-        for ap in taxonomy.entries
+        for ap in trainable_entries
     ]
 
 
@@ -96,18 +95,17 @@ LABEL_CONFIG: list[dict[str, str]] = build_label_config()
 # Checkpoint compatibility validation
 # ----------------------------------------------------------------------
 def validate_checkpoint_compatibility(model: Any, taxonomy: Any | None = None) -> dict[str, Any]:
-    """Validate that a loaded HF model is compatible with the taxonomy.
-
-    Returns a small structured envelope so callers can mark the service
-    degraded. A non-compatible checkpoint is NEVER used for inference —
-    the caller is responsible for that decision.
-    """
+    """Validate that a loaded HF model is compatible with the taxonomy."""
     if taxonomy is None:
         taxonomy = load_taxonomy()
 
-    expected_num_labels = len(taxonomy.entries)
+    trainable_entries = [e for e in taxonomy.entries if e.trainable]
+    expected_num_labels = len(trainable_entries)
     expected_id2label: dict[int, str] = {
-        i: ap.id for i, ap in enumerate(taxonomy.entries)
+        i: ap.id for i, ap in enumerate(trainable_entries)
+    }
+    expected_label2id: dict[str, int] = {
+        ap.id: i for i, ap in enumerate(trainable_entries)
     }
     expected_taxonomy_version = taxonomy.version
 
@@ -125,65 +123,47 @@ def validate_checkpoint_compatibility(model: Any, taxonomy: Any | None = None) -
             "status": "degraded",
             "reason": (
                 f"num_labels={actual_num_labels} != "
-                f"len(taxonomy)={expected_num_labels}"
+                f"len(trainable)={expected_num_labels}"
             ),
             "expected_num_labels": expected_num_labels,
             "actual_num_labels": actual_num_labels,
         }
 
     actual_id2label = getattr(cfg, "id2label", None)
+    actual_label2id = getattr(cfg, "label2id", None)
+    actual_problem_type = getattr(cfg, "problem_type", None)
+    actual_task_type = getattr(cfg, "task_type", None)
+    actual_version = getattr(cfg, "taxonomy_version", None)
+
     if not isinstance(actual_id2label, dict) or not actual_id2label:
-        return {
-            "status": "degraded",
-            "reason": "id2label missing or empty",
-            "expected_num_labels": expected_num_labels,
-        }
+        return {"status": "degraded", "reason": "id2label missing or empty"}
+    if not isinstance(actual_label2id, dict) or not actual_label2id:
+        return {"status": "degraded", "reason": "label2id missing or empty"}
+    if not actual_problem_type or actual_problem_type != "multi_label_classification":
+        return {"status": "degraded", "reason": "problem_type missing or not multi_label_classification"}
+    if not actual_version or actual_version != expected_taxonomy_version:
+        return {"status": "degraded", "reason": "taxonomy_version missing or mismatch"}
+    if not actual_task_type or actual_task_type != "code_review_multi_label":
+        return {"status": "degraded", "reason": "task_type missing or mismatch"}
 
     try:
-        actual_normalized = {int(k): v for k, v in actual_id2label.items()}
+        actual_id2label_norm = {int(k): v for k, v in actual_id2label.items()}
     except (TypeError, ValueError):
-        return {
-            "status": "degraded",
-            "reason": "id2label keys must be ints",
-            "expected_num_labels": expected_num_labels,
-        }
+        return {"status": "degraded", "reason": "id2label keys must be ints"}
 
     for idx, expected_label in expected_id2label.items():
-        if actual_normalized.get(idx) != expected_label:
+        if actual_id2label_norm.get(idx) != expected_label:
             return {
                 "status": "degraded",
-                "reason": (
-                    f"id2label[{idx}]={actual_normalized.get(idx)!r} != "
-                    f"{expected_label!r}"
-                ),
-                "expected_num_labels": expected_num_labels,
+                "reason": f"id2label[{idx}]={actual_id2label_norm.get(idx)!r} != {expected_label!r}",
             }
 
-    # task_type / expected taxonomy version check
-    actual_task = getattr(cfg, "problem_type", None)
-    if actual_task and actual_task not in ("multi_label_classification",):
-        # HuggingFace sets ``problem_type`` to the task type. Our model
-        # is multi-label; reject anything that says otherwise.
-        return {
-            "status": "degraded",
-            "reason": (
-                f"problem_type={actual_task!r} is not 'multi_label_classification'"
-            ),
-            "expected_num_labels": expected_num_labels,
-        }
-
-    # Optional taxonomy version is also recorded on the config (some
-    # checkpoints save it as ``taxonomy_version``).
-    actual_version = getattr(cfg, "taxonomy_version", None)
-    if actual_version and actual_version != expected_taxonomy_version:
-        return {
-            "status": "degraded",
-            "reason": (
-                f"taxonomy_version mismatch: checkpoint={actual_version!r} "
-                f"code={expected_taxonomy_version!r}"
-            ),
-            "expected_num_labels": expected_num_labels,
-        }
+    for label_id, expected_idx in expected_label2id.items():
+        if actual_label2id.get(label_id) != expected_idx:
+            return {
+                "status": "degraded",
+                "reason": f"label2id[{label_id!r}]={actual_label2id.get(label_id)!r} != {expected_idx}",
+            }
 
     return {
         "status": "healthy",
