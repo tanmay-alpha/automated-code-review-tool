@@ -153,14 +153,14 @@ class ReviewServiceTest {
     @Test
     void testComputeQualityScore_fallbackFromFindings() {
         // No qualityScore → falls back to penalty calculation
-        // severity "major" weight=10, "low" weight=5 (default branch)
-        // penalty = 10*0.9 + 5*0.8 = 9.0 + 4.0 = 13.0
-        // score = 100 - 13 = 87.00
+        // severity "major" weight=10, "low" weight=3 (default branch)
+        // penalty = 10*0.9 + 3*0.8 = 9.0 + 2.4 = 11.4
+        // score = 100 - 11.4 = 88.60
         List<MlFinding> findings = List.of(
                 new MlFinding("app.py", null, 1, 5, "GodClass", "structural", "major", new BigDecimal("0.9"), "too big"),
                 new MlFinding("app.py", null, 6, 10, "MagicNumber", "readability", "low", new BigDecimal("0.8"), "magic")
         );
         MlReviewResponse resp = new MlReviewResponse(findings, null, 0, 0, "fallback", "v1", "1.0.0");
-        assertEquals(0, new BigDecimal("87.00").compareTo(computeQualityScore(resp)));
+        assertEquals(0, new BigDecimal("88.60").compareTo(computeQualityScore(resp)));
     }
 }
