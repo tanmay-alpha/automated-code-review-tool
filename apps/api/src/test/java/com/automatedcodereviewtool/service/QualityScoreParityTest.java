@@ -73,13 +73,13 @@ class QualityScoreParityTest {
         BigDecimal clamped = MlWorkerService.computeQualityScore(
                 new com.automatedcodereviewtool.dto.MlReviewResponse(
                         List.of(new com.automatedcodereviewtool.dto.MlFinding(
-                                "TEST_FINDING", "major", new BigDecimal("2.5"), 1, 1, "path", null)),
+                                "path", null, 1, 1, "TEST_FINDING", "category", "major", new BigDecimal("2.5"), "explanation")),
                         null, 0, 0,
                         "model", "v1", "1.0.0"));
         BigDecimal atOne = MlWorkerService.computeQualityScore(
                 new com.automatedcodereviewtool.dto.MlReviewResponse(
                         List.of(new com.automatedcodereviewtool.dto.MlFinding(
-                                "TEST_FINDING", "major", BigDecimal.ONE, 1, 1, "path", null)),
+                                "path", null, 1, 1, "TEST_FINDING", "category", "major", BigDecimal.ONE, "explanation")),
                         null, 0, 0,
                         "model", "v1", "1.0.0"));
         assertThat(clamped).isEqualByComparingTo(atOne);
@@ -93,13 +93,13 @@ class QualityScoreParityTest {
         BigDecimal clamped = MlWorkerService.computeQualityScore(
                 new com.automatedcodereviewtool.dto.MlReviewResponse(
                         List.of(new com.automatedcodereviewtool.dto.MlFinding(
-                                "TEST_FINDING", "major", new BigDecimal("-0.4"), 1, 1, "path", null)),
+                                "path", null, 1, 1, "TEST_FINDING", "category", "major", new BigDecimal("-0.4"), "explanation")),
                         null, 0, 0,
                         "model", "v1", "1.0.0"));
         BigDecimal atZero = MlWorkerService.computeQualityScore(
                 new com.automatedcodereviewtool.dto.MlReviewResponse(
                         List.of(new com.automatedcodereviewtool.dto.MlFinding(
-                                "TEST_FINDING", "major", BigDecimal.ZERO, 1, 1, "path", null)),
+                                "path", null, 1, 1, "TEST_FINDING", "category", "major", BigDecimal.ZERO, "explanation")),
                         null, 0, 0,
                         "model", "v1", "1.0.0"));
         assertThat(clamped).isEqualByComparingTo(atZero);
