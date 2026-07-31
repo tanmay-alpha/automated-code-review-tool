@@ -146,13 +146,15 @@ class ScanControllerTest {
         UUID findingId = UUID.randomUUID();
         var mlResp = new com.automatedcodereviewtool.dto.MlReviewResponse(
                 List.of(new com.automatedcodereviewtool.dto.MlFinding(
+                        "app/Main.java", null,
                         10, 20,
                         "GodClass", "structural",
                         "high", new BigDecimal("0.90"),
                         "too big")),
                 new BigDecimal("72.0"),
                 0,
-                0);
+                0,
+                "fallback", "v1", "1.0.0");
 
         when(mlWorkerService.reviewFile("public class A {}", "java")).thenReturn(mlResp);
 
