@@ -69,6 +69,7 @@ class ScanControllerTest {
                     // a populated caller — see isOwnedBy().
                     com.automatedcodereviewtool.entity.User caller =
                             com.automatedcodereviewtool.entity.User.builder()
+                                    .id(UUID.fromString("00000000-0000-0000-0000-000000000001"))
                                     .githubUsername(TEST_OWNER)
                                     .accessToken("dummy")
                                     .build();
@@ -88,6 +89,7 @@ class ScanControllerTest {
 
     static Repository testRepo(String name) {
         User owner = User.builder()
+                .id(UUID.fromString("00000000-0000-0000-0000-000000000001"))
                 .githubUsername(TEST_OWNER)
                 .accessToken("dummy")
                 .build();
@@ -288,6 +290,7 @@ class ScanControllerTest {
 
         // Owner is a different user, not TEST_OWNER (the principal in the pass-through filter)
         User otherOwner = User.builder()
+                .id(UUID.fromString("00000000-0000-0000-0000-000000000002"))
                 .githubUsername("attacker")
                 .accessToken("dummy")
                 .build();
