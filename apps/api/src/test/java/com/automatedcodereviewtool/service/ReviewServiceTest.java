@@ -128,25 +128,25 @@ class ReviewServiceTest {
 
     @Test
     void testComputeQualityScore_nullScore_noFindings_returns100() {
-        MlReviewResponse resp = new MlReviewResponse(null, null, 0, 0);
+        MlReviewResponse resp = new MlReviewResponse(null, null, 0, 0, "fallback", "v1", "1.0.0");
         assertEquals(new BigDecimal("100"), computeQualityScore(resp));
     }
 
     @Test
     void testComputeQualityScore_validScore_clamped() {
-        MlReviewResponse resp = new MlReviewResponse(List.of(), new BigDecimal("85.5"), 0, 0);
+        MlReviewResponse resp = new MlReviewResponse(List.of(), new BigDecimal("85.5"), 0, 0, "fallback", "v1", "1.0.0");
         assertEquals(0, new BigDecimal("85.50").compareTo(computeQualityScore(resp)));
     }
 
     @Test
     void testComputeQualityScore_scoreOver100_clamped() {
-        MlReviewResponse resp = new MlReviewResponse(List.of(), new BigDecimal("150"), 0, 0);
+        MlReviewResponse resp = new MlReviewResponse(List.of(), new BigDecimal("150"), 0, 0, "fallback", "v1", "1.0.0");
         assertEquals(0, new BigDecimal("100.00").compareTo(computeQualityScore(resp)));
     }
 
     @Test
     void testComputeQualityScore_negativeScore_clamped() {
-        MlReviewResponse resp = new MlReviewResponse(List.of(), new BigDecimal("-10"), 0, 0);
+        MlReviewResponse resp = new MlReviewResponse(List.of(), new BigDecimal("-10"), 0, 0, "fallback", "v1", "1.0.0");
         assertEquals(0, BigDecimal.ZERO.compareTo(computeQualityScore(resp)));
     }
 
@@ -157,10 +157,10 @@ class ReviewServiceTest {
         // penalty = 10*0.9 + 5*0.8 = 9.0 + 4.0 = 13.0
         // score = 100 - 13 = 87.00
         List<MlFinding> findings = List.of(
-                new MlFinding(1, 5, "GodClass", "structural", "major", new BigDecimal("0.9"), "too big"),
-                new MlFinding(6, 10, "MagicNumber", "readability", "low", new BigDecimal("0.8"), "magic")
+                new MlFinding("app.py", null, 1, 5, "GodClass", "structural", "major", new BigDecimal("0.9"), "too big"),
+                new MlFinding("app.py", null, 6, 10, "MagicNumber", "readability", "low", new BigDecimal("0.8"), "magic")
         );
-        MlReviewResponse resp = new MlReviewResponse(findings, null, 0, 0);
+        MlReviewResponse resp = new MlReviewResponse(findings, null, 0, 0, "fallback", "v1", "1.0.0");
         assertEquals(0, new BigDecimal("87.00").compareTo(computeQualityScore(resp)));
     }
 }
