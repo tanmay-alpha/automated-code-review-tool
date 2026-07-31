@@ -64,6 +64,7 @@ class V5TaxonomyMigrationTest {
                 .isEqualTo("PERFORMANCE");
         assertThat(antiPatternRepository.findById("MAINTAINABILITY_PRINT_STATEMENT"))
                 .isPresent()
+                .get()
                 .extracting(AntiPattern::isTrainable)
                 .isEqualTo(false);
     }
