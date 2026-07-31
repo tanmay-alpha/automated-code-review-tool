@@ -46,7 +46,7 @@ public class TaxonomyService {
 
     private final AntiPatternRepository repository;
     private final Map<String, AntiPattern> byId = new LinkedHashMap<>();
-    private final List<String> trainableOrder;
+    private List<String> trainableOrder = Collections.emptyList();
     private String version = "1.0.0";
 
     @Autowired
