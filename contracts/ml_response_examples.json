@@ -1,0 +1,34 @@
+{
+  "finding_example": {
+    "filePath": "src/payment.py",
+    "hunkHash": "a1b2c3d4e5f60718",
+    "lineStart": 42,
+    "lineEnd": 42,
+    "antiPattern": "SECURITY_HARDCODED_SECRET",
+    "category": "SECURITY",
+    "severity": "critical",
+    "confidence": 0.91,
+    "explanation": "Hardcoded API secret key detected in line."
+  },
+  "review_response_example": {
+    "findings": [
+      {
+        "filePath": "src/payment.py",
+        "hunkHash": "a1b2c3d4e5f60718",
+        "lineStart": 42,
+        "lineEnd": 42,
+        "antiPattern": "SECURITY_HARDCODED_SECRET",
+        "category": "SECURITY",
+        "severity": "critical",
+        "confidence": 0.91,
+        "explanation": "Hardcoded API secret key detected in line."
+      }
+    ],
+    "qualityScore": 100.0,
+    "processingTimeMs": 4,
+    "windowsProcessed": 1,
+    "engine": "fallback",
+    "modelVersion": "rule-baseline-v1",
+    "taxonomyVersion": "1.0.0"
+  }
+}

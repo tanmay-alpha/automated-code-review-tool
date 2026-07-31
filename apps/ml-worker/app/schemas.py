@@ -33,6 +33,8 @@ class ReviewRequest(BaseModel):
 class Finding(BaseModel):
     """A single code-review issue surfaced by the model."""
 
+    filePath: str | None = Field(None, description="Path to the file containing the finding")
+    hunkHash: str | None = Field(None, description="SHA256 digest of the diff hunk")
     lineStart: int | None = Field(None, description="First line in the file (1-indexed)")
     lineEnd: int | None = Field(None, description="Last line in the file (1-indexed, inclusive)")
     antiPattern: str = Field(..., description="Machine-readable anti-pattern ID, e.g. PERFORMANCE_N_PLUS_1")
@@ -52,6 +54,9 @@ class ReviewResponse(BaseModel):
     qualityScore: float = Field(..., ge=0.0, le=100.0)
     processingTimeMs: int
     windowsProcessed: int = Field(..., ge=1)
+    engine: str = Field("fallback", description="'model' or 'fallback'")
+    modelVersion: str = Field("rule-baseline-v1", description="Model version or fallback ID")
+    taxonomyVersion: str = Field("1.0.0", description="Taxonomy schema version")
 
 
 class HealthResponse(BaseModel):
