@@ -1,11 +1,6 @@
--- ============================================
--- V6 (H2 mirror): ML dataset foundation schema
--- ============================================
--- H2-compatible equivalent of the Postgres V6 migration.
--- Uses RANDOM_UUID() instead of gen_random_uuid() and
--- places tables in PUBLIC schema instead of ml schema.
+CREATE SCHEMA IF NOT EXISTS ml;
 
-CREATE TABLE IF NOT EXISTS code_samples (
+CREATE TABLE IF NOT EXISTS ml.code_samples (
     id                  UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
     repository_id       UUID         NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     pull_request_id     UUID         NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
@@ -31,9 +26,9 @@ CREATE TABLE IF NOT EXISTS code_samples (
     CONSTRAINT uq_code_samples_content_sha UNIQUE (content_sha256)
 );
 
-CREATE TABLE IF NOT EXISTS annotations (
+CREATE TABLE IF NOT EXISTS ml.annotations (
     id              UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
-    code_sample_id  UUID         NOT NULL REFERENCES code_samples(id) ON DELETE CASCADE,
+    code_sample_id  UUID         NOT NULL REFERENCES ml.code_samples(id) ON DELETE CASCADE,
     anti_pattern_id VARCHAR(80)  NOT NULL,
     label_state     VARCHAR(20)  NOT NULL,
     line_start      INT          NOT NULL,
@@ -49,7 +44,7 @@ CREATE TABLE IF NOT EXISTS annotations (
         CHECK (label_state IN ('positive', 'negative', 'neutral'))
 );
 
-CREATE TABLE IF NOT EXISTS dataset_versions (
+CREATE TABLE IF NOT EXISTS ml.dataset_versions (
     id          UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
     version     VARCHAR(50)  NOT NULL,
     description TEXT,
@@ -59,10 +54,10 @@ CREATE TABLE IF NOT EXISTS dataset_versions (
     CONSTRAINT uq_dataset_versions_version UNIQUE (version)
 );
 
-CREATE TABLE IF NOT EXISTS dataset_items (
+CREATE TABLE IF NOT EXISTS ml.dataset_items (
     id                UUID      DEFAULT RANDOM_UUID() PRIMARY KEY,
-    dataset_version_id UUID     NOT NULL REFERENCES dataset_versions(id) ON DELETE CASCADE,
-    code_sample_id    UUID      NOT NULL REFERENCES code_samples(id) ON DELETE CASCADE,
+    dataset_version_id UUID     NOT NULL REFERENCES ml.dataset_versions(id) ON DELETE CASCADE,
+    code_sample_id    UUID      NOT NULL REFERENCES ml.code_samples(id) ON DELETE CASCADE,
     split             VARCHAR(10) NOT NULL,
     created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
