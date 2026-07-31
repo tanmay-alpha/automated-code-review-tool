@@ -3,7 +3,7 @@
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS prediction_events (
-    id                    UUID         NOT NULL DEFAULT gen_random_uuid(),
+    id                    UUID         PRIMARY KEY DEFAULT RANDOM_UUID(),
     code_sample_id        UUID         NULL,
     pull_request_id       UUID         NOT NULL,
     file_path             TEXT,
@@ -18,36 +18,36 @@ CREATE TABLE IF NOT EXISTS prediction_events (
     taxonomy_version      VARCHAR(40)  NOT NULL,
     status                VARCHAR(30)  NOT NULL,
     rejection_reason      VARCHAR(100),
-    raw_metadata          JSONB        NOT NULL DEFAULT '{}',
-    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    raw_metadata          TEXT         NOT NULL DEFAULT '{}',
+    created_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS sample_reviews (
-    id                UUID         NOT NULL DEFAULT gen_random_uuid(),
+    id                UUID         PRIMARY KEY DEFAULT RANDOM_UUID(),
     code_sample_id    UUID         NOT NULL,
     reviewer_user_id  UUID,
     review_status     VARCHAR(20)  NOT NULL DEFAULT 'unreviewed',
-    reviewed_label_ids JSONB      NOT NULL DEFAULT '[]',
+    reviewed_label_ids TEXT        NOT NULL DEFAULT '[]',
     clean_confirmed   BOOLEAN      NOT NULL DEFAULT FALSE,
     notes             TEXT,
-    started_at        TIMESTAMPTZ,
-    completed_at      TIMESTAMPTZ,
-    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    started_at        TIMESTAMP,
+    completed_at      TIMESTAMP,
+    created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS ingestion_outbox (
-    id              UUID         NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID         PRIMARY KEY DEFAULT RANDOM_UUID(),
     event_type      VARCHAR(50)  NOT NULL,
     aggregate_type  VARCHAR(50)  NOT NULL,
     aggregate_id    UUID         NOT NULL,
-    payload         JSONB        NOT NULL DEFAULT '{}',
+    payload         TEXT         NOT NULL DEFAULT '{}',
     status          VARCHAR(20)  NOT NULL DEFAULT 'pending',
     attempt_count   INT          NOT NULL DEFAULT 0,
-    available_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    processed_at    TIMESTAMPTZ,
+    available_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    processed_at    TIMESTAMP,
     last_error      TEXT,
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_prediction_events_pr ON prediction_events(pull_request_id);
