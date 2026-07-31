@@ -132,26 +132,29 @@ def validate_dataset_dir(dataset_dir: Path) -> Dict[str, Any]:
                                         f"sample {sid} has non-trainable label {label}"))
             else:
                 label_counts[label] += 1
-        if record.get("new_start") is None or record.get("new_start") < 0:
+        sid_str = str(sid or "")
+        group_str = str(group or "")
+        new_start = record.get("new_start")
+        if new_start is None or not isinstance(new_start, (int, float)) or new_start < 0:
             invalid_line_ranges += 1
             findings.append(Finding("critical", "invalid_line_range",
-                                    f"sample {sid} has invalid new_start"))
+                                    f"sample {sid_str} has invalid new_start"))
         if _looks_like_secret(added):
             secrets += 1
             findings.append(Finding("critical", "secret_escaped_redaction",
-                                    f"sample {sid} contains a likely secret"))
+                                    f"sample {sid_str} contains a likely secret"))
 
-        if sid in sample_split and sample_split[sid] != split:
+        if sid_str in sample_split and sample_split[sid_str] != split:
             findings.append(Finding("critical", "split_conflict_sample",
-                                    f"sample {sid} appears in both "
-                                    f"{sample_split[sid]} and {split}"))
-        sample_split[sid] = split or "train"
+                                    f"sample {sid_str} appears in both "
+                                    f"{sample_split[sid_str]} and {split}"))
+        sample_split[sid_str] = split or "train"
 
-        if group_split.get(group) not in (None, split):
+        if group_str in group_split and group_split[group_str] != split:
             findings.append(Finding("critical", "split_conflict_group",
-                                    f"group {group} appears in both "
-                                    f"{group_split[group]} and {split}"))
-        group_split[group] = split or "train"
+                                    f"group {group_str} appears in both "
+                                    f"{group_split[group_str]} and {split}"))
+        group_split[group_str] = split or "train"
 
     # trainable labels with zero examples
     for label in sorted(trainable):

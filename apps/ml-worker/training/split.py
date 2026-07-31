@@ -32,6 +32,7 @@ import sys
 import hashlib
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 # Local import — label_mapper.py lives next to this file.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -191,15 +192,16 @@ def _print_split_stats(name: str, records: list[dict]) -> None:
             print(f"  {cat:<16} {c:>6}  ({pct:5.1f}%)")
 
 
-def _check_no_overlap(*splits: list[dict]) -> bool:
+def _check_no_overlap(*splits: tuple[str, list[dict[str, Any]]]) -> bool:
     """Each record is {diff, comment, labels, _pr_id} after _attach_pr_id."""
     seen: dict[str, str] = {}
     ok = True
     for split_name, records in splits:
         for r in records:
-            pr_id = r.get("_pr_id")
-            if pr_id is None:
+            pr_val = r.get("_pr_id")
+            if pr_val is None:
                 continue
+            pr_id = str(pr_val)
             if pr_id in seen and seen[pr_id] != split_name:
                 print(
                     f"  [LEAK] PR {pr_id!r} appears in BOTH {seen[pr_id]} and {split_name}",

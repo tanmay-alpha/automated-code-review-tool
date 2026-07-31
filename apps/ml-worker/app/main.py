@@ -111,8 +111,8 @@ async def verify_secret(request: Request, call_next: Any):
 async def health() -> HealthResponse:
     model: AutomatedCodeReviewToolModel | None = getattr(app.state, "model", None)
     model_loaded = model is not None
-    model_name = model.model_name if model_loaded else settings.MODEL_NAME
-    device = str(model.device) if model_loaded else "cpu"
+    model_name = model.model_name if model is not None else settings.MODEL_NAME
+    device = str(model.device) if model is not None else "cpu"
     return HealthResponse(
         status="ok" if model_loaded else "degraded",
         modelLoaded=model_loaded,

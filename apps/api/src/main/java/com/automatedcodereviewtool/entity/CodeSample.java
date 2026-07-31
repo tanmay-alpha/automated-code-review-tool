@@ -87,6 +87,20 @@ public class CodeSample {
     @Column(name = "redaction_version", nullable = false, length = 30)
     private String redactionVersion;
 
+    @Column(name = "repository_visibility", nullable = false, length = 20)
+    @Builder.Default
+    private String repositoryVisibility = "private";
+
+    @Column(name = "license_spdx", length = 30)
+    private String licenseSpdx;
+
+    @Column(name = "data_use_status", nullable = false, length = 40)
+    @Builder.Default
+    private String dataUseStatus = "quarantined_unknown_license";
+
+    @Column(name = "source_url", columnDefinition = "TEXT")
+    private String sourceUrl;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -124,6 +138,14 @@ public class CodeSample {
     public void setSourceType(String sourceType) { this.sourceType = sourceType; }
     public String getRedactionVersion() { return redactionVersion; }
     public void setRedactionVersion(String redactionVersion) { this.redactionVersion = redactionVersion; }
+    public String getRepositoryVisibility() { return repositoryVisibility; }
+    public void setRepositoryVisibility(String repositoryVisibility) { this.repositoryVisibility = repositoryVisibility; }
+    public String getLicenseSpdx() { return licenseSpdx; }
+    public void setLicenseSpdx(String licenseSpdx) { this.licenseSpdx = licenseSpdx; }
+    public String getDataUseStatus() { return dataUseStatus; }
+    public void setDataUseStatus(String dataUseStatus) { this.dataUseStatus = dataUseStatus; }
+    public String getSourceUrl() { return sourceUrl; }
+    public void setSourceUrl(String sourceUrl) { this.sourceUrl = sourceUrl; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
 }

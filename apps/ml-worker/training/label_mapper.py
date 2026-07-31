@@ -221,7 +221,7 @@ def filter_and_label_dataset(raw_data_dir: str) -> list[dict]:
         "kept": len(filtered),
     }
     # Stash on the returned list object (idiomatic; not typed).
-    setattr(filtered, "stats", filtered_stats)  # type: ignore[attr-defined]
+    setattr(filtered, "stats", filtered_stats)
     return filtered
 
 
