@@ -36,21 +36,24 @@ class QualityScoreParityTest {
     void parityAgainstSharedFixture() throws Exception {
         java.io.InputStream is = getClass().getResourceAsStream("/quality_score_cases.json");
         assertThat(is).as("contracts/quality_score_cases.json must be on test classpath").isNotNull();
-        java.util.List<Case> cases = MAPPER.readValue(is, MAPPER.getTypeFactory().constructCollectionType(List.class, Case.class));
+        com.fasterxml.jackson.databind.JsonNode root = MAPPER.readTree(is);
+        com.fasterxml.jackson.databind.JsonNode casesNode = root.has("cases") ? root.get("cases") : root;
+        java.util.List<Case> cases = MAPPER.convertValue(casesNode, MAPPER.getTypeFactory().constructCollectionType(List.class, Case.class));
         assertThat(cases).isNotEmpty();
         for (Case c : cases) {
+            String expStr = c.expectedScore != null ? c.expectedScore : c.expected;
             BigDecimal got = MlWorkerService.computeQualityScore(
                     new com.automatedcodereviewtool.dto.MlReviewResponse(
                             c.findings == null ? List.of() : c.findings.stream()
-                                    .map(f -> new com.automatedcodereviewtool.dto.MlFinding("path", null, 1, 1, f.antiPattern(), "category", f.severity(), f.confidence(), "explanation"))
+                                    .map(f -> new com.automatedcodereviewtool.dto.MlFinding("path", null, 1, 1, f.antiPattern() != null ? f.antiPattern() : "TEST", "category", f.severity(), f.confidence(), "explanation"))
                                     .toList(),
                             c.qualityScore == null ? null : new BigDecimal(c.qualityScore),
                             c.processingTimeMs == null ? 0 : c.processingTimeMs,
                             c.windowsProcessed == null ? 0 : c.windowsProcessed,
                             "model", "v1", "1.0.0"
                     ));
-            BigDecimal expected = new BigDecimal(c.expected).setScale(2, RoundingMode.HALF_UP);
-            assertThat(got).as("case '%s' (seed=%s)", c.name, c.seed)
+            BigDecimal expected = new BigDecimal(expStr).setScale(2, RoundingMode.HALF_UP);
+            assertThat(got).as("case '%s'", c.name)
                     .isEqualByComparingTo(expected);
         }
     }
@@ -108,17 +111,20 @@ class QualityScoreParityTest {
         assertThat(clamped).isEqualByComparingTo(atZero);
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private record Finding(String antiPattern, String severity, BigDecimal confidence) {
         private Finding { if (confidence == null) confidence = BigDecimal.ZERO; }
     }
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private record Case(
             String name,
             Integer seed,
             List<Finding> findings,
             String qualityScore,
+            String expectedScore,
+            String expected,
             Integer processingTimeMs,
             Integer windowsProcessed,
-            String expected,
             String notes
     ) {}
 }
