@@ -262,10 +262,24 @@ def cmd_import(args: argparse.Namespace) -> int:
                     skipped += 1
                     continue
 
+                if anti_pattern_id not in trainable_ids() and anti_pattern_id not in ("MAINTAINABILITY_PRINT_STATEMENT", "READABILITY_LONG_METHOD"):
+                    log.warning("Line %d: unknown antiPatternId %r", line_no, anti_pattern_id)
+                    skipped += 1
+                    continue
+
+                if label not in ("positive", "negative", "uncertain"):
+                    log.warning("Line %d: invalid label %r", line_no, label)
+                    skipped += 1
+                    continue
+
+                import uuid
+                annotation_id = str(uuid.uuid4())
+                idempotency_key = f"manual:{sample_id}:{anti_pattern_id}:{reviewer_id}:manual_{label}"
+
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT id FROM ml.annotations WHERE idempotency_key = %s",
-                        (f"manual:{sample_id}:{anti_pattern_id}:{reviewer_id}:manual_{label}",),
+                        (idempotency_key,),
                     )
                     if cur.fetchone():
                         log.debug("Line %d: idempotent, skipping", line_no)
@@ -274,11 +288,12 @@ def cmd_import(args: argparse.Namespace) -> int:
 
                     cur.execute(
                         """INSERT INTO ml.annotations
-                            (code_sample_id, anti_pattern_id, label_state, source,
+                            (id, code_sample_id, anti_pattern_id, label_state, source,
                              reviewer_user_id, trust_level, rationale, resolution_state,
-                             feedback_action, created_at, updated_at)
-                           VALUES (%s::uuid, %s, %s, 'manual_annotation', %s::uuid, %s, %s, 'active', %s, NOW(), NOW())""",
+                             feedback_action, idempotency_key, created_at, updated_at)
+                           VALUES (%s::uuid, %s::uuid, %s, %s, 'human', %s::uuid, %s, %s, 'active', %s, %s, NOW(), NOW())""",
                         (
+                            annotation_id,
                             sample_id,
                             anti_pattern_id,
                             label,
@@ -286,6 +301,7 @@ def cmd_import(args: argparse.Namespace) -> int:
                             trust_level,
                             notes,
                             f"manual_{label}",
+                            idempotency_key,
                         ),
                     )
                 imported += 1
