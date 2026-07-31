@@ -2,7 +2,11 @@ package com.automatedcodereviewtool.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
 import java.time.OffsetDateTime;
@@ -21,6 +25,7 @@ import java.util.UUID;
 public class SampleReview {
 
     @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
@@ -31,14 +36,12 @@ public class SampleReview {
     private UUID reviewerUserId;
 
     @Column(name = "review_status", nullable = false, length = 20)
-    @Builder.Default
     private String reviewStatus = "unreviewed";
 
     @Column(name = "reviewed_label_ids", columnDefinition = "JSONB")
     private String reviewedLabelIds;
 
     @Column(name = "clean_confirmed", nullable = false)
-    @Builder.Default
     private Boolean cleanConfirmed = false;
 
     @Column(name = "notes", columnDefinition = "TEXT")
@@ -55,6 +58,31 @@ public class SampleReview {
 
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    @PrePersist
+    public void prePersist() {
+        if (id == null) {
+            id = UUID.randomUUID();
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        if (createdAt == null) {
+            createdAt = now;
+        }
+        if (updatedAt == null) {
+            updatedAt = now;
+        }
+        if (reviewStatus == null) {
+            reviewStatus = "unreviewed";
+        }
+        if (cleanConfirmed == null) {
+            cleanConfirmed = false;
+        }
+    }
+
+    @PreUpdate
+    public void preUpdate() {
+        updatedAt = OffsetDateTime.now();
+    }
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }

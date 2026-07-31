@@ -2,7 +2,10 @@ package com.automatedcodereviewtool.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
@@ -36,6 +39,7 @@ import java.util.UUID;
 public class CodeSample {
 
     @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
@@ -88,14 +92,12 @@ public class CodeSample {
     private String redactionVersion;
 
     @Column(name = "repository_visibility", nullable = false, length = 20)
-    @Builder.Default
     private String repositoryVisibility = "private";
 
     @Column(name = "license_spdx", length = 30)
     private String licenseSpdx;
 
     @Column(name = "data_use_status", nullable = false, length = 40)
-    @Builder.Default
     private String dataUseStatus = "quarantined_unknown_license";
 
     @Column(name = "source_url", columnDefinition = "TEXT")
@@ -103,6 +105,22 @@ public class CodeSample {
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
+
+    @PrePersist
+    public void prePersist() {
+        if (id == null) {
+            id = UUID.randomUUID();
+        }
+        if (createdAt == null) {
+            createdAt = OffsetDateTime.now();
+        }
+        if (repositoryVisibility == null) {
+            repositoryVisibility = "private";
+        }
+        if (dataUseStatus == null) {
+            dataUseStatus = "quarantined_unknown_license";
+        }
+    }
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
