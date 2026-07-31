@@ -119,10 +119,10 @@ class ApiKeyAuthFilterTest {
         assertThat(downstream.get()).isEqualTo("jwt-passed");
     }
 
-    // ---- 403: bad key ----------------------------------------------------
+    // ---- 401: bad key ----------------------------------------------------
 
     @Test
-    void scanFile_withUnknownKeyPrefix_returns403() throws Exception {
+    void scanFile_withUnknownKeyPrefix_returns401() throws Exception {
         when(apiKeyService.findByPrefix(anyString())).thenReturn(null);
 
         MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/scan/file");
@@ -132,12 +132,12 @@ class ApiKeyAuthFilterTest {
 
         filter.doFilter(req, res, chain);
 
-        assertThat(res.getStatus()).isEqualTo(403);
+        assertThat(res.getStatus()).isEqualTo(401);
         assertThat(res.getContentAsString()).contains("API_KEY_INVALID");
     }
 
     @Test
-    void scanFile_withRevokedKey_returns403() throws Exception {
+    void scanFile_withRevokedKey_returns401() throws Exception {
         ApiKey stored = newKey(true);
         when(apiKeyService.findByPrefix(PREFIX)).thenReturn(stored);
         when(apiKeyService.verify(stored, FULL_KEY)).thenReturn(false);
@@ -149,11 +149,11 @@ class ApiKeyAuthFilterTest {
 
         filter.doFilter(req, res, chain);
 
-        assertThat(res.getStatus()).isEqualTo(403);
+        assertThat(res.getStatus()).isEqualTo(401);
     }
 
     @Test
-    void scanFile_withShortKey_returns403() throws Exception {
+    void scanFile_withShortKey_returns401() throws Exception {
         MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/scan/file");
         req.addHeader("Authorization", "Bearer " + ApiKeyService.KEY_PREFIX_LITERAL + "abc");
         MockHttpServletResponse res = new MockHttpServletResponse();
@@ -161,7 +161,7 @@ class ApiKeyAuthFilterTest {
 
         filter.doFilter(req, res, chain);
 
-        assertThat(res.getStatus()).isEqualTo(403);
+        assertThat(res.getStatus()).isEqualTo(401);
     }
 
     // ---- 429: rate-limited -----------------------------------------------
