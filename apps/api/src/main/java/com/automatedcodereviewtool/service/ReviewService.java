@@ -391,6 +391,8 @@ public class ReviewService {
         }
         return WebhookService.buildComment(findings.stream()
                         .map(f -> new com.automatedcodereviewtool.dto.MlFinding(
+                                f.getFilePath(),
+                                null,
                                 f.getLineStart(),
                                 f.getLineEnd(),
                                 f.getAntiPattern(),

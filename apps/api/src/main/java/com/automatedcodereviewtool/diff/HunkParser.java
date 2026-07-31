@@ -45,7 +45,7 @@ public final class HunkParser {
 
         String[] lines = unifiedDiff.split("\n", -1);
         FileDiff currentFile = null;
-        FileHunkBuilder currentHunk = null;
+        HunkBuilder currentHunk = null;
         int newLineNo = 0;
         int oldLineNo = 0;
 
