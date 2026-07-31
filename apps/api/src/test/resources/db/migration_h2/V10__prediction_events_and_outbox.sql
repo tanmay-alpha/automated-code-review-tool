@@ -3,7 +3,7 @@
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS prediction_events (
-    id                    UUID         PRIMARY KEY DEFAULT RANDOM_UUID(),
+    id                    UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
     code_sample_id        UUID         NULL,
     pull_request_id       UUID         NOT NULL,
     file_path             TEXT,
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS prediction_events (
 );
 
 CREATE TABLE IF NOT EXISTS sample_reviews (
-    id                UUID         PRIMARY KEY DEFAULT RANDOM_UUID(),
+    id                UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
     code_sample_id    UUID         NOT NULL,
     reviewer_user_id  UUID,
     review_status     VARCHAR(20)  NOT NULL DEFAULT 'unreviewed',
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS sample_reviews (
 );
 
 CREATE TABLE IF NOT EXISTS ingestion_outbox (
-    id              UUID         PRIMARY KEY DEFAULT RANDOM_UUID(),
+    id              UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
     event_type      VARCHAR(50)  NOT NULL,
     aggregate_type  VARCHAR(50)  NOT NULL,
     aggregate_id    UUID         NOT NULL,
