@@ -45,22 +45,30 @@ CREATE TABLE IF NOT EXISTS ml.annotations (
 );
 
 CREATE TABLE IF NOT EXISTS ml.dataset_versions (
-    id          UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
-    version     VARCHAR(50)  NOT NULL,
-    description TEXT,
-    split_ratio VARCHAR(20)  NOT NULL DEFAULT '70/15/15',
-    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id                        UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
+    name                      VARCHAR(120) NOT NULL DEFAULT 'default',
+    version                   VARCHAR(50)  NOT NULL,
+    taxonomy_version          VARCHAR(40)  NOT NULL DEFAULT 'v1',
+    status                    VARCHAR(20)  NOT NULL DEFAULT 'draft',
+    generation_config         TEXT         NOT NULL DEFAULT '{}',
+    manifest_sha256           VARCHAR(64)  NOT NULL DEFAULT '',
+    sample_count              INT          NOT NULL DEFAULT 0,
+    positive_annotation_count INT          NOT NULL DEFAULT 0,
+    description               TEXT,
+    split_ratio               VARCHAR(20)  NOT NULL DEFAULT '70/15/15',
+    created_at                TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    frozen_at                 TIMESTAMP,
 
     CONSTRAINT uq_dataset_versions_version UNIQUE (version)
 );
 
 CREATE TABLE IF NOT EXISTS ml.dataset_items (
-    id                UUID      DEFAULT RANDOM_UUID() PRIMARY KEY,
-    dataset_version_id UUID     NOT NULL REFERENCES ml.dataset_versions(id) ON DELETE CASCADE,
-    code_sample_id    UUID      NOT NULL REFERENCES ml.code_samples(id) ON DELETE CASCADE,
-    split             VARCHAR(10) NOT NULL,
-    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    dataset_version_id UUID        NOT NULL REFERENCES ml.dataset_versions(id) ON DELETE CASCADE,
+    code_sample_id     UUID        NOT NULL REFERENCES ml.code_samples(id) ON DELETE CASCADE,
+    split              VARCHAR(10) NOT NULL,
+    group_key          VARCHAR(255) NOT NULL,
+    labels_snapshot    TEXT        NOT NULL DEFAULT '[]',
+    created_at         TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT uq_dataset_items_version_sample
-        UNIQUE (dataset_version_id, code_sample_id)
+    PRIMARY KEY (dataset_version_id, code_sample_id)
 );
