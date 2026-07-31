@@ -6,7 +6,7 @@
 -- places tables in PUBLIC schema instead of ml schema.
 
 CREATE TABLE IF NOT EXISTS code_samples (
-    id                  UUID         NOT NULL DEFAULT RANDOM_UUID(),
+    id                  UUID         PRIMARY KEY DEFAULT RANDOM_UUID(),
     repository_id       UUID         NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     pull_request_id     UUID         NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
     commit_sha          VARCHAR(40)  NOT NULL,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS code_samples (
 );
 
 CREATE TABLE IF NOT EXISTS annotations (
-    id              UUID         NOT NULL DEFAULT RANDOM_UUID(),
+    id              UUID         PRIMARY KEY DEFAULT RANDOM_UUID(),
     code_sample_id  UUID         NOT NULL REFERENCES code_samples(id) ON DELETE CASCADE,
     anti_pattern_id VARCHAR(80)  NOT NULL,
     label_state     VARCHAR(20)  NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS annotations (
 );
 
 CREATE TABLE IF NOT EXISTS dataset_versions (
-    id          UUID         NOT NULL DEFAULT RANDOM_UUID(),
+    id          UUID         PRIMARY KEY DEFAULT RANDOM_UUID(),
     version     VARCHAR(50)  NOT NULL,
     description TEXT,
     split_ratio VARCHAR(20)  NOT NULL DEFAULT '70/15/15',
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS dataset_versions (
 );
 
 CREATE TABLE IF NOT EXISTS dataset_items (
-    id                UUID      NOT NULL DEFAULT RANDOM_UUID(),
+    id                UUID      PRIMARY KEY DEFAULT RANDOM_UUID(),
     dataset_version_id UUID     NOT NULL REFERENCES dataset_versions(id) ON DELETE CASCADE,
     code_sample_id    UUID      NOT NULL REFERENCES code_samples(id) ON DELETE CASCADE,
     split             VARCHAR(10) NOT NULL,
