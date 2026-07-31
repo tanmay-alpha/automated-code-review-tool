@@ -37,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 @Testcontainers
 @SpringBootTest
+@org.springframework.test.context.ActiveProfiles("test")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class Phase1BIntegrationTest {
 
@@ -54,6 +55,7 @@ class Phase1BIntegrationTest {
         r.add("spring.flyway.enabled", () -> "true");
         r.add("spring.flyway.locations", () -> "classpath:db/migration");
         r.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+        r.add("app.jwt.secret", () -> "test-secret-key-32-bytes-long-for-hs256-min");
     }
 
     @Autowired

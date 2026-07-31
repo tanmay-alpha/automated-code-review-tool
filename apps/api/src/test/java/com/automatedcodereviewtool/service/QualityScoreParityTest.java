@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>The same JSON fixture is consumed by the Python test suite.</p>
  */
 @SpringBootTest
+@org.springframework.test.context.ActiveProfiles("test")
 class QualityScoreParityTest {
 
     @Autowired
