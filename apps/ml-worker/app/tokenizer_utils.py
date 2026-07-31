@@ -117,3 +117,17 @@ def aggregate_logits(window_logits: list[torch.Tensor]) -> torch.Tensor:
 
     stacked = torch.stack(window_logits, dim=0)
     return stacked.max(dim=0).values
+
+
+def build_model_input(text: str, tokenizer: Any, max_length: int = 512) -> dict[str, torch.Tensor]:
+    """Uniform model input preprocessor shared across training, evaluation, and serving."""
+    if not text:
+        text = ""
+    enc = tokenizer(
+        text,
+        truncation=True,
+        max_length=max_length,
+        padding="max_length",
+        return_tensors="pt",
+    )
+    return {k: v.squeeze(0) if v.dim() > 1 else v for k, v in enc.items()}
