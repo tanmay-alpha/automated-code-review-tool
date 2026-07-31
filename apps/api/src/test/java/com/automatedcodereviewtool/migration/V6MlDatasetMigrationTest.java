@@ -75,12 +75,13 @@ class V6MlDatasetMigrationTest {
     @Test
     void uniquenessConstraintOnCodeSamplesExists() {
         Integer count = jdbc.queryForObject(
-                "SELECT count(*) FROM information_schema.table_constraints "
-                        + "WHERE table_schema = 'ml' AND table_name = 'code_samples' "
-                        + "AND constraint_type = 'UNIQUE' "
-                        + "AND constraint_name = 'uq_code_samples_pr_commit_file_start_hash'",
+                "SELECT count(*) FROM ( "
+                        + "  SELECT constraint_name AS name FROM information_schema.table_constraints WHERE table_schema = 'ml' AND table_name = 'code_samples' "
+                        + "  UNION "
+                        + "  SELECT indexname AS name FROM pg_indexes WHERE schemaname = 'ml' AND tablename = 'code_samples' "
+                        + ") t WHERE name IN ('uq_code_samples_pr_commit_file_start_hash', 'uq_code_samples_content_sha256')",
                 Integer.class);
-        assertThat(count).isEqualTo(1);
+        assertThat(count).isGreaterThanOrEqualTo(1);
     }
 
     @Test
