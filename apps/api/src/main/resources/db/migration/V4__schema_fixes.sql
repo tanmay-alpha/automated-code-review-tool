@@ -105,9 +105,9 @@ CREATE INDEX IF NOT EXISTS idx_processed_webhooks_processed_at
 ALTER TABLE quality_metrics
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
 
--- Backfill: set updated_at = created_at for existing rows.
+-- Backfill: set updated_at = CURRENT_TIMESTAMP for existing rows.
 UPDATE quality_metrics
-   SET updated_at = created_at
+   SET updated_at = CURRENT_TIMESTAMP
  WHERE updated_at IS NULL;
 
 -- ============================================
