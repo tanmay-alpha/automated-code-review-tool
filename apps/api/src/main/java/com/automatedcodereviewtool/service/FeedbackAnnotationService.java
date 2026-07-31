@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -33,7 +34,7 @@ public class FeedbackAnnotationService {
     private static final Logger log = LoggerFactory.getLogger(FeedbackAnnotationService.class);
 
     private static final String SOURCE_FEEDBACK = "finding_feedback";
-    private static final String SOURCE_MANUAL = "manual_annotation";
+    private static final String SOURCE_MANUAL = "human";
 
     private final AnnotationRepository annotationRepository;
 
