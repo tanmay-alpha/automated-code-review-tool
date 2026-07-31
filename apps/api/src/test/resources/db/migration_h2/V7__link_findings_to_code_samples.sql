@@ -9,7 +9,7 @@ ALTER TABLE findings ADD COLUMN IF NOT EXISTS code_sample_id UUID;
 
 ALTER TABLE findings ADD CONSTRAINT fk_findings_code_sample
     FOREIGN KEY (code_sample_id)
-    REFERENCES code_samples(id)
+    REFERENCES ml.code_samples(id)
     ON DELETE SET NULL;
 
 CREATE INDEX IF NOT EXISTS idx_findings_code_sample_id
