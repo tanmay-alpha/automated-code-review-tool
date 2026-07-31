@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS ml.code_samples (
     raw_hunk            TEXT         NOT NULL,
     added_code          TEXT,
     context_code        TEXT,
-    content_sha256      CHAR(64)     NOT NULL,
+    content_sha256      VARCHAR(64)  NOT NULL,
     group_key           VARCHAR(255) NOT NULL,
     source_type         VARCHAR(30)  NOT NULL,
     redaction_version   VARCHAR(30)  NOT NULL,
