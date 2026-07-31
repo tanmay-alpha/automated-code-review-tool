@@ -180,8 +180,8 @@ def _persist_dataset_items(
         ON CONFLICT (dataset_version_id, code_sample_id) DO NOTHING
     """
     with conn.cursor() as cur:
-        for dataset_version_id_, sample_id, split, group_key, labels in items:
-            cur.execute(sql, (dataset_version_id_, sample_id, split, group_key,
+        for sample_id, split, group_key, labels in items:
+            cur.execute(sql, (dataset_version_id, sample_id, split, group_key,
                               json.dumps(labels)))
 
 
@@ -196,7 +196,7 @@ def _freeze_dataset(conn, name: str, version: str) -> None:
 
 
 def cmd_create(args: argparse.Namespace) -> int:
-    from app.taxonomy_loader import load_canonical_taxonomy  # type: ignore
+    from app.taxonomy_loader import load_canonical_taxonomy
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -206,7 +206,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         samples: List[CodeSampleRow] = []
         annotations: Dict[str, List[AnnotationRow]] = {}
     else:
-        import psycopg  # type: ignore
+        import psycopg
 
         url = args.database_url or os.environ["ML_DATASET_DATABASE_URL"]
         with psycopg.connect(url, readonly=True) as conn:
@@ -294,7 +294,7 @@ def cmd_create(args: argparse.Namespace) -> int:
     )
 
     if args.database_url or os.environ.get("ML_DATASET_DATABASE_URL"):
-        import psycopg  # type: ignore
+        import psycopg
 
         url = args.database_url or os.environ["ML_DATASET_DATABASE_URL"]
         with psycopg.connect(url) as conn:
@@ -315,7 +315,7 @@ def cmd_create(args: argparse.Namespace) -> int:
                 },
             )
             _persist_dataset_items(conn, ds_id, [
-                (ds_id, rec["sample"].id, split_map.get(rec["sample"].group_key, "train"),
+                (rec["sample"].id, split_map.get(rec["sample"].group_key, "train"),
                  rec["sample"].group_key, rec["labels"])
                 for rec in accepted_records
             ])
@@ -332,7 +332,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_freeze(args: argparse.Namespace) -> int:
-    import psycopg  # type: ignore
+    import psycopg
 
     url = args.database_url or os.environ.get("ML_DATASET_DATABASE_URL", "")
     if not url:
