@@ -2,7 +2,10 @@ package com.automatedcodereviewtool.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
 import java.math.BigDecimal;
@@ -24,6 +27,7 @@ import java.util.UUID;
 public class PredictionEvent {
 
     @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
@@ -74,6 +78,19 @@ public class PredictionEvent {
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
+
+    @PrePersist
+    public void prePersist() {
+        if (id == null) {
+            id = UUID.randomUUID();
+        }
+        if (createdAt == null) {
+            createdAt = OffsetDateTime.now();
+        }
+        if (status == null) {
+            status = "persisted";
+        }
+    }
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
