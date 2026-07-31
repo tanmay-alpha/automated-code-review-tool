@@ -125,11 +125,6 @@ public class ReviewService {
         // -- persist findings (batch delete + save) ------------------------
         findingRepository.deleteAllByPullRequestId(pr.getId());
 
-        // Persist hunk-level samples before the ML response is consumed,
-        // then stamp findings with the corresponding code sample ids.
-        List<CodeSample> samples = reviewSampleBridge.persistHunksForReview(
-                pr.getRepo().getId(), pr.getId(), pr.getHeadSha(), diff);
-
         List<Finding> saved = new ArrayList<>();
         List<PredictionEvent> rejectedEvents = new ArrayList<>();
         BigDecimal score = MlWorkerService.computeQualityScore(mlResponse);
@@ -174,24 +169,18 @@ public class ReviewService {
                             .taxonomyVersion(mlResponse.taxonomyVersion())
                             .build();
                     saved.add(findingRepository.save(f));
-                    // Link the event to the persisted finding.
-                    event.setCodeSampleId(f.getCodeSampleId());
                 }
                 predictionEventRepository.save(event);
             }
         }
-
-        // Attach the persisted code sample ids on every matched finding so
-        // downstream analysts can re-link a finding to the exact diff hunk.
-        reviewSampleBridge.stampFindings(saved, samples, mlResponse);
 
         // -- outbox: decouple dataset capture ------------------------------
         try {
             IngestionOutbox outbox = new IngestionOutbox();
             outbox.setEventType(OUTBOX_EVENT_TYPE);
             outbox.setAggregateType("pull_request");
-            outbox.setAggregateId(pr.getId());
-            outbox.setPayload(buildOutboxPayload(pr, saved, rejectedEvents));
+            outbox.setAggregateId(pr.getRepo().getId());
+            outbox.setPayload(buildOutboxPayload(pr, saved, rejectedEvents, diff));
             outbox.setStatus("pending");
             outbox.setAttemptCount(0);
             outbox.setAvailableAt(OffsetDateTime.now());
@@ -297,14 +286,15 @@ public class ReviewService {
 
     private String buildOutboxPayload(PullRequestEntity pr,
                                       List<Finding> findings,
-                                      List<PredictionEvent> rejectedEvents) {
+                                      List<PredictionEvent> rejectedEvents,
+                                      String diff) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("pullRequestId", pr.getId().toString());
         payload.put("githubPrNumber", pr.getGithubPrNumber());
         payload.put("headSha", pr.getHeadSha());
+        payload.put("diff", diff == null ? "" : diff);
         payload.put("findingIds", findings.stream().map(f -> f.getId().toString()).toList());
         payload.put("rejectedEventIds", rejectedEvents.stream().map(e -> e.getId().toString()).toList());
-        // Never include raw diff or source content.
         try {
             return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException e) {
