@@ -2,82 +2,72 @@
 automated-code-review-tool — rule-based anti-pattern fallback scanner.
 
 Used when the CodeBERT model is unavailable (e.g., ``MODEL_NAME=none``).
-Runs zero-cost regex checks over the **added** lines of a diff and produces
-findings in the same schema the rest of the pipeline expects.
+Runs zero-cost regex checks over the **added** lines of each diff hunk and
+produces findings mapped to actual file paths, hunk hashes, and 1-indexed
+new-file line numbers.
 
-**Only added lines are scanned.** Removed lines are not new problems.
-
-Supported rules
----------------
-SECURITY_HARDCODED_SECRET  — literal strings matching API-key patterns
-SECURITY_SQL_INJECTION     — string concatenation inside execute() calls
-RELIABILITY_BROAD_EXCEPTION — bare ``except:`` or ``except Exception:``
-PERFORMANCE_QUADRATIC_LOOP  — nested loop depth ≥ 2 in Python/Java
-READABILITY_MAGIC_NUMBER    — unexplained numeric literals in added code
-READABILITY_LONG_METHOD     — single-line additions > 200 chars
-MAINTAINABILITY_PRINT_STATEMENT             — bare ``print(`` in Python, ``console.log`` in JS/TS
-MAINTAINABILITY_COMMENTED_CODE — blocks of commented-out code
-
-The scanner is intentionally conservative: it favours precision over recall.
-
-Language support: Python, JavaScript, TypeScript, Java.
+Requirements:
+- Preserve destination path for renames
+- Skip binary files
+- Skip removed-only hunks
+- Scan only added lines
+- Map each finding to its actual new-file line
+- Deduplicate within a hunk
 """
 from __future__ import annotations
 
+import hashlib
 import re
-from collections.abc import Callable
+from dataclasses import dataclass
 from typing import List
 
 from app.model import compute_quality_score
 from app.schemas import Finding, ReviewResponse
 
 
+@dataclass
+class HunkLine:
+    real_line: int
+    content: str
+
+
+@dataclass
+class FileHunk:
+    file_path: str
+    hunk_hash: str
+    added_lines: list[HunkLine]
+    is_binary: bool = False
+
+
 # ---------------------------------------------------------------------------
-# Regex patterns for each rule
+# Regex patterns for rules
 # ---------------------------------------------------------------------------
 
-# Hardcoded secret: quoted string ≥ 32 chars that looks like a key/token.
-# Matches things like: API_KEY = "sk_live_abc...",  token: "ghp_..."
 _SECRET_RE = re.compile(
     r'(?i)(api_key|api_token|apikey|secret_key|private_key|'
     r'access_key|auth_token|password)\s*[=:]\s*["\'][A-Za-z0-9_\-]{32,}["\']'
 )
 
-# SQL injection: execute( with + concatenation.
 _SQL_CONCAT_RE = re.compile(r'execute\s*\(.*\+.*\)', re.IGNORECASE)
-
-# Broad exception: bare ``except:`` or ``except Exception:``.
 _BROAD_EXC_RE = re.compile(r'^\s*except\s*(Exception\s*|$)', re.MULTILINE | re.IGNORECASE)
-
-# Python print statement.
 _PY_PRINT_RE = re.compile(r'^\s*print\s*\(', re.MULTILINE)
-
-# JS/TS console.log.
 _JS_CONSOLE_RE = re.compile(r'console\.log\s*\(', re.IGNORECASE)
 
-# Commented-out code block (≥ 3 lines starting with # or //).
 _COMMENTED_CODE_RE = re.compile(
     r'(?m)^(?:#{1,2}|\/\/)\s+.+\n(?:^(?:#{1,2}|\/\/)\s+.+\n){2,}',
 )
 
-# Magic number: standalone numeric literal (not 0/1) on a code line.
 _MAGIC_NUMBER_RE = re.compile(
     r'[^A-Za-z_"\']\b(\d{2,})\b[^A-Za-z_"\']'
 )
 
-# Nested loop detection: tracks indentation depth of ``for`` / ``while``.
 _LOOP_RE = re.compile(r'^\s*(?:for|while)\s+', re.MULTILINE)
 
-# Java try-catch without specific exception type.
 _JAVA_CATCH_RE = re.compile(
     r'catch\s*\(\s*(?:Exception|Throwable|\.\.\.\s*\w+)\s*\)',
     re.IGNORECASE,
 )
 
-
-# ---------------------------------------------------------------------------
-# Finding metadata per rule
-# ---------------------------------------------------------------------------
 
 _RULE_CONFIG: dict[str, dict] = {
     "SECURITY_HARDCODED_SECRET": {
@@ -85,232 +75,259 @@ _RULE_CONFIG: dict[str, dict] = {
         "confidence": 0.70,
         "explanation": (
             "Possible API key or secret token hard-coded in source. "
-            "Rotate the credential immediately and load it from an environment "
-            "variable or a secrets manager."
+            "Rotate the credential immediately and load it from an environment variable."
         ),
     },
     "SECURITY_SQL_INJECTION": {
         "severity": "major",
         "confidence": 0.65,
         "explanation": (
-            "String concatenation inside a database execute() call risks SQL "
-            "injection. Use parameterised queries or an ORM."
+            "String concatenation inside a database execute() call risks SQL injection. "
+            "Use parameterised queries or an ORM."
         ),
     },
     "RELIABILITY_BROAD_EXCEPTION": {
         "severity": "major",
         "confidence": 0.75,
         "explanation": (
-            "Catching a broad exception (or bare except) swallows SystemExit, "
-            "KeyboardInterrupt, and unexpected errors. Catch specific "
-            "exceptions instead."
+            "Catching a broad exception swallows unexpected errors. Catch specific exceptions."
         ),
     },
     "PERFORMANCE_QUADRATIC_LOOP": {
         "severity": "major",
         "confidence": 0.60,
         "explanation": (
-            "Nested loops with O(n^2) or worse complexity risk performance "
-            "degradation. Consider a lookup table, set, or vectorised approach."
+            "Nested loops with O(n^2) complexity risk performance degradation."
         ),
     },
     "READABILITY_MAGIC_NUMBER": {
         "severity": "minor",
         "confidence": 0.55,
         "explanation": (
-            "Unexplained numeric literal in code — extract it into a named "
-            "constant so its purpose is clear."
+            "Unexplained numeric literal in code — extract into a named constant."
         ),
     },
     "READABILITY_LONG_METHOD": {
         "severity": "minor",
         "confidence": 0.40,
         "explanation": (
-            "A single added line exceeds 200 characters, which may indicate a "
-            "long or complex statement worth refactoring."
+            "Single added line exceeds 200 characters."
         ),
     },
     "MAINTAINABILITY_PRINT_STATEMENT": {
         "severity": "minor",
         "confidence": 0.65,
         "explanation": (
-            "Direct print or console output should use structured logging "
-            "(logging module / winston / pino) so output is controllable in "
-            "production."
+            "Direct print statement — use structured logging."
         ),
     },
     "MAINTAINABILITY_COMMENTED_CODE": {
         "severity": "minor",
         "confidence": 0.60,
         "explanation": (
-            "Commented-out code should be removed — version control preserves "
-            "the old logic if you need to revert."
+            "Commented-out code block should be removed."
         ),
     },
 }
 
 
 # ---------------------------------------------------------------------------
-# Per-rule detectors
+# Diff Parsing (Hunk-Aware)
 # ---------------------------------------------------------------------------
 
-def _check_hardcoded_secret(added: list[str]) -> list[tuple[int, int]]:
-    hits: list[tuple[int, int]] = []
-    for i, line in enumerate(added, 1):
+_DIFF_GIT_RE = re.compile(r'^diff --git a/(.*) b/(.*)$')
+_HUNK_HEADER_RE = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
+
+
+def parse_diff_hunks(diff: str) -> list[FileHunk]:
+    """Parse a unified diff into FileHunk objects."""
+    hunks: list[FileHunk] = []
+    if not diff or not diff.strip():
+        return hunks
+
+    lines = diff.splitlines()
+    current_file = "unknown"
+    is_binary = False
+    i = 0
+    n = len(lines)
+
+    while i < n:
+        line = lines[i]
+
+        # diff --git header
+        m_git = _DIFF_GIT_RE.match(line)
+        if m_git:
+            current_file = m_git.group(2)
+            is_binary = False
+            i += 1
+            continue
+
+        if line.startswith("rename to "):
+            current_file = line[10:].strip()
+            i += 1
+            continue
+
+        if line.startswith("+++ b/"):
+            current_file = line[6:].strip()
+            i += 1
+            continue
+        elif line.startswith("+++ /dev/null"):
+            current_file = "/dev/null"
+            i += 1
+            continue
+
+        if line.startswith("Binary files ") or line.startswith("GIT binary patch"):
+            is_binary = True
+            i += 1
+            continue
+
+        # Hunk header
+        m_hunk = _HUNK_HEADER_RE.match(line)
+        if m_hunk:
+            new_start = int(m_hunk.group(3))
+            hunk_raw_lines: list[str] = [line]
+            added_hunk_lines: list[HunkLine] = []
+            curr_new_line = new_start
+
+            i += 1
+            while i < n:
+                hline = lines[i]
+                if hline.startswith("diff --git") or hline.startswith("@@"):
+                    break
+
+                hunk_raw_lines.append(hline)
+
+                if hline.startswith("+") and not hline.startswith("+++"):
+                    added_hunk_lines.append(HunkLine(real_line=curr_new_line, content=hline[1:]))
+                    curr_new_line += 1
+                elif hline.startswith("-") and not hline.startswith("---"):
+                    pass
+                elif not hline.startswith("\\"):
+                    curr_new_line += 1
+
+                i += 1
+
+            # Ignore deleted files (/dev/null)
+            if current_file != "/dev/null":
+                raw_block = "\n".join(hunk_raw_lines)
+                h_hash = hashlib.sha256(raw_block.encode("utf-8")).hexdigest()[:16]
+                hunks.append(FileHunk(
+                    file_path=current_file,
+                    hunk_hash=h_hash,
+                    added_lines=added_hunk_lines,
+                    is_binary=is_binary,
+                ))
+            continue
+
+        i += 1
+
+    return hunks
+
+
+# ---------------------------------------------------------------------------
+# Per-hunk detectors
+# ---------------------------------------------------------------------------
+
+def _scan_hunk_lines(hunk_lines: list[HunkLine], language: str) -> list[tuple[str, int, int]]:
+    """Scan added lines of a single hunk. Returns list of (rule_id, line_start, line_end)."""
+    hits: list[tuple[str, int, int]] = []
+    lines_text = [hl.content for hl in hunk_lines]
+
+    for idx, hl in enumerate(hunk_lines):
+        line = hl.content
+        line_no = hl.real_line
+
         if _SECRET_RE.search(line):
-            hits.append((i, i))
-    return hits
-
-
-def _check_sql_injection(added: list[str]) -> list[tuple[int, int]]:
-    hits: list[tuple[int, int]] = []
-    for i, line in enumerate(added, 1):
+            hits.append(("SECURITY_HARDCODED_SECRET", line_no, line_no))
         if _SQL_CONCAT_RE.search(line):
-            hits.append((i, i))
-    return hits
-
-
-def _check_broad_exception(added: list[str]) -> list[tuple[int, int]]:
-    hits: list[tuple[int, int]] = []
-    for i, line in enumerate(added, 1):
+            hits.append(("SECURITY_SQL_INJECTION", line_no, line_no))
         if _BROAD_EXC_RE.search(line):
-            hits.append((i, i))
-    return hits
+            hits.append(("RELIABILITY_BROAD_EXCEPTION", line_no, line_no))
+        if language == "java" and _JAVA_CATCH_RE.search(line):
+            hits.append(("RELIABILITY_BROAD_EXCEPTION", line_no, line_no))
 
+        if language in ("python", "unknown", None) and _PY_PRINT_RE.match(line):
+            hits.append(("MAINTAINABILITY_PRINT_STATEMENT", line_no, line_no))
+        if language in ("javascript", "typescript", "unknown", None) and _JS_CONSOLE_RE.search(line):
+            hits.append(("MAINTAINABILITY_PRINT_STATEMENT", line_no, line_no))
 
-def _check_nested_loops(added: list[str]) -> list[tuple[int, int]]:
-    """Flag when nested loop depth ≥ 2 is found in added lines."""
-    max_depth = 0
+        if len(line.rstrip()) > 200:
+            hits.append(("READABILITY_LONG_METHOD", line_no, line_no))
+
+        for m in _MAGIC_NUMBER_RE.finditer(line):
+            val = m.group(1)
+            if val not in ("0", "1"):
+                hits.append(("READABILITY_MAGIC_NUMBER", line_no, line_no))
+                break
+
+    # Commented code over hunk
+    block = "\n".join(lines_text)
+    for m in _COMMENTED_CODE_RE.finditer(block):
+        start_idx = block[: m.start()].count("\n")
+        end_idx = start_idx + m.group(0).count("\n") - 1
+        if start_idx < len(hunk_lines) and end_idx < len(hunk_lines):
+            hits.append(("MAINTAINABILITY_COMMENTED_CODE", hunk_lines[start_idx].real_line, hunk_lines[end_idx].real_line))
+
+    # Quadratic loops
     current_depth = 0
+    max_depth = 0
     start_line = 0
-    hits: list[tuple[int, int]] = []
-    for i, line in enumerate(added, 1):
+    for hl in hunk_lines:
+        line = hl.content
         if _LOOP_RE.match(line):
             current_depth += 1
             if current_depth == 2 and max_depth < 2:
                 max_depth = 2
-                start_line = i
+                start_line = hl.real_line
         elif line.strip() == "" or line.startswith("#"):
             continue
         else:
             if current_depth > max_depth:
                 max_depth = current_depth
             current_depth = 0
-    if max_depth >= 2:
-        hits.append((start_line, start_line + max_depth - 1))
-    return hits
 
+    if max_depth >= 2 and start_line > 0:
+        hits.append(("PERFORMANCE_QUADRATIC_LOOP", start_line, start_line + max_depth - 1))
 
-def _check_magic_number(added: list[str]) -> list[tuple[int, int]]:
-    hits: list[tuple[int, int]] = []
-    for i, line in enumerate(added, 1):
-        for m in _MAGIC_NUMBER_RE.finditer(line):
-            val = m.group(1)
-            if val != "0" and val != "1":
-                hits.append((i, i))
-                break  # one finding per line
-    return hits
-
-
-def _check_print_to_stdout(added: list[str], language: str) -> list[tuple[int, int]]:
-    hits: list[tuple[int, int]] = []
-    if language in ("python", "unknown", None):
-        for i, line in enumerate(added, 1):
-            if _PY_PRINT_RE.match(line):
-                hits.append((i, i))
-    if language in ("javascript", "typescript", "unknown", None):
-        for i, line in enumerate(added, 1):
-            if _JS_CONSOLE_RE.search(line):
-                hits.append((i, i))
-    return hits
-
-
-def _check_commented_code(added: list[str]) -> list[tuple[int, int]]:
-    hits: list[tuple[int, int]] = []
-    block = "\n".join(added)
-    for m in _COMMENTED_CODE_RE.finditer(block):
-        start = block[: m.start()].count("\n") + 1
-        end = start + m.group(0).count("\n") - 1
-        hits.append((start, end))
-    return hits
-
-
-def _check_long_lines(added: list[str]) -> list[tuple[int, int]]:
-    hits: list[tuple[int, int]] = []
-    for i, line in enumerate(added, 1):
-        if len(line.rstrip()) > 200:
-            hits.append((i, i))
-    return hits
-
-
-def _check_java_broad_catch(added: list[str]) -> list[tuple[int, int]]:
-    hits: list[tuple[int, int]] = []
-    for i, line in enumerate(added, 1):
-        if _JAVA_CATCH_RE.search(line):
-            hits.append((i, i))
     return hits
 
 
 # ---------------------------------------------------------------------------
-# Main entry point
+# Entry Point
 # ---------------------------------------------------------------------------
 
 def fallback_scan(diff: str, language: str = "unknown") -> ReviewResponse:
-    """Run rule-based anti-pattern detection on a diff text.
+    """Run rule-based anti-pattern detection on a unified diff.
 
-    Only **added** lines (lines starting with ``+``) are scanned.
-    Removed lines are not new problems and are ignored.
-
-    Args:
-        diff: Unified diff text.
-        language: Primary language hint ("python", "javascript", "typescript",
-            "java", or "unknown").
+    Processes each file hunk independently and maps findings to the real line number
+    and file path.
     """
     findings: List[Finding] = []
+    hunks = parse_diff_hunks(diff)
+    windows_processed = max(1, len(hunks))
 
-    added, _removed = _split_added_removed(diff)
+    for hunk in hunks:
+        if hunk.is_binary or not hunk.added_lines:
+            continue
 
-    if not added:
-        return ReviewResponse(
-            findings=[],
-            qualityScore=compute_quality_score([]),
-            processingTimeMs=0,
-            windowsProcessed=1,
-        )
+        hunk_hits = _scan_hunk_lines(hunk.added_lines, language)
+        seen_hunk_keys: set[tuple] = set()
 
-    # Dispatch to rule checks.
-    rule_checks: list[tuple[str, Callable[[], list[tuple[int, int]]]]] = [
-        ("SECURITY_HARDCODED_SECRET", lambda: _check_hardcoded_secret(added)),
-        ("SECURITY_SQL_INJECTION", lambda: _check_sql_injection(added)),
-        ("RELIABILITY_BROAD_EXCEPTION", lambda: _check_broad_exception(added)),
-        ("PERFORMANCE_QUADRATIC_LOOP", lambda: _check_nested_loops(added)),
-        ("READABILITY_MAGIC_NUMBER", lambda: _check_magic_number(added)),
-        ("READABILITY_LONG_METHOD", lambda: _check_long_lines(added)),
-        ("MAINTAINABILITY_PRINT_STATEMENT", lambda: _check_print_to_stdout(added, language)),
-        ("MAINTAINABILITY_COMMENTED_CODE", lambda: _check_commented_code(added)),
-    ]
-
-    if language == "java":
-        rule_checks.append(
-            ("RELIABILITY_BROAD_EXCEPTION", lambda: _check_java_broad_catch(added))
-        )
-
-    seen_ranges: set[tuple] = set()  # deduplicate overlapping ranges
-
-    for rule_id, check_fn in rule_checks:
-        hits = check_fn()
-        cfg = _RULE_CONFIG[rule_id]
-        for line_start, line_end in hits:
-            key = (rule_id, line_start, line_end)
-            if key in seen_ranges:
+        for rule_id, l_start, l_end in hunk_hits:
+            key = (rule_id, l_start, l_end)
+            if key in seen_hunk_keys:
                 continue
-            seen_ranges.add(key)
+            seen_hunk_keys.add(key)
+
+            cfg = _RULE_CONFIG[rule_id]
             findings.append(
                 Finding(
-                    lineStart=line_start,
-                    lineEnd=line_end,
+                    filePath=hunk.file_path,
+                    hunkHash=hunk.hunk_hash,
+                    lineStart=l_start,
+                    lineEnd=l_end,
                     antiPattern=rule_id,
-                    category=rule_id.split("_", 1)[0],  # SECURITY, PERFORMANCE, etc.
+                    category=rule_id.split("_", 1)[0],
                     severity=cfg["severity"],
                     confidence=cfg["confidence"],
                     explanation=cfg["explanation"],
@@ -321,43 +338,8 @@ def fallback_scan(diff: str, language: str = "unknown") -> ReviewResponse:
         findings=findings,
         qualityScore=compute_quality_score(findings),
         processingTimeMs=0,
-        windowsProcessed=1,
+        windowsProcessed=windows_processed,
+        engine="fallback",
+        modelVersion="rule-baseline-v1",
+        taxonomyVersion="1.0.0",
     )
-
-
-def _split_added_removed(diff: str) -> tuple[list[str], list[str]]:
-    """Split a unified diff into added and removed lines (excluding headers).
-
-    Returns ``(added_lines, removed_lines)`` where each entry is the line
-    content **without** the leading ``+`` / ``-`` prefix.
-
-    Lines like ``+++ b/foo.py`` or ``--- a/foo.py`` are excluded.
-    Hunk headers and ``diff --git`` lines are excluded.
-    Context lines (no prefix) are excluded from both lists.
-    """
-    added: list[str] = []
-    removed: list[str] = []
-    in_hunk = False
-    for raw_line in diff.splitlines():
-        # Detect hunk start — everything after is content.
-        if raw_line.startswith("@@"):
-            in_hunk = True
-            continue
-        if raw_line.startswith("diff "):
-            in_hunk = False
-            continue
-        if raw_line.startswith("index "):
-            continue
-        if raw_line.startswith("---") or raw_line.startswith("+++"):
-            continue
-        if raw_line.startswith("\\"):
-            # "\ No newline at end of file" marker — skip.
-            continue
-        if not in_hunk:
-            continue
-        if raw_line.startswith("+"):
-            added.append(raw_line[1:])
-        elif raw_line.startswith("-"):
-            removed.append(raw_line[1:])
-        # Context lines (no prefix) are ignored.
-    return added, removed
