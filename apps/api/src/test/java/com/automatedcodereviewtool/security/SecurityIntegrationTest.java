@@ -61,14 +61,36 @@ public class SecurityIntegrationTest {
     @MockBean
     private HmacVerifier hmacVerifier;
 
+    @MockBean
+    private com.automatedcodereviewtool.repository.UserRepository userRepository;
+
+    @Autowired
+    @Qualifier("mlWorkerCircuitBreaker")
+    private CircuitBreaker mlWorkerCircuitBreaker;
+
+    @Autowired
+    private TestSecurityController testSecurityController;
+
     private final java.util.Set<String> redisKeys = new java.util.concurrent.ConcurrentHashMap<String, Boolean>().newKeySet();
     private final java.util.Map<String, Long> redisCounters = new java.util.concurrent.ConcurrentHashMap<>();
 
     @org.junit.jupiter.api.BeforeEach
     void setUpRedisMock() throws Exception {
         when(hmacVerifier.verify(any(), any(), any())).thenReturn(false);
+        when(userRepository.findById(any())).thenAnswer(inv -> java.util.Optional.of(
+                com.automatedcodereviewtool.entity.User.builder()
+                        .id(inv.getArgument(0))
+                        .githubUsername("test-user")
+                        .accessToken("dummy")
+                        .build()));
         redisKeys.clear();
         redisCounters.clear();
+        if (mlWorkerCircuitBreaker != null) {
+            mlWorkerCircuitBreaker.reset();
+        }
+        if (testSecurityController != null) {
+            testSecurityController.resetHits();
+        }
         org.springframework.data.redis.core.ValueOperations valueOps = mock(org.springframework.data.redis.core.ValueOperations.class);
         
         doAnswer(inv -> {
@@ -104,6 +126,10 @@ public class SecurityIntegrationTest {
         private final CircuitBreaker mlWorkerCircuitBreaker;
         private final SecurityMonitor securityMonitor;
         private int dashboardHits = 0;
+
+        public void resetHits() {
+            this.dashboardHits = 0;
+        }
 
         @Autowired
         public TestSecurityController(@Qualifier("mlWorkerCircuitBreaker") CircuitBreaker mlWorkerCircuitBreaker,
