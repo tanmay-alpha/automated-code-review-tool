@@ -61,6 +61,16 @@ public class Repository {
     @Column(name = "quality_score", precision = 5, scale = 2)
     private BigDecimal qualityScore;
 
+    @Column(name = "license_spdx", length = 30)
+    private String licenseSpdx;
+
+    @Column(name = "data_use_status", nullable = false, length = 40)
+    @Builder.Default
+    private String dataUseStatus = "quarantined_unknown_license";
+
+    @Column(name = "consent_recorded_at")
+    private Instant consentRecordedAt;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

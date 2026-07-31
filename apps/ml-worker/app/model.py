@@ -292,7 +292,7 @@ class AutomatedCodeReviewToolModel:
                     lineEnd=None,
                     antiPattern=cfg["name"],
                     category=cfg["category"],
-                    severity=cfg["severity"],  # type: ignore[arg-type]
+                    severity=cfg["severity"],
                     confidence=round(score, 4),
                     explanation=cfg["explanation_template"],
                 )

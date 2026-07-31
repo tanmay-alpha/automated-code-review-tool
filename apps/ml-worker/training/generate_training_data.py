@@ -42,7 +42,7 @@ _TAXONOMY_PATH = Path(__file__).resolve().parents[3] / "taxonomy" / "anti_patter
 # Use the taxonomy loader; fall back to an inline hard-coded list if PyYAML
 # is unavailable so the module is always importable (e.g. during linting).
 try:
-    from app.taxonomy import load_taxonomy  # type: ignore[import]
+    from app.taxonomy import load_taxonomy
 
     _TAXONOMY = load_taxonomy(_TAXONOMY_PATH)
 except Exception:  # noqa: BLE001

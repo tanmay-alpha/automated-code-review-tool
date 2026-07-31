@@ -48,6 +48,26 @@ public class Annotation {
     @Column(name = "reviewer_user_id")
     private UUID reviewerUserId;
 
+    @Column(name = "finding_id")
+    private UUID findingId;
+
+    @Column(name = "feedback_action", length = 20)
+    private String feedbackAction;
+
+    @Column(name = "idempotency_key", length = 100, unique = true)
+    private String idempotencyKey;
+
+    @Column(name = "supersedes_annotation_id")
+    private UUID supersedesAnnotationId;
+
+    @Column(name = "resolution_state", nullable = false, length = 20)
+    @Builder.Default
+    private String resolutionState = "active";
+
+    @Column(name = "trust_level", length = 30)
+    @Builder.Default
+    private String trustLevel = "finding_feedback";
+
     @Column(name = "rationale", columnDefinition = "TEXT")
     private String rationale;
 
@@ -75,6 +95,18 @@ public class Annotation {
     public void setConfidence(BigDecimal confidence) { this.confidence = confidence; }
     public UUID getReviewerUserId() { return reviewerUserId; }
     public void setReviewerUserId(UUID reviewerUserId) { this.reviewerUserId = reviewerUserId; }
+    public UUID getFindingId() { return findingId; }
+    public void setFindingId(UUID findingId) { this.findingId = findingId; }
+    public String getFeedbackAction() { return feedbackAction; }
+    public void setFeedbackAction(String feedbackAction) { this.feedbackAction = feedbackAction; }
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
+    public UUID getSupersedesAnnotationId() { return supersedesAnnotationId; }
+    public void setSupersedesAnnotationId(UUID supersedesAnnotationId) { this.supersedesAnnotationId = supersedesAnnotationId; }
+    public String getResolutionState() { return resolutionState; }
+    public void setResolutionState(String resolutionState) { this.resolutionState = resolutionState; }
+    public String getTrustLevel() { return trustLevel; }
+    public void setTrustLevel(String trustLevel) { this.trustLevel = trustLevel; }
     public String getRationale() { return rationale; }
     public void setRationale(String rationale) { this.rationale = rationale; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

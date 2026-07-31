@@ -139,7 +139,7 @@ def per_label_metrics(
         yt = y_true[:, i]
         yp = y_pred[:, i]
         ys = y_score[:, i]
-        metrics: dict[str, float] = {
+        metrics: dict[str, Any] = {
             "precision": float(precision_score(yt, yp, zero_division=0)),
             "recall": float(recall_score(yt, yp, zero_division=0)),
             "f1": float(f1_score(yt, yp, zero_division=0)),
@@ -208,7 +208,7 @@ def model_predict(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    scores = np.zeros((len(records), len(_LABEL_ORDER)), dtype=np.float32)
+    scores: np.ndarray = np.zeros((len(records), len(_LABEL_ORDER)), dtype=np.float32)
 
     batch_size = 8
     with torch.no_grad():
