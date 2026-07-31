@@ -2,7 +2,7 @@
 -- V10 (H2 mirror): prediction events, sample reviews, outbox
 -- ============================================
 
-CREATE TABLE IF NOT EXISTS prediction_events (
+CREATE TABLE IF NOT EXISTS ml.prediction_events (
     id                    UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
     code_sample_id        UUID         NULL,
     pull_request_id       UUID         NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS prediction_events (
     created_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS sample_reviews (
+CREATE TABLE IF NOT EXISTS ml.sample_reviews (
     id                UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
     code_sample_id    UUID         NOT NULL,
     reviewer_user_id  UUID,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS sample_reviews (
     updated_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS ingestion_outbox (
+CREATE TABLE IF NOT EXISTS ml.ingestion_outbox (
     id              UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
     event_type      VARCHAR(50)  NOT NULL,
     aggregate_type  VARCHAR(50)  NOT NULL,
@@ -50,8 +50,8 @@ CREATE TABLE IF NOT EXISTS ingestion_outbox (
     created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_prediction_events_pr ON prediction_events(pull_request_id);
-CREATE INDEX IF NOT EXISTS idx_prediction_events_status ON prediction_events(status);
-CREATE INDEX IF NOT EXISTS idx_sample_reviews_status ON sample_reviews(review_status);
-CREATE INDEX IF NOT EXISTS idx_sample_reviews_code_sample ON sample_reviews(code_sample_id);
-CREATE INDEX IF NOT EXISTS idx_outbox_status_available ON ingestion_outbox(status, available_at);
+CREATE INDEX IF NOT EXISTS idx_prediction_events_pr ON ml.prediction_events(pull_request_id);
+CREATE INDEX IF NOT EXISTS idx_prediction_events_status ON ml.prediction_events(status);
+CREATE INDEX IF NOT EXISTS idx_sample_reviews_status ON ml.sample_reviews(review_status);
+CREATE INDEX IF NOT EXISTS idx_sample_reviews_code_sample ON ml.sample_reviews(code_sample_id);
+CREATE INDEX IF NOT EXISTS idx_outbox_status_available ON ml.ingestion_outbox(status, available_at);
