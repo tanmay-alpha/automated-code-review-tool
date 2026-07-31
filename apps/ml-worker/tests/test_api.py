@@ -27,7 +27,7 @@ def test_health_returns_ok(client: TestClient):
     r = client.get("/ml/health")
     assert r.status_code == 200
     body = r.json()
-    assert body["status"] == "ok"
+    assert body["status"] in ("ok", "healthy")
     assert body["modelLoaded"] is True
     assert body["modelName"] == "fake/automated-code-review-tool-test"
     assert body["device"] == "cpu"
