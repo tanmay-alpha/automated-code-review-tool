@@ -2,11 +2,11 @@
 -- V12 (H2 mirror): repair ML provenance and trust level
 -- ============================================================
 
-ALTER TABLE annotations ADD COLUMN IF NOT EXISTS trust_level VARCHAR(30);
+ALTER TABLE ml.annotations ADD COLUMN IF NOT EXISTS trust_level VARCHAR(30);
 
-UPDATE annotations SET source = 'human' WHERE source = 'manual_annotation';
+UPDATE ml.annotations SET source = 'human' WHERE source = 'manual_annotation';
 
-UPDATE annotations
+UPDATE ml.annotations
    SET trust_level = CASE
        WHEN source = 'human' THEN 'human_single'
        WHEN source = 'finding_feedback' THEN 'finding_feedback'
@@ -17,4 +17,4 @@ UPDATE annotations
    END
  WHERE trust_level IS NULL;
 
-ALTER TABLE annotations ALTER COLUMN trust_level SET DEFAULT 'finding_feedback';
+ALTER TABLE ml.annotations ALTER COLUMN trust_level SET DEFAULT 'finding_feedback';
