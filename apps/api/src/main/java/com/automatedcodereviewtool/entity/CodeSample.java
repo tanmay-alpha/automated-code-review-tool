@@ -79,7 +79,7 @@ public class CodeSample {
     @Column(name = "context_code", columnDefinition = "TEXT")
     private String contextCode;
 
-    @Column(name = "content_sha256", nullable = false, columnDefinition = "CHAR(64)", length = 64)
+    @Column(name = "content_sha256", nullable = false, length = 64)
     private String contentSha256;
 
     @Column(name = "group_key", nullable = false, length = 255)
