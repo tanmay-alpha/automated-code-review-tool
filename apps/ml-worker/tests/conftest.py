@@ -43,6 +43,10 @@ class _FakeModel:
         self.labels: list[str] = []
         self.predict = MagicMock(return_value=[])
 
+    @property
+    def is_healthy(self) -> bool:
+        return True
+
 
 @asynccontextmanager
 async def _noop_lifespan(_app):  # noqa: ANN001

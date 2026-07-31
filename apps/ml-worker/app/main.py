@@ -110,12 +110,13 @@ async def verify_secret(request: Request, call_next: Any):
 @app.get("/ml/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     model: AutomatedCodeReviewToolModel | None = getattr(app.state, "model", None)
-    model_loaded = model is not None
-    model_name = model.model_name if model is not None else settings.MODEL_NAME
-    device = str(model.device) if model is not None else "cpu"
+    is_healthy = model is not None and getattr(model, "is_healthy", False)
+    status_str = "healthy" if is_healthy else "degraded"
+    model_name = getattr(model, "model_name", settings.MODEL_NAME)
+    device = str(getattr(model, "device", "cpu"))
     return HealthResponse(
-        status="ok" if model_loaded else "degraded",
-        modelLoaded=model_loaded,
+        status=status_str,
+        modelLoaded=is_healthy,
         modelName=model_name,
         device=device,
     )
@@ -123,16 +124,24 @@ async def health() -> HealthResponse:
 
 @app.post("/ml/review", response_model=ReviewResponse)
 async def review(req: ReviewRequest) -> ReviewResponse:
+    start_time = time.perf_counter()
     model: AutomatedCodeReviewToolModel | None = getattr(app.state, "model", None)
-    if model is not None:
-        started = time.perf_counter()
+
+    if model is not None and getattr(model, "is_healthy", False):
         try:
-            # model.predict is blocking PyTorch work; offload to a thread
-            # with a configurable timeout so a hung GPU/CPU op doesn't stall
-            # the event loop indefinitely.
             findings = await asyncio.wait_for(
                 asyncio.to_thread(model.predict, req.diff, req.language),
                 timeout=INFERENCE_TIMEOUT_S,
+            )
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ReviewResponse(
+                findings=findings,
+                qualityScore=compute_quality_score(findings),
+                processingTimeMs=elapsed_ms,
+                windowsProcessed=getattr(model, "last_windows_processed", 1),
+                engine="model",
+                modelVersion=getattr(model, "model_name", settings.MODEL_NAME),
+                taxonomyVersion="1.0.0",
             )
         except TimeoutError:
             logger.error(
@@ -140,19 +149,17 @@ async def review(req: ReviewRequest) -> ReviewResponse:
                 INFERENCE_TIMEOUT_S, req.language, len(req.diff),
             )
             raise HTTPException(status_code=504, detail="inference timeout")
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        return ReviewResponse(
-            findings=findings,
-            qualityScore=compute_quality_score(findings),
-            processingTimeMs=elapsed_ms,
-            windowsProcessed=getattr(model, "last_windows_processed", 1),
-        )
+        except Exception as ex:
+            logger.warning("Model inference failed safely (%s) — falling back", str(type(ex).__name__))
 
-    # Fallback: rule-based scanner — returns real findings, not a 503.
-    # This keeps the platform functional on low-RAM Render plans where
-    # CodeBERT cannot be loaded.
-    logger.info("Model not loaded; falling back to rule-based scanner")
-    return fallback_scan(req.diff, req.language)
+    # Fallback mode
+    resp = fallback_scan(req.diff, req.language)
+    elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+    resp.processingTimeMs = elapsed_ms
+    resp.engine = "fallback"
+    resp.modelVersion = "rule-baseline-v1"
+    resp.taxonomyVersion = "1.0.0"
+    return resp
 
 
 # ----------------------------------------------------------------------
