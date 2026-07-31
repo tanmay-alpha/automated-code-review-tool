@@ -66,6 +66,7 @@ class ReviewControllerTest {
                     // ownership checks (isOwnedBy).
                     com.automatedcodereviewtool.entity.User caller =
                             com.automatedcodereviewtool.entity.User.builder()
+                                    .id(UUID.fromString("00000000-0000-0000-0000-000000000001"))
                                     .githubUsername("test-user")
                                     .accessToken("dummy")
                                     .build();
@@ -131,7 +132,7 @@ class ReviewControllerTest {
         UUID repoId = UUID.randomUUID();
         UUID findingId1 = UUID.randomUUID();
         UUID findingId2 = UUID.randomUUID();
-        UUID userId = UUID.randomUUID();
+        UUID userId = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
         Repository repo = Repository.builder().id(repoId).fullName("o/r").build();
         User owner = User.builder()
@@ -188,7 +189,7 @@ class ReviewControllerTest {
         UUID repoId = UUID.randomUUID();
         Repository repo = Repository.builder()
                 .id(repoId).fullName("o/r")
-                .owner(User.builder().githubUsername("test-user").accessToken("dummy").build())
+                .owner(User.builder().id(UUID.fromString("00000000-0000-0000-0000-000000000001")).githubUsername("test-user").accessToken("dummy").build())
                 .build();
         PullRequestEntity pr = PullRequestEntity.builder()
                 .id(prId).repo(repo)
