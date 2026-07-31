@@ -40,7 +40,9 @@ class QualityScoreParityTest {
         for (Case c : cases) {
             BigDecimal got = MlWorkerService.computeQualityScore(
                     new com.automatedcodereviewtool.dto.MlReviewResponse(
-                            c.findings == null ? List.of() : c.findings,
+                            c.findings == null ? List.of() : c.findings.stream()
+                                    .map(f -> new com.automatedcodereviewtool.dto.MlFinding("path", null, 1, 1, f.antiPattern(), "category", f.severity(), f.confidence(), "explanation"))
+                                    .toList(),
                             c.qualityScore == null ? null : new BigDecimal(c.qualityScore),
                             c.processingTimeMs == null ? 0 : c.processingTimeMs,
                             c.windowsProcessed == null ? 0 : c.windowsProcessed,
