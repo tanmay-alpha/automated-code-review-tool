@@ -40,6 +40,8 @@ class V6MlDatasetMigrationTest {
         r.add("spring.datasource.url", PG::getJdbcUrl);
         r.add("spring.datasource.username", PG::getUsername);
         r.add("spring.datasource.password", PG::getPassword);
+        r.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        r.add("spring.jpa.properties.hibernate.dialect", () -> "org.hibernate.dialect.PostgreSQLDialect");
         r.add("spring.flyway.enabled", () -> "true");
         r.add("spring.flyway.locations", () -> "classpath:db/migration");
         r.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
