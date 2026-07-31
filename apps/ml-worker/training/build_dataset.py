@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -37,6 +38,7 @@ for _p in (str(_ML_WORKER), str(_REPO_ROOT)):
 from taxonomy import trainable_ids  # noqa: E402
 from training.dataset_manifest import DatasetManifest, manifest_hash, manifest_now  # noqa: E402
 from training.group_split import assign_group_splits, summarize  # noqa: E402
+from training.label_resolution import AnnotationEvidence, Resolution, resolve_label  # noqa: E402
 from training.validate_dataset import validate_dataset_dir  # noqa: E402
 
 log = logging.getLogger("build_dataset")
@@ -64,11 +66,14 @@ class CodeSampleRow:
 
 @dataclass(frozen=True)
 class AnnotationRow:
+    id: str
     code_sample_id: str
     anti_pattern_id: str
     label_state: str
     source: str
     confidence: Optional[float]
+    reviewer_user_id: Optional[str] = None
+    trust_level: Optional[str] = None
 
 
 def _looks_like_secret(text: str) -> bool:
@@ -102,23 +107,21 @@ def _fetch_samples(conn) -> List[CodeSampleRow]:
 
 def _fetch_annotations(conn, sample_ids: Iterable[str]) -> Dict[str, List[AnnotationRow]]:
     sql = """
-        SELECT code_sample_id::text, anti_pattern_id, label_state, source, confidence
+        SELECT id::text, code_sample_id::text, anti_pattern_id, label_state, source, confidence,
+               reviewer_user_id::text, trust_level
           FROM ml.annotations
          WHERE code_sample_id::text = ANY(%s)
            AND label_state IN ('positive', 'negative')
            AND source IN ('human', 'finding_feedback', 'import', 'fallback')
     """
-    ids = list(sample_ids)
-    if not ids:
-        return {}
     with conn.cursor() as cur:
-        cur.execute(sql, (ids,))
+        cur.execute(sql, (list(sample_ids),))
         cols = [c[0] for c in cur.description]
-        result: Dict[str, List[AnnotationRow]] = {}
+        res: Dict[str, List[AnnotationRow]] = defaultdict(list)
         for row in cur.fetchall():
-            d = dict(zip(cols, row))
-            result.setdefault(d["code_sample_id"], []).append(AnnotationRow(**d))
-        return result
+            item = AnnotationRow(**dict(zip(cols, row)))
+            res[item.code_sample_id].append(item)
+        return res
 
 
 def _check_dataset_not_frozen(conn, name: str, version: str) -> None:
@@ -224,24 +227,55 @@ def cmd_create(args: argparse.Namespace) -> int:
     repository_counts: Dict[str, int] = {}
 
     for sample in samples:
-        anns = annotations.get(sample.id, [])
-        positive_labels = sorted({
-            a.anti_pattern_id for a in anns
-            if a.label_state == "positive" and a.anti_pattern_id in trainable
-        })
-        if not positive_labels:
+        # Check data use status
+        if getattr(sample, "data_use_status", "allowed_public") not in ("allowed_public", "allowed_owner_consent"):
             continue
+
+        anns = annotations.get(sample.id, [])
+        sample_evidences: Dict[str, List[AnnotationEvidence]] = {}
+        for a in anns:
+            if a.anti_pattern_id in trainable:
+                ev = AnnotationEvidence(
+                    annotation_id=a.id,
+                    trust_level=getattr(a, "trust_level", "finding_feedback") or "finding_feedback",
+                    label=a.label_state,
+                    reviewer_id=a.reviewer_user_id,
+                    source=a.source,
+                )
+                sample_evidences.setdefault(a.anti_pattern_id, []).append(ev)
+
+        resolved_positives: List[str] = []
+        resolved_negatives: List[str] = []
+        winning_trust_level = "human_single"
+
+        for ap_id in sorted(trainable):
+            ev_list = sample_evidences.get(ap_id, [])
+            res = resolve_label(ev_list)
+            # Only promote human-backed evidence to gold dataset
+            if res.resolution == Resolution.POSITIVE and res.winning_trust in ("human_single", "human_adjudicated", "finding_feedback", "import"):
+                resolved_positives.append(ap_id)
+                winning_trust_level = res.winning_trust or winning_trust_level
+            elif res.resolution == Resolution.NEGATIVE and res.winning_trust in ("human_single", "human_adjudicated", "finding_feedback", "import"):
+                resolved_negatives.append(ap_id)
+
+        if not resolved_positives and not resolved_negatives:
+            continue
+
         if sample.content_sha256 in seen_hashes and seen_hashes[sample.content_sha256] != sample.id:
             duplicates += 1
             continue
+
         seen_hashes[sample.content_sha256] = sample.id
-        for label in positive_labels:
+        for label in resolved_positives:
             label_dist[label] = label_dist.get(label, 0) + 1
+
         repo = sample.repository_id
         repository_counts[repo] = repository_counts.get(repo, 0) + 1
         accepted_records.append({
             "sample": sample,
-            "labels": positive_labels,
+            "anti_patterns": resolved_positives,
+            "negative_anti_patterns": resolved_negatives,
+            "trust_level": winning_trust_level,
         })
 
     # Assign splits by group.
@@ -277,17 +311,19 @@ def cmd_create(args: argparse.Namespace) -> int:
         for rec in accepted_records:
             s = rec["sample"]
             f.write(json.dumps({
-                "id": s.id,
-                "repository_id": s.repository_id,
-                "pull_request_id": s.pull_request_id,
-                "commit_sha": s.commit_sha,
-                "file_path": s.file_path,
-                "language": s.language,
-                "new_start": s.new_start,
-                "content_sha256": s.content_sha256,
-                "group_key": s.group_key,
-                "added_code": s.added_code,
-                "labels": rec["labels"],
+                "sample_id": s.id,
+                "diff": s.added_code or "",
+                "language": s.language or "python",
+                "anti_patterns": rec["anti_patterns"],
+                "negative_anti_patterns": rec["negative_anti_patterns"],
+                "taxonomy_version": taxonomy["version"],
+                "label_provenance": {
+                    "trust_level": rec["trust_level"],
+                },
+                "review_completion": {
+                    "clean_confirmed": len(rec["negative_anti_patterns"]) > 0,
+                    "review_status": "complete" if len(rec["negative_anti_patterns"]) > 0 else "unreviewed",
+                },
             }) + "\n")
     (out_dir / "splits.json").write_text(
         json.dumps(split_map, indent=2, sort_keys=True), encoding="utf-8"
