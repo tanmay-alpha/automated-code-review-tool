@@ -14,6 +14,8 @@ import random
 import sys
 from pathlib import Path
 
+from typing import Any
+
 import numpy as np
 import torch
 from sklearn.metrics import f1_score
@@ -64,7 +66,7 @@ def _load_split(path: Path) -> list[dict]:
 class CodeReviewDataset(Dataset):
     """Dataset reading anti_patterns (failing loudly on unknown IDs)."""
 
-    def __init__(self, records: list[dict], tokenizer: AutoTokenizer, max_length: int = 512) -> None:
+    def __init__(self, records: list[dict], tokenizer: Any, max_length: int = 512) -> None:
         self.records = records
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -109,12 +111,12 @@ def compute_metrics_builder(threshold: float):
 
 
 class MultilabelTrainer(Trainer):
-    def compute_loss(
+    def compute_loss(  # type: ignore[override]
         self,
         model: torch.nn.Module,
         inputs: dict[str, torch.Tensor],
         return_outputs: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         labels = inputs.pop("labels")
         outputs = model(**inputs)
