@@ -268,11 +268,13 @@ class AutomatedCodeReviewToolModel:
             cfg = LABEL_CONFIG[idx]
             findings.append(
                 Finding(
+                    filePath=None,
+                    hunkHash=None,
                     lineStart=None,
                     lineEnd=None,
                     antiPattern=cfg["name"],
                     category=cfg["category"],
-                    severity=cfg["severity"],
+                    severity=cfg["severity"],  # type: ignore[arg-type]
                     confidence=round(score, 4),
                     explanation=cfg["explanation_template"],
                 )
