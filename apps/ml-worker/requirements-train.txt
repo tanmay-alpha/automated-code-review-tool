@@ -1,19 +1,15 @@
-# =====================================================
-# automated-code-review-tool — ml-worker training-only dependencies
-# =====================================================
-# Install on top of requirements.txt when running training
-# (Google Colab Pro T4 environment).
-#
-# These are heavier deps and are NOT needed for inference —
-# keep them out of the inference container.
-# =====================================================
+# automated-code-review-tool: offline dataset and training dependencies
+# Includes requirements.txt. None of these extras belong in the runtime image.
 
-# Training accelerators / utilities
+-r requirements.txt
+
+# PostgreSQL dataset/annotation lifecycle
+psycopg[binary]==3.3.4
+
+# Training accelerators and utilities
 accelerate==0.30.0
 evaluate==0.4.2
 datasets==2.19.0
 pandas==2.2.2
 scikit-learn==1.5.0
-
-# Experiment tracking / visualization
 tensorboard==2.16.2

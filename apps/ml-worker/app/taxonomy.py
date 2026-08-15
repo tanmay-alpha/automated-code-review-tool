@@ -1,5 +1,5 @@
 """
-automated-code-review-tool — Taxonomy loader (Phase 1A).
+Canonical anti-pattern taxonomy loader for the ML worker.
 
 Loads the canonical anti-pattern taxonomy from
 ``taxonomy/anti_patterns.yaml`` and exposes it as a small dataclass
@@ -38,8 +38,9 @@ def _find_default_taxonomy_path() -> Path:
         candidate = ancestor / "taxonomy" / "anti_patterns.yaml"
         if candidate.exists():
             return candidate
-    # Fall back to the conventional dev layout (parents[3]).
-    return here.parents[3] / "taxonomy" / "anti_patterns.yaml"
+    # Return the conventional container path so load_taxonomy emits one clear
+    # FileNotFoundError. Never substitute inline label definitions.
+    return here.parent / "taxonomy" / "anti_patterns.yaml"
 
 
 DEFAULT_TAXONOMY_PATH = _find_default_taxonomy_path()

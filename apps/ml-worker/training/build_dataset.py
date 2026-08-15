@@ -1,18 +1,4 @@
-"""Deterministic dataset builder.
-
-Reads the ML data schema from PostgreSQL using a read-only
-connection (configured via ``ML_DATASET_DATABASE_URL``) and
-emits a deterministic dataset directory with:
-
-* ``manifest.json`` (full provenance)
-* ``samples.jsonl`` (one record per code sample)
-* ``labels.jsonl`` (one record per accepted annotation)
-* ``splits.json`` (group_key → split)
-* ``data_quality_report.json`` and ``.md``
-
-The script refuses to operate on a frozen dataset and refuses to
-write if manifest hashing fails.
-"""
+"""Build, validate, persist, and freeze versioned ML dataset artifacts."""
 
 from __future__ import annotations
 
@@ -20,34 +6,39 @@ import argparse
 import json
 import logging
 import os
-import re
-import sys
-from collections import defaultdict
-from dataclasses import dataclass
+import subprocess
+from collections import Counter, defaultdict
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Iterable
 
-# Allow ``import taxonomy`` and ``import app`` from anywhere.
-_HERE = Path(__file__).resolve().parent
-_ML_WORKER = _HERE.parent
-_REPO_ROOT = _ML_WORKER.parent
-for _p in (str(_ML_WORKER), str(_REPO_ROOT)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+from app.taxonomy import Taxonomy, load_taxonomy
+from training.dataset_contract import (
+    ALLOWED_DATA_USE,
+    DatasetRecord,
+    LabelEvidence,
+    LabelState,
+    write_records,
+)
+from training.dataset_manifest import (
+    DatasetManifest,
+    file_sha256,
+    manifest_now,
+    read_manifest,
+    write_manifest,
+)
+from training.group_split import build_split_plan, summarize
+from training.label_resolution import (
+    AnnotationEvidence,
+    Resolution,
+    ReviewState,
+    clean_review_evidence,
+    resolve_label,
+)
+from training.validate_dataset import Finding, validate_dataset_dir, write_quality_report
 
-from taxonomy import trainable_ids  # noqa: E402
-from training.dataset_manifest import DatasetManifest, manifest_hash, manifest_now  # noqa: E402
-from training.group_split import assign_group_splits, summarize  # noqa: E402
-from training.label_resolution import AnnotationEvidence, Resolution, resolve_label  # noqa: E402
-from training.validate_dataset import validate_dataset_dir  # noqa: E402
-
-log = logging.getLogger("build_dataset")
-
-# Crude fallback scanner used during synthetic tests only.
-SECRET_PATTERNS = [
-    re.compile(r"(?i)(password|secret|api[_-]?key)\s*[:=]\s*['\"][^'\"]{4,}['\"]"),
-    re.compile(r"['\"][A-Za-z0-9+/=_-]{32,}['\"]"),
-]
+log = logging.getLogger(__name__)
+GOLD_TRUST = frozenset({"human_adjudicated", "human_single", "finding_feedback", "import"})
 
 
 @dataclass(frozen=True)
@@ -58,10 +49,20 @@ class CodeSampleRow:
     commit_sha: str
     file_path: str
     language: str
+    old_start: int
+    old_count: int
     new_start: int
+    new_count: int
+    hunk_sha256: str
     content_sha256: str
     group_key: str
+    raw_hunk: str
     added_code: str
+    context_code: str
+    repository_visibility: str
+    license_spdx: str | None
+    data_use_status: str
+    redaction_version: str
 
 
 @dataclass(frozen=True)
@@ -71,342 +72,500 @@ class AnnotationRow:
     anti_pattern_id: str
     label_state: str
     source: str
-    confidence: Optional[float]
-    reviewer_user_id: Optional[str] = None
-    trust_level: Optional[str] = None
+    confidence: float | None
+    reviewer_user_id: str | None
+    trust_level: str
+    resolution_state: str
 
 
-def _looks_like_secret(text: str) -> bool:
-    return any(p.search(text or "") for p in SECRET_PATTERNS)
+@dataclass(frozen=True)
+class SampleReviewRow:
+    id: str
+    code_sample_id: str
+    reviewer_user_id: str | None
+    review_status: str
+    reviewed_label_ids: tuple[str, ...]
+    clean_confirmed: bool
 
 
-def _fetch_samples(conn) -> List[CodeSampleRow]:
-    """Fetch eligible code samples.
+def _column_names(description: Any) -> list[str]:
+    return [getattr(item, "name", item[0]) for item in description]
 
-    A sample is eligible if it has at least one accepted annotation
-    from a positive source.
-    """
 
+def _fetch_samples(conn: Any) -> list[CodeSampleRow]:
     sql = """
-        SELECT s.id::text, s.repository_id::text, s.pull_request_id::text,
-               s.commit_sha, s.file_path, s.language, s.new_start,
-               s.content_sha256, s.group_key, COALESCE(s.added_code, '')
-          FROM ml.code_samples s
-         WHERE EXISTS (
-              SELECT 1 FROM ml.annotations a
-               WHERE a.code_sample_id = s.id
-                 AND a.label_state = 'positive'
-                 AND a.source IN ('human', 'finding_feedback', 'import', 'fallback')
-         )
+        SELECT id::text, repository_id::text, pull_request_id::text,
+               commit_sha, file_path, language, old_start, old_count,
+               new_start, new_count, hunk_sha256, content_sha256, group_key,
+               raw_hunk, COALESCE(added_code, '') AS added_code,
+               COALESCE(context_code, '') AS context_code,
+               repository_visibility, license_spdx, data_use_status,
+               redaction_version
+          FROM ml.code_samples
+         ORDER BY id
     """
-    with conn.cursor() as cur:
-        cur.execute(sql)
-        cols = [c[0] for c in cur.description]
-        return [CodeSampleRow(**dict(zip(cols, row))) for row in cur.fetchall()]
+    with conn.cursor() as cursor:
+        cursor.execute(sql)
+        columns = _column_names(cursor.description)
+        return [CodeSampleRow(**dict(zip(columns, row))) for row in cursor.fetchall()]
 
 
-def _fetch_annotations(conn, sample_ids: Iterable[str]) -> Dict[str, List[AnnotationRow]]:
+def _fetch_annotations(conn: Any, sample_ids: Iterable[str]) -> dict[str, list[AnnotationRow]]:
+    ids = list(sample_ids)
+    if not ids:
+        return {}
     sql = """
-        SELECT id::text, code_sample_id::text, anti_pattern_id, label_state, source, confidence,
-               reviewer_user_id::text, trust_level
+        SELECT id::text, code_sample_id::text, anti_pattern_id, label_state,
+               source, confidence, reviewer_user_id::text, trust_level,
+               resolution_state
           FROM ml.annotations
          WHERE code_sample_id::text = ANY(%s)
-           AND label_state IN ('positive', 'negative')
-           AND source IN ('human', 'finding_feedback', 'import', 'fallback')
+         ORDER BY created_at, id
     """
-    with conn.cursor() as cur:
-        cur.execute(sql, (list(sample_ids),))
-        cols = [c[0] for c in cur.description]
-        res: Dict[str, List[AnnotationRow]] = defaultdict(list)
-        for row in cur.fetchall():
-            item = AnnotationRow(**dict(zip(cols, row)))
-            res[item.code_sample_id].append(item)
-        return res
+    result: dict[str, list[AnnotationRow]] = defaultdict(list)
+    with conn.cursor() as cursor:
+        cursor.execute(sql, (ids,))
+        columns = _column_names(cursor.description)
+        for row in cursor.fetchall():
+            annotation = AnnotationRow(**dict(zip(columns, row)))
+            result[annotation.code_sample_id].append(annotation)
+    return dict(result)
 
 
-def _check_dataset_not_frozen(conn, name: str, version: str) -> None:
+def _fetch_reviews(conn: Any, sample_ids: Iterable[str]) -> dict[str, list[SampleReviewRow]]:
+    ids = list(sample_ids)
+    if not ids:
+        return {}
     sql = """
-        SELECT status FROM ml.dataset_versions
-         WHERE name = %s AND version = %s
+        SELECT id::text, code_sample_id::text, reviewer_user_id::text,
+               review_status, reviewed_label_ids, clean_confirmed
+          FROM ml.sample_reviews
+         WHERE code_sample_id::text = ANY(%s)
+         ORDER BY created_at, id
     """
-    with conn.cursor() as cur:
-        cur.execute(sql, (name, version))
-        row = cur.fetchone()
-        if row and row[0] == "frozen":
-            raise SystemExit(
-                f"Dataset {name}@{version} is frozen; refusing to recreate"
+    result: dict[str, list[SampleReviewRow]] = defaultdict(list)
+    with conn.cursor() as cursor:
+        cursor.execute(sql, (ids,))
+        columns = _column_names(cursor.description)
+        for row in cursor.fetchall():
+            raw = dict(zip(columns, row))
+            reviewed = raw.get("reviewed_label_ids") or []
+            if isinstance(reviewed, str):
+                reviewed = json.loads(reviewed)
+            raw["reviewed_label_ids"] = tuple(str(value) for value in reviewed)
+            review = SampleReviewRow(**raw)
+            result[review.code_sample_id].append(review)
+    return dict(result)
+
+
+def resolve_dataset_records(
+    samples: list[CodeSampleRow],
+    annotations: dict[str, list[AnnotationRow]],
+    reviews: dict[str, list[SampleReviewRow]],
+    taxonomy: Taxonomy,
+) -> tuple[list[DatasetRecord], list[Finding]]:
+    trainable = tuple(taxonomy.trainable_ids())
+    all_ids = set(taxonomy.ids())
+    records: list[DatasetRecord] = []
+    findings: list[Finding] = []
+
+    for sample in samples:
+        if sample.data_use_status not in ALLOWED_DATA_USE:
+            findings.append(Finding("warning", "sample_policy_excluded", f"excluded {sample.data_use_status}", (sample.id,)))
+            continue
+        sample_annotations = annotations.get(sample.id, [])
+        unknown = sorted({item.anti_pattern_id for item in sample_annotations if item.anti_pattern_id not in all_ids})
+        if unknown:
+            findings.append(Finding("critical", "unknown_annotation_label", f"unknown annotation IDs: {unknown}", (sample.id,)))
+            continue
+
+        evidence_by_label: dict[str, list[AnnotationEvidence]] = defaultdict(list)
+        for item in sample_annotations:
+            evidence_by_label[item.anti_pattern_id].append(
+                AnnotationEvidence(
+                    annotation_id=item.id,
+                    trust_level=item.trust_level,
+                    label=item.label_state,
+                    reviewer_id=item.reviewer_user_id,
+                    source=item.source,
+                    resolution_state=item.resolution_state,
+                    is_adjudicated=item.trust_level == "human_adjudicated",
+                )
             )
+        review_states = [
+            ReviewState(
+                review_id=item.id,
+                review_status=item.review_status,
+                clean_confirmed=item.clean_confirmed,
+                reviewed_labels=item.reviewed_label_ids,
+                reviewer_id=item.reviewer_user_id,
+            )
+            for item in reviews.get(sample.id, [])
+        ]
+
+        resolved: list[LabelEvidence] = []
+        has_conflict = False
+        for anti_pattern_id in trainable:
+            resolution = resolve_label(evidence_by_label.get(anti_pattern_id, []))
+            negative_reviews = clean_review_evidence(review_states, anti_pattern_id)
+            if resolution.resolution == Resolution.CONFLICT:
+                findings.append(Finding("critical", "annotation_conflict", f"unresolved conflict for {anti_pattern_id}", (sample.id,)))
+                has_conflict = True
+                continue
+            if (
+                negative_reviews
+                and resolution.winning_trust == "human_single"
+                and resolution.resolution in {Resolution.POSITIVE, Resolution.UNCERTAIN_WEAK}
+            ):
+                findings.append(
+                    Finding(
+                        "critical",
+                        "annotation_clean_review_conflict",
+                        f"positive/uncertain human annotation conflicts with clean review for {anti_pattern_id}",
+                        (sample.id,),
+                    )
+                )
+                has_conflict = True
+                continue
+            if negative_reviews and resolution.winning_trust != "human_adjudicated":
+                annotation_ids = (
+                    resolution.annotation_ids
+                    if resolution.resolution is Resolution.NEGATIVE
+                    else ()
+                )
+                resolved.append(
+                    LabelEvidence(
+                        anti_pattern_id=anti_pattern_id,
+                        state="negative",
+                        trust_level="human_single",
+                        annotation_ids=annotation_ids,
+                        review_ids=negative_reviews,
+                    )
+                )
+                continue
+            if resolution.resolution in {Resolution.POSITIVE, Resolution.NEGATIVE} and resolution.winning_trust in GOLD_TRUST:
+                state: LabelState = (
+                    "positive"
+                    if resolution.resolution is Resolution.POSITIVE
+                    else "negative"
+                )
+                resolved.append(
+                    LabelEvidence(
+                        anti_pattern_id=anti_pattern_id,
+                        state=state,
+                        trust_level=str(resolution.winning_trust),
+                        annotation_ids=resolution.annotation_ids,
+                    )
+                )
+                continue
+        if has_conflict:
+            continue
+        if not resolved:
+            findings.append(Finding("warning", "sample_without_gold_evidence", "sample has no resolved human-backed label", (sample.id,)))
+            continue
+
+        try:
+            records.append(
+                DatasetRecord(
+                    sample_id=sample.id,
+                    repository_id=sample.repository_id,
+                    pull_request_id=sample.pull_request_id,
+                    commit_sha=sample.commit_sha,
+                    file_path=sample.file_path,
+                    language=sample.language,
+                    old_start=sample.old_start,
+                    old_count=sample.old_count,
+                    new_start=sample.new_start,
+                    new_count=sample.new_count,
+                    hunk_sha256=sample.hunk_sha256,
+                    content_sha256=sample.content_sha256,
+                    group_key=sample.group_key,
+                    raw_hunk=sample.raw_hunk,
+                    added_code=sample.added_code,
+                    context_code=sample.context_code,
+                    repository_visibility=sample.repository_visibility,
+                    license_spdx=sample.license_spdx,
+                    data_use_status=sample.data_use_status,
+                    redaction_version=sample.redaction_version,
+                    taxonomy_version=taxonomy.version,
+                    labels=tuple(resolved),
+                )
+            )
+        except ValueError as exc:
+            findings.append(Finding("critical", "invalid_sample_record", str(exc), (sample.id,)))
+    return records, findings
 
 
-def _persist_dataset_version(
-    conn,
+def _git_sha() -> str:
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    value = completed.stdout.strip()
+    if len(value) != 40:
+        raise RuntimeError("git rev-parse HEAD did not return a full SHA")
+    return value
+
+
+def build_artifacts(
     *,
-    name: str,
-    version: str,
+    records: list[DatasetRecord],
+    build_findings: list[Finding],
+    output_dir: Path,
+    dataset_name: str,
+    dataset_version: str,
     taxonomy_version: str,
-    manifest_sha: str,
-    sample_count: int,
-    positive_count: int,
-    generation_config: Dict,
-) -> str:
-    sql = """
-        INSERT INTO ml.dataset_versions
-            (name, version, taxonomy_version, status, generation_config,
-             manifest_sha256, sample_count, positive_annotation_count, created_at)
-        VALUES (%s, %s, %s, 'draft', %s::jsonb, %s, %s, %s, NOW())
-        ON CONFLICT (name, version) DO UPDATE
-            SET taxonomy_version = EXCLUDED.taxonomy_version,
-                status = 'draft',
-                generation_config = EXCLUDED.generation_config,
-                manifest_sha256 = EXCLUDED.manifest_sha256,
-                sample_count = EXCLUDED.sample_count,
-                positive_annotation_count = EXCLUDED.positive_annotation_count,
-                frozen_at = NULL
-        RETURNING id::text
-    """
-    cfg = json.dumps(generation_config)
-    with conn.cursor() as cur:
-        cur.execute(sql, (name, version, taxonomy_version, cfg, manifest_sha,
-                          sample_count, positive_count))
-        return cur.fetchone()[0]
+    source_git_sha: str,
+    seed: int,
+    created_at: str,
+    near_duplicate_threshold: float,
+) -> tuple[DatasetManifest, dict[str, Any]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    existing_manifest = output_dir / "manifest.json"
+    if existing_manifest.exists() and read_manifest(existing_manifest).frozen:
+        raise ValueError(f"refusing to overwrite frozen dataset at {output_dir}")
+
+    sample_splits, components, duplicate_pairs = build_split_plan(
+        records, seed=seed, near_threshold=near_duplicate_threshold
+    )
+    split_records = [replace(record, split=sample_splits[record.sample_id]) for record in records]
+    samples_path = output_dir / "samples.jsonl"
+    write_records(samples_path, split_records)
+    splits_payload = {
+        "schema_version": 1,
+        "seed": seed,
+        "near_duplicate_threshold": near_duplicate_threshold,
+        "samples": dict(sorted(sample_splits.items())),
+        "components": dict(sorted(components.items())),
+        "duplicate_pairs": [pair.to_dict() for pair in duplicate_pairs],
+    }
+    splits_path = output_dir / "splits.json"
+    splits_path.write_text(json.dumps(splits_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    labels: Counter[str] = Counter()
+    negative_labels: Counter[str] = Counter()
+    languages: Counter[str] = Counter()
+    for record in split_records:
+        languages[record.language] += 1
+        labels.update(record.positive_labels)
+        negative_labels.update(record.negative_labels)
+    manifest = DatasetManifest(
+        dataset_name=dataset_name,
+        dataset_version=dataset_version,
+        taxonomy_version=taxonomy_version,
+        source_git_sha=source_git_sha,
+        seed=seed,
+        sample_count=len(split_records),
+        repository_count=len({record.repository_id for record in split_records}),
+        split_counts=summarize(sample_splits),
+        label_distribution=dict(sorted(labels.items())),
+        negative_label_distribution=dict(sorted(negative_labels.items())),
+        language_distribution=dict(sorted(languages.items())),
+        redaction_versions=sorted({record.redaction_version for record in split_records}),
+        created_at=created_at,
+        samples_sha256=file_sha256(samples_path),
+        splits_sha256=file_sha256(splits_path),
+        near_duplicate_threshold=near_duplicate_threshold,
+    )
+    manifest = write_manifest(existing_manifest, manifest)
+    report = validate_dataset_dir(output_dir)
+    if build_findings:
+        report["findings"].extend(item.to_dict() for item in build_findings)
+        report["critical_failures"] += sum(item.severity == "critical" for item in build_findings)
+        report["warnings"] += sum(item.severity == "warning" for item in build_findings)
+    write_quality_report(output_dir, report)
+    return manifest, report
 
 
-def _persist_dataset_items(
-    conn,
-    dataset_version_id: str,
-    items: List[Tuple[str, str, str, List[str]]],
+def _check_dataset_not_frozen(conn: Any, name: str, version: str) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT status FROM ml.dataset_versions WHERE name=%s AND version=%s", (name, version))
+        row = cursor.fetchone()
+    if row and row[0] != "draft":
+        raise ValueError(f"dataset {name}@{version} is not mutable: {row[0]}")
+
+
+def _persist_dataset(
+    conn: Any,
+    manifest: DatasetManifest,
+    records: list[DatasetRecord],
 ) -> None:
-    sql = """
-        INSERT INTO ml.dataset_items
-            (dataset_version_id, code_sample_id, split, group_key, labels_snapshot)
-        VALUES (%s, %s, %s, %s, %s::jsonb)
-        ON CONFLICT (dataset_version_id, code_sample_id) DO NOTHING
-    """
-    with conn.cursor() as cur:
-        for sample_id, split, group_key, labels in items:
-            cur.execute(sql, (dataset_version_id, sample_id, split, group_key,
-                              json.dumps(labels)))
-
-
-def _freeze_dataset(conn, name: str, version: str) -> None:
-    sql = """
-        UPDATE ml.dataset_versions
-           SET status = 'frozen', frozen_at = NOW()
-         WHERE name = %s AND version = %s
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql, (name, version))
+    _check_dataset_not_frozen(conn, manifest.dataset_name, manifest.dataset_version)
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO ml.dataset_versions
+                (name, version, taxonomy_version, status, generation_config,
+                 manifest_sha256, sample_count, positive_annotation_count, created_at)
+            VALUES (%s, %s, %s, 'draft', %s::jsonb, %s, %s, %s, NOW())
+            ON CONFLICT (name, version) DO UPDATE SET
+                taxonomy_version=EXCLUDED.taxonomy_version,
+                generation_config=EXCLUDED.generation_config,
+                manifest_sha256=EXCLUDED.manifest_sha256,
+                sample_count=EXCLUDED.sample_count,
+                positive_annotation_count=EXCLUDED.positive_annotation_count
+            RETURNING id::text
+            """,
+            (
+                manifest.dataset_name,
+                manifest.dataset_version,
+                manifest.taxonomy_version,
+                json.dumps({"seed": manifest.seed, "source_git_sha": manifest.source_git_sha}),
+                manifest.manifest_sha256,
+                manifest.sample_count,
+                sum(len(record.positive_labels) for record in records),
+            ),
+        )
+        dataset_id = cursor.fetchone()[0]
+        for record in records:
+            cursor.execute(
+                """
+                INSERT INTO ml.dataset_items
+                    (dataset_version_id, code_sample_id, split, group_key, labels_snapshot)
+                VALUES (%s::uuid, %s::uuid, %s, %s, %s::jsonb)
+                ON CONFLICT (dataset_version_id, code_sample_id) DO UPDATE SET
+                    split=EXCLUDED.split,
+                    group_key=EXCLUDED.group_key,
+                    labels_snapshot=EXCLUDED.labels_snapshot
+                """,
+                (dataset_id, record.sample_id, record.split, record.group_key, json.dumps([item.to_dict() for item in record.labels])),
+            )
 
 
 def cmd_create(args: argparse.Namespace) -> int:
-    from app.taxonomy_loader import load_canonical_taxonomy
+    database_url = args.database_url or os.environ.get("ML_DATASET_DATABASE_URL")
+    if not database_url:
+        raise SystemExit("ML_DATASET_DATABASE_URL or --database-url is required")
+    import psycopg
 
-    out_dir = Path(args.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    if not args.database_url and not os.environ.get("ML_DATASET_DATABASE_URL"):
-        log.warning("ML_DATASET_DATABASE_URL not set; running in dry-run (no DB) mode")
-        samples: List[CodeSampleRow] = []
-        annotations: Dict[str, List[AnnotationRow]] = {}
-    else:
-        import psycopg
-
-        url = args.database_url or os.environ["ML_DATASET_DATABASE_URL"]
-        with psycopg.connect(url, readonly=True) as conn:
-            samples = _fetch_samples(conn)
-            annotations = _fetch_annotations(conn, [s.id for s in samples])
-
-    taxonomy = load_canonical_taxonomy()
-    trainable = set(trainable_ids())
-
-    # Filter: unknown IDs are dropped, leaving an audit trail.
-    accepted_records: List[Dict] = []
-    seen_hashes: Dict[str, str] = {}
-    duplicates = 0
-    label_dist: Dict[str, int] = {}
-    repository_counts: Dict[str, int] = {}
-
-    for sample in samples:
-        # Check data use status
-        if getattr(sample, "data_use_status", "allowed_public") not in ("allowed_public", "allowed_owner_consent"):
-            continue
-
-        anns = annotations.get(sample.id, [])
-        sample_evidences: Dict[str, List[AnnotationEvidence]] = {}
-        for a in anns:
-            if a.anti_pattern_id in trainable:
-                ev = AnnotationEvidence(
-                    annotation_id=a.id,
-                    trust_level=getattr(a, "trust_level", "finding_feedback") or "finding_feedback",
-                    label=a.label_state,
-                    reviewer_id=a.reviewer_user_id,
-                    source=a.source,
-                )
-                sample_evidences.setdefault(a.anti_pattern_id, []).append(ev)
-
-        resolved_positives: List[str] = []
-        resolved_negatives: List[str] = []
-        winning_trust_level = "human_single"
-
-        for ap_id in sorted(trainable):
-            ev_list = sample_evidences.get(ap_id, [])
-            res = resolve_label(ev_list)
-            # Only promote human-backed evidence to gold dataset
-            if res.resolution == Resolution.POSITIVE and res.winning_trust in ("human_single", "human_adjudicated", "finding_feedback", "import"):
-                resolved_positives.append(ap_id)
-                winning_trust_level = res.winning_trust or winning_trust_level
-            elif res.resolution == Resolution.NEGATIVE and res.winning_trust in ("human_single", "human_adjudicated", "finding_feedback", "import"):
-                resolved_negatives.append(ap_id)
-
-        if not resolved_positives and not resolved_negatives:
-            continue
-
-        if sample.content_sha256 in seen_hashes and seen_hashes[sample.content_sha256] != sample.id:
-            duplicates += 1
-            continue
-
-        seen_hashes[sample.content_sha256] = sample.id
-        for label in resolved_positives:
-            label_dist[label] = label_dist.get(label, 0) + 1
-
-        repo = sample.repository_id
-        repository_counts[repo] = repository_counts.get(repo, 0) + 1
-        accepted_records.append({
-            "sample": sample,
-            "anti_patterns": resolved_positives,
-            "negative_anti_patterns": resolved_negatives,
-            "trust_level": winning_trust_level,
-        })
-
-    # Assign splits by group.
-    group_keys = [r["sample"].group_key for r in accepted_records]
-    split_map = assign_group_splits(group_keys, seed=args.seed)
-    split_counts = summarize(split_map)
-
-    # Compute manifest.
-    manifest_no_hash = DatasetManifest(
+    taxonomy = load_taxonomy()
+    with psycopg.connect(
+        database_url, options="-c default_transaction_read_only=on"
+    ) as conn:
+        samples = _fetch_samples(conn)
+        annotations = _fetch_annotations(conn, (sample.id for sample in samples))
+        reviews = _fetch_reviews(conn, (sample.id for sample in samples))
+    records, findings = resolve_dataset_records(samples, annotations, reviews, taxonomy)
+    manifest, report = build_artifacts(
+        records=records,
+        build_findings=findings,
+        output_dir=Path(args.output_dir),
         dataset_name=args.name,
         dataset_version=args.version,
-        taxonomy_version=taxonomy["version"],
+        taxonomy_version=taxonomy.version,
+        source_git_sha=args.source_git_sha or _git_sha(),
         seed=args.seed,
-        created_at=manifest_now(),
-        source_commit=args.source_commit,
-        sample_count=len(accepted_records),
-        split_counts=split_counts,
-        label_distribution=label_dist,
-        repository_counts=repository_counts,
-        duplicate_count=duplicates,
-        manifest_sha256="",
+        created_at=args.created_at or manifest_now(),
+        near_duplicate_threshold=args.near_duplicate_threshold,
     )
-    sha = manifest_hash(manifest_no_hash)
-    manifest = DatasetManifest(
-        **{**manifest_no_hash.to_dict(), "manifest_sha256": sha}
-    )
-
-    # Persist artefacts.
-    (out_dir / "manifest.json").write_text(
-        json.dumps(manifest.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
-    )
-    with (out_dir / "samples.jsonl").open("w", encoding="utf-8") as f:
-        for rec in accepted_records:
-            s = rec["sample"]
-            f.write(json.dumps({
-                "sample_id": s.id,
-                "diff": s.added_code or "",
-                "language": s.language or "python",
-                "anti_patterns": rec["anti_patterns"],
-                "negative_anti_patterns": rec["negative_anti_patterns"],
-                "taxonomy_version": taxonomy["version"],
-                "label_provenance": {
-                    "trust_level": rec["trust_level"],
-                },
-                "review_completion": {
-                    "clean_confirmed": len(rec["negative_anti_patterns"]) > 0,
-                    "review_status": "complete" if len(rec["negative_anti_patterns"]) > 0 else "unreviewed",
-                },
-            }) + "\n")
-    (out_dir / "splits.json").write_text(
-        json.dumps(split_map, indent=2, sort_keys=True), encoding="utf-8"
-    )
-
-    if args.database_url or os.environ.get("ML_DATASET_DATABASE_URL"):
-        import psycopg
-
-        url = args.database_url or os.environ["ML_DATASET_DATABASE_URL"]
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SET TRANSACTION READ WRITE")
-            _check_dataset_not_frozen(conn, args.name, args.version)
-            ds_id = _persist_dataset_version(
-                conn,
-                name=args.name,
-                version=args.version,
-                taxonomy_version=taxonomy["version"],
-                manifest_sha=sha,
-                sample_count=len(accepted_records),
-                positive_count=sum(label_dist.values()),
-                generation_config={
-                    "seed": args.seed,
-                    "source_commit": args.source_commit,
-                },
-            )
-            _persist_dataset_items(conn, ds_id, [
-                (rec["sample"].id, split_map.get(rec["sample"].group_key, "train"),
-                 rec["sample"].group_key, rec["labels"])
-                for rec in accepted_records
-            ])
-            conn.commit()
-
-    log.info("Created dataset %s@%s with %d samples", args.name, args.version, len(accepted_records))
+    if report["critical_failures"]:
+        log.error("dataset has %d critical quality failures; draft was not persisted", report["critical_failures"])
+        return 1
+    persisted_records = _read_built_records(Path(args.output_dir))
+    with psycopg.connect(database_url) as conn:
+        _persist_dataset(conn, manifest, persisted_records)
+        conn.commit()
     return 0
 
 
+def _read_built_records(dataset_dir: Path) -> list[DatasetRecord]:
+    from training.dataset_contract import read_records
+
+    return read_records(dataset_dir / "samples.jsonl")
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
-    report = validate_dataset_dir(Path(args.dataset_dir))
-    print(json.dumps(report, indent=2))
+    dataset_dir = Path(args.dataset_dir)
+    report = validate_dataset_dir(dataset_dir)
+    write_quality_report(dataset_dir, report)
+    print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["critical_failures"] == 0 else 1
 
 
 def cmd_freeze(args: argparse.Namespace) -> int:
+    database_url = args.database_url or os.environ.get("ML_DATASET_DATABASE_URL")
+    if not database_url:
+        raise SystemExit("ML_DATASET_DATABASE_URL or --database-url is required")
+    dataset_dir = Path(args.dataset_dir)
+    draft = read_manifest(dataset_dir / "manifest.json")
+    if draft.frozen:
+        raise SystemExit("dataset artifact is already frozen")
+    report = validate_dataset_dir(dataset_dir)
+    if report["critical_failures"]:
+        write_quality_report(dataset_dir, report)
+        raise SystemExit("dataset has critical quality failures; refusing to freeze")
+    if draft.synthetic and not args.allow_synthetic_smoke:
+        raise SystemExit("synthetic datasets require --allow-synthetic-smoke and are not promotable")
+
+    frozen = write_manifest(dataset_dir / "manifest.json", replace(draft, frozen=True, manifest_sha256=""))
+    frozen_report = validate_dataset_dir(dataset_dir)
+    write_quality_report(dataset_dir, frozen_report)
+    if frozen_report["critical_failures"]:
+        write_manifest(dataset_dir / "manifest.json", replace(draft, manifest_sha256=""))
+        raise SystemExit("frozen artifact validation failed")
+
     import psycopg
 
-    url = args.database_url or os.environ.get("ML_DATASET_DATABASE_URL", "")
-    if not url:
-        log.error("Cannot freeze without ML_DATASET_DATABASE_URL")
-        return 2
-    with psycopg.connect(url) as conn:
-        _freeze_dataset(conn, args.name, args.version)
-        conn.commit()
-    log.info("Frozen dataset %s@%s", args.name, args.version)
+    try:
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE ml.dataset_versions
+                       SET manifest_sha256=%s, status='frozen', frozen_at=NOW()
+                     WHERE name=%s AND version=%s AND status='draft'
+                    """,
+                    (
+                        frozen.manifest_sha256,
+                        frozen.dataset_name,
+                        frozen.dataset_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError(
+                        "dataset draft row was not found or was already frozen"
+                    )
+            conn.commit()
+    except Exception:
+        write_manifest(
+            dataset_dir / "manifest.json",
+            replace(draft, frozen=False, manifest_sha256=""),
+        )
+        write_quality_report(dataset_dir, validate_dataset_dir(dataset_dir))
+        raise
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser()
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database-url", default=os.environ.get("ML_DATASET_DATABASE_URL"))
-    sub = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    p_create = sub.add_parser("create", help="Create a new dataset")
-    p_create.add_argument("--name", required=True)
-    p_create.add_argument("--version", required=True)
-    p_create.add_argument("--seed", type=int, default=42)
-    p_create.add_argument("--source-commit", default=os.environ.get("GIT_COMMIT", ""))
-    p_create.add_argument("--output-dir", required=True)
-    p_create.set_defaults(func=cmd_create)
+    create = subparsers.add_parser("create")
+    create.add_argument("--name", required=True)
+    create.add_argument("--version", required=True)
+    create.add_argument("--output-dir", required=True)
+    create.add_argument("--seed", type=int, default=42)
+    create.add_argument("--source-git-sha")
+    create.add_argument("--created-at")
+    create.add_argument("--near-duplicate-threshold", type=float, default=0.85)
+    create.set_defaults(func=cmd_create)
 
-    p_validate = sub.add_parser("validate", help="Validate an existing dataset")
-    p_validate.add_argument("--dataset-dir", required=True)
-    p_validate.set_defaults(func=cmd_validate)
+    validate = subparsers.add_parser("validate")
+    validate.add_argument("--dataset-dir", required=True)
+    validate.set_defaults(func=cmd_validate)
 
-    p_freeze = sub.add_parser("freeze", help="Freeze an existing dataset")
-    p_freeze.add_argument("--name", required=True)
-    p_freeze.add_argument("--version", required=True)
-    p_freeze.set_defaults(func=cmd_freeze)
+    freeze = subparsers.add_parser("freeze")
+    freeze.add_argument("--dataset-dir", required=True)
+    freeze.add_argument("--allow-synthetic-smoke", action="store_true")
+    freeze.set_defaults(func=cmd_freeze)
 
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    return args.func(args)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    return int(args.func(args))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

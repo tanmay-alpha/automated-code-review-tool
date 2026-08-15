@@ -1,4 +1,4 @@
-"""Tests for secret redaction covering Phase 1B required cases.
+"""Regression tests for secret redaction.
 
 Required test cases:
     - GitHub personal access token

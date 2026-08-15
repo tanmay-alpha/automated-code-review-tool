@@ -1,50 +1,60 @@
-"""
-automated-code-review-tool — Shared preprocessing (Phase 1A).
+"""Canonical text preprocessing shared by training, evaluation, and serving."""
 
-Single canonical function used at train, evaluate, and inference time so the
-model always receives the exact same string representation. The human review
-comment is NEVER part of the classifier input — it is held out as a future
-generation target.
-"""
 from __future__ import annotations
 
+import hashlib
 
-def build_model_input(diff: str, language: str, mode: str = "diff") -> str:
-    """Build the canonical model input from a unified diff.
+SUPPORTED_LANGUAGES = frozenset(
+    {
+        "python",
+        "java",
+        "javascript",
+        "typescript",
+        "go",
+        "rust",
+        "c",
+        "cpp",
+        "csharp",
+        "ruby",
+        "php",
+        "unknown",
+    }
+)
+SUPPORTED_MODES = frozenset({"diff", "file"})
 
-    Canonical format::
 
-        [LANGUAGE=<language>]
-        [MODE=<mode>]
-        <unified diff or hunk>
+def canonicalize_hunk(hunk: str) -> str:
+    """Return the persisted hunk identity form: LF endings, no trailing LF."""
+    return str(hunk or "").replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
 
-    Args:
-        diff: Unified diff text (or hunk) to analyse.
-        language: One of ``python``, ``javascript``, ``java``, ``unknown``.
-        mode: ``"diff"`` (default) or ``"file"``. ``"file"`` is reserved for
-            full-file context scanning.
 
-    Returns:
-        The formatted input string. Never raises — empty diffs are passed
-        through so callers can decide how to react.
+def hunk_sha256(hunk: str) -> str:
+    """Hash canonical structural hunk bytes using lowercase UTF-8 SHA-256."""
+    return hashlib.sha256(canonicalize_hunk(hunk).encode("utf-8")).hexdigest()
 
-    Raises:
-        ValueError: If ``language`` or ``mode`` are not recognised.
+
+def build_model_text(hunk: str, language: str, mode: str = "diff") -> str:
+    """Return the sole text representation accepted by the classifier.
+
+    Review comments, human rationales, and labels are deliberately not
+    accepted by this API. Newlines are normalized so identical hunks have
+    byte-for-byte identical model inputs on every platform.
     """
-    allowed_languages = {"python", "javascript", "java", "unknown"}
-    allowed_modes = {"diff", "file"}
-
-    if language not in allowed_languages:
+    normalized_language = (language or "unknown").strip().lower()
+    normalized_mode = (mode or "diff").strip().lower()
+    if normalized_language not in SUPPORTED_LANGUAGES:
         raise ValueError(
             f"Unsupported language {language!r}. "
-            f"Allowed: {sorted(allowed_languages)}"
+            f"Allowed: {sorted(SUPPORTED_LANGUAGES)}"
         )
-    if mode not in allowed_modes:
+    if normalized_mode not in SUPPORTED_MODES:
         raise ValueError(
-            f"Unsupported mode {mode!r}. Allowed: {sorted(allowed_modes)}"
+            f"Unsupported mode {mode!r}. Allowed: {sorted(SUPPORTED_MODES)}"
         )
-
-    if diff is None:
-        diff = ""
-
-    return f"[LANGUAGE={language}]\n[MODE={mode}]\n{diff}"
+    body = "" if hunk is None else str(hunk)
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
+    return (
+        f"[LANGUAGE={normalized_language}]\n"
+        f"[MODE={normalized_mode}]\n"
+        f"{body}"
+    )

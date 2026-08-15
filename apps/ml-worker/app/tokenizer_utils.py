@@ -1,18 +1,5 @@
-"""
-automated-code-review-tool — Sliding window tokenizer (Issue #8).
+"""Shared token-window and aggregation contract for train/evaluate/serve."""
 
-Splits long texts into overlapping token windows for models with a
-fixed max sequence length (CodeBERT: 512). Used at inference time when
-a diff exceeds the model's context.
-
-After running the model independently on each window, call
-`aggregate_logits` to max-pool the per-window logits back into a single
-logits vector of the same shape.
-
-Exports:
-    sliding_window_tokenize(text, tokenizer, max_length=512, stride=50)
-    aggregate_logits(window_logits)
-"""
 from __future__ import annotations
 
 from typing import Any
@@ -26,108 +13,106 @@ def sliding_window_tokenize(
     max_length: int = 512,
     stride: int = 50,
 ) -> list[dict[str, list[int]]]:
+    """Tokenize content and add model special tokens to every window.
+
+    ``stride`` is the number of content tokens shared by adjacent windows.
+    Every returned field is right-padded to ``max_length``.
     """
-    Encode `text` and slice into overlapping windows.
-
-    Each window is a dict with `input_ids` and `attention_mask` lists of
-    length `max_length`. Windows overlap by `stride` tokens so that no
-    token near a boundary is silently dropped.
-
-    - text shorter than max_length (token count): returns a single
-      window with the full token sequence (padded with attention_mask 0
-      if shorter than max_length, but typically we don't pad here — the
-      model handles dynamic padding at batch time).
-    - text longer than max_length: returns ceil(N / (max_length - stride))
-      windows, where N is the tokenized length.
-
-    Empty text raises ValueError.
-    """
-    if text is None or text == "":
-        raise ValueError("text must not be empty")
-
+    if text is None:
+        text = ""
     if max_length <= 0:
         raise ValueError("max_length must be positive")
-    if stride < 0 or stride >= max_length:
-        raise ValueError("stride must be in [0, max_length)")
 
-    # Encode without adding special tokens (handled per-window) to get a
-    # clean token sequence we can slice. add_special_tokens=True is the
-    # HF default; we keep it on so the model sees [CLS] ... [SEP].
+    special_count = int(
+        tokenizer.num_special_tokens_to_add(pair=False)
+        if hasattr(tokenizer, "num_special_tokens_to_add")
+        else 2
+    )
+    content_length = max_length - special_count
+    if content_length <= 0:
+        raise ValueError("max_length does not leave room for content tokens")
+    if stride < 0 or stride >= content_length:
+        raise ValueError("stride must be in [0, max_length - special_tokens)")
+
     encoded = tokenizer(
         text,
-        add_special_tokens=True,
-        truncation=False,           # do NOT truncate — we slice ourselves
-        return_attention_mask=True,
-        return_tensors=None,        # return lists
+        add_special_tokens=False,
+        truncation=False,
+        return_attention_mask=False,
+        return_tensors=None,
     )
-    input_ids: list[int] = encoded["input_ids"]
-    attention_mask: list[int] = encoded["attention_mask"]
-
-    n = len(input_ids)
-    if n == 0:
-        raise ValueError("tokenizer produced 0 tokens")
-
-    if n <= max_length:
-        # Single window. No padding here — the trainer / batcher handles it.
-        return [{"input_ids": input_ids, "attention_mask": attention_mask}]
-
-    # Step size between consecutive window starts.
-    step = max_length - stride
+    content_ids = list(encoded.get("input_ids", []))
+    step = content_length - stride
     windows: list[dict[str, list[int]]] = []
     start = 0
-    while start < n:
-        end = min(start + max_length, n)
-        ids = input_ids[start:end]
-        mask = attention_mask[start:end]
-        # Pad to max_length (right-padding with 0 / attention 0) so every
-        # window has the same shape — the model's batched forward pass
-        # requires equal-length tensors.
+
+    while start < len(content_ids) or not windows:
+        chunk = content_ids[start : start + content_length]
+        if hasattr(tokenizer, "build_inputs_with_special_tokens"):
+            ids = list(tokenizer.build_inputs_with_special_tokens(chunk))
+        else:
+            cls_id = getattr(tokenizer, "cls_token_id", 101)
+            sep_id = getattr(tokenizer, "sep_token_id", 102)
+            ids = [cls_id, *chunk, sep_id]
+        if len(ids) > max_length:
+            raise ValueError("tokenizer added more special tokens than reported")
+
+        mask = [1] * len(ids)
+        token_types: list[int] | None = None
+        if hasattr(tokenizer, "create_token_type_ids_from_sequences"):
+            token_types = list(tokenizer.create_token_type_ids_from_sequences(chunk))
+
         pad = max_length - len(ids)
-        if pad > 0:
-            # Some tokenizers (gpt2, RoBERTa-class) leave pad_token_id=None
-            # until set explicitly. Falling back to eos_token_id is safe for
-            # both CodeBERT (pad=0) and GPT-2 (pad=eos=50256) — the model
-            # treats the pad positions as masked thanks to attention_mask=0.
-            pad_id = tokenizer.pad_token_id
+        if pad:
+            pad_id = getattr(tokenizer, "pad_token_id", None)
             if pad_id is None:
-                pad_id = tokenizer.eos_token_id
-                if pad_id is None:
-                    pad_id = 0
-            ids = ids + [pad_id] * pad
-            mask = mask + [0] * pad
-        windows.append({"input_ids": ids, "attention_mask": mask})
-        if end == n:
+                pad_id = getattr(tokenizer, "eos_token_id", None) or 0
+            ids += [int(pad_id)] * pad
+            mask += [0] * pad
+            if token_types is not None:
+                token_types += [0] * pad
+
+        window = {"input_ids": ids, "attention_mask": mask}
+        if token_types is not None and len(token_types) == max_length:
+            window["token_type_ids"] = token_types
+        windows.append(window)
+
+        if start + content_length >= len(content_ids):
             break
         start += step
+
     return windows
 
 
 def aggregate_logits(window_logits: list[torch.Tensor]) -> torch.Tensor:
-    """
-    Max-pool a list of per-window logits into a single logits tensor.
-
-    Each tensor in `window_logits` is expected to have the same shape
-    (typically `[num_labels]`). Returns an elementwise max across windows.
-
-    Empty input raises ValueError so callers fail loudly rather than
-    silently returning a zero vector.
-    """
+    """Elementwise max-pool logits from windows belonging to one hunk."""
     if not window_logits:
         raise ValueError("window_logits must not be empty")
+    first_shape = window_logits[0].shape
+    if any(item.shape != first_shape for item in window_logits):
+        raise ValueError("all window logits must have the same shape")
+    return torch.stack(window_logits, dim=0).max(dim=0).values
 
-    stacked = torch.stack(window_logits, dim=0)
-    return stacked.max(dim=0).values
 
-
-def build_model_input(text: str, tokenizer: Any, max_length: int = 512) -> dict[str, torch.Tensor]:
-    """Uniform model input preprocessor shared across training, evaluation, and serving."""
-    if not text:
-        text = ""
-    enc = tokenizer(
-        text,
-        truncation=True,
-        max_length=max_length,
-        padding="max_length",
-        return_tensors="pt",
+def windowed_model_logits(
+    model: Any,
+    tokenizer: Any,
+    text: str,
+    *,
+    device: Any,
+    max_length: int = 512,
+    stride: int = 50,
+) -> tuple[torch.Tensor, int]:
+    """Run canonical windows and return max-pooled logits for one hunk."""
+    windows = sliding_window_tokenize(
+        text, tokenizer, max_length=max_length, stride=stride
     )
-    return {k: v.squeeze(0) if v.dim() > 1 else v for k, v in enc.items()}
+    logits: list[torch.Tensor] = []
+    with torch.no_grad():
+        for window in windows:
+            tensors = {
+                name: torch.tensor([values], device=device)
+                for name, values in window.items()
+            }
+            logits.append(model(**tensors).logits.squeeze(0).detach().cpu())
+    return aggregate_logits(logits), len(windows)

@@ -4,19 +4,9 @@ loader behaviour."""
 from __future__ import annotations
 
 
-import sys
-from pathlib import Path
-
-_HERE = Path(__file__).resolve().parent
-_ML_WORKER = _HERE.parent
-_REPO_ROOT = _ML_WORKER.parent
-for _p in (str(_ML_WORKER), str(_REPO_ROOT)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-from app.preprocessing import build_model_input  # noqa: E402
-from app.diff_parser import parse_diff  # noqa: E402
-from taxonomy import trainable_ids, load_canonical_taxonomy  # noqa: E402
+from app.diff_parser import parse_diff
+from app.preprocessing import build_model_text
+from app.taxonomy import load_canonical_taxonomy, trainable_ids
 
 
 SIMPLE_DIFF = """\
@@ -31,19 +21,19 @@ index e69de29..bcd1234 100644
 """
 
 
-class TestBuildModelInput:
+class TestBuildModelText:
     def test_prefix_contains_language_and_mode(self):
-        out = build_model_input(SIMPLE_DIFF, language="python", mode="diff")
+        out = build_model_text(SIMPLE_DIFF, language="python", mode="diff")
         assert out.startswith("[LANGUAGE=python]\n[MODE=diff]\n")
 
     def test_body_contains_diff(self):
-        out = build_model_input(SIMPLE_DIFF, language="python")
+        out = build_model_text(SIMPLE_DIFF, language="python")
         assert "def hello" in out
         assert "print" in out
 
     def test_multiline_diff(self):
         long = "+line\n" * 20
-        out = build_model_input(long, language="python")
+        out = build_model_text(long, language="python")
         assert out.startswith("[LANGUAGE=python]\n")
         assert "+line" in out
 
