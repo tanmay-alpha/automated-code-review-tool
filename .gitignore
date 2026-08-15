@@ -45,6 +45,9 @@ bun.lockb
 # -----------------------------------------------------
 # Java & IDEs (IntelliJ, Eclipse, VS Code)
 # -----------------------------------------------------
+.claude/
+.codex/
+*.local.md
 .idea/
 *.iml
 *.iws
@@ -120,17 +123,22 @@ dmypy.json
 hf_cache/
 mlruns/
 wandb/
+experiments/
+checkpoints/
+model-artifacts/
+artifacts/
 
 # Training Data (Keep directories via .gitkeep, ignore data contents)
+apps/ml-worker/training/data/*
+!apps/ml-worker/training/data/raw/
 apps/ml-worker/training/data/raw/*
-apps/ml-worker/training/data/filtered/*
-apps/ml-worker/training/data/labeled/*
 !apps/ml-worker/training/data/raw/.gitkeep
-!apps/ml-worker/training/data/filtered/.gitkeep
-!apps/ml-worker/training/data/labeled/.gitkeep
-apps/ml-worker/training/data/train.json
-apps/ml-worker/training/data/val.json
-# NOTE: test.json is intentionally NOT ignored — committed but never opened until final eval
+apps/ml-worker/training/data/train.*
+apps/ml-worker/training/data/val.*
+apps/ml-worker/training/data/test.*
+apps/ml-worker/training/data/datasets/
+apps/ml-worker/training/data/exports/
+apps/ml-worker/training/data/evaluation/
 
 # -----------------------------------------------------
 # Web / Next.js
