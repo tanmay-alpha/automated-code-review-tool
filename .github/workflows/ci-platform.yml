@@ -1,0 +1,35 @@
+name: ci-platform
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".env.example"
+      - "infra/**"
+      - "render.yaml"
+      - ".github/workflows/ci-platform.yml"
+  pull_request:
+    paths:
+      - ".env.example"
+      - "infra/**"
+      - "render.yaml"
+      - ".github/workflows/ci-platform.yml"
+
+concurrency:
+  group: ci-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate Render Blueprint against the official schema
+        run: |
+          python -m pip install --disable-pip-version-check check-jsonschema==0.38.0
+          check-jsonschema --schemafile https://render.com/schema/render.yaml.json render.yaml
+      - name: Validate Docker Compose
+        run: docker compose --env-file .env.example -f infra/docker-compose.yml config --quiet

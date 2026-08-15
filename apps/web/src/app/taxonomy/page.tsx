@@ -20,13 +20,8 @@ import {
 import { severityClasses } from "@/lib/utils";
 
 /**
- * Static page enumerating the 13 anti-patterns the ML model was trained
- * to detect. No API calls — the content is hard-coded from the plan
- * (ENGINEERING_PLAN.md §3 — label taxonomy).
- *
- * This page is the canonical reference for what automated-code-review-tool can catch; we
- * embed code snippets directly so the dashboard works offline and the
- * taxonomy never drifts from the model without an explicit update.
+ * Human-readable mirror of taxonomy/anti_patterns.yaml for the dashboard.
+ * The root YAML remains authoritative for inference, training, and persistence.
  */
 type Severity = "critical" | "major" | "minor";
 interface AntiPattern {
@@ -41,7 +36,7 @@ interface AntiPattern {
 const PATTERNS: AntiPattern[] = [
   {
     category: "Performance",
-    id: "PERF_N_PLUS_1",
+    id: "PERFORMANCE_N_PLUS_ONE",
     name: "N+1 Query",
     severity: "major",
     catches:
@@ -53,11 +48,10 @@ const PATTERNS: AntiPattern[] = [
   },
   {
     category: "Performance",
-    id: "PERF_INEFFICIENT_LOOP",
-    name: "Inefficient Loop",
-    severity: "minor",
-    catches:
-      "Loop calls O(n) work per iteration where O(1) or batch would do.",
+    id: "PERFORMANCE_QUADRATIC_LOOP",
+    name: "Quadratic Loop",
+    severity: "major",
+    catches: "Nested iteration creates O(n²) or worse work.",
     example: {
       language: "javascript",
       code: `for (let i = 0; i < arr.length; i++) {\n  arr[i] = expensiveLookup(arr[i]);\n}`,
@@ -65,9 +59,9 @@ const PATTERNS: AntiPattern[] = [
   },
   {
     category: "Reliability",
-    id: "RELIABILITY_SWALLOWED_EXCEPTION",
-    name: "Swallowed Exception",
-    severity: "critical",
+    id: "RELIABILITY_BROAD_EXCEPTION",
+    name: "Broad Exception",
+    severity: "major",
     catches:
       "catch block silently absorbs the error — no log, no rethrow, no metric.",
     example: {
@@ -77,32 +71,31 @@ const PATTERNS: AntiPattern[] = [
   },
   {
     category: "Reliability",
-    id: "RELIABILITY_BROKEN_RACE_CONDITION",
-    name: "Race Condition",
-    severity: "critical",
-    catches:
-      "Concurrent read-modify-write without locking or atomic primitive.",
+    id: "RELIABILITY_MISSING_TIMEOUT",
+    name: "Missing Timeout",
+    severity: "minor",
+    catches: "An external call can block indefinitely because no timeout is set.",
     example: {
       language: "python",
-      code: `if counter.value < LIMIT:\n    counter.value += 1  # TOCTOU`,
+      code: `response = requests.get(url)  # no timeout`,
     },
   },
   {
-    category: "Reliability",
-    id: "RELIABILITY_RESOURCE_LEAK",
-    name: "Resource Leak",
+    category: "Security",
+    id: "SECURITY_WEAK_CRYPTO",
+    name: "Weak Cryptography",
     severity: "major",
-    catches: "File / socket / cursor opened but never closed on error path.",
+    catches: "Code uses a weak or broken cryptographic primitive.",
     example: {
       language: "java",
-      code: `FileInputStream in = new FileInputStream(path);\nprocess(in);  // may throw — in not closed`,
+      code: `MessageDigest digest = MessageDigest.getInstance("MD5");`,
     },
   },
   {
     category: "Security",
     id: "SECURITY_SQL_INJECTION",
     name: "SQL Injection",
-    severity: "critical",
+    severity: "major",
     catches: "User input concatenated into a SQL string.",
     example: {
       language: "python",
@@ -110,14 +103,14 @@ const PATTERNS: AntiPattern[] = [
     },
   },
   {
-    category: "Security",
-    id: "SECURITY_XSS",
-    name: "Cross-Site Scripting",
-    severity: "critical",
-    catches: "Unescaped user input rendered as HTML.",
+    category: "Readability",
+    id: "READABILITY_MAGIC_NUMBER",
+    name: "Magic Number",
+    severity: "minor",
+    catches: "An unexplained numeric literal obscures the code's intent.",
     example: {
       language: "javascript",
-      code: `element.innerHTML = userInput;`,
+      code: `if (attempts > 7) { retryLater(); }`,
     },
   },
   {
@@ -132,14 +125,14 @@ const PATTERNS: AntiPattern[] = [
     },
   },
   {
-    category: "Maintainability",
-    id: "MAINTAINABILITY_GOD_CLASS",
-    name: "God Class",
-    severity: "major",
-    catches: "Single class owns too many responsibilities (SRP violation).",
+    category: "Readability",
+    id: "READABILITY_LONG_METHOD",
+    name: "Long Statement",
+    severity: "minor",
+    catches: "A very long statement should be split into readable steps.",
     example: {
       language: "java",
-      code: `class UserService {\n  void auth() { ... }\n  void sendEmail() { ... }\n  void exportCsv() { ... }\n}`,
+      code: `const result = users.filter(active).map(normalize).sort(compare).reduce(group, {});`,
     },
   },
   {
@@ -155,36 +148,24 @@ const PATTERNS: AntiPattern[] = [
   },
   {
     category: "Maintainability",
-    id: "MAINTAINABILITY_LONG_METHOD",
-    name: "Long Method",
+    id: "MAINTAINABILITY_COMMENTED_CODE",
+    name: "Commented-Out Code",
     severity: "minor",
-    catches: "Function exceeds ~50 lines or >3 levels of nesting.",
+    catches: "A block of obsolete source code remains commented out.",
     example: {
       language: "python",
-      code: `def process(order):\n    # ... 80 lines of validation,\n    # pricing, tax, shipping, persistence`,
+      code: `# old_total = subtotal + legacy_tax\n# return old_total`,
     },
   },
   {
-    category: "Correctness",
-    id: "CORRECTNESS_OFF_BY_ONE",
-    name: "Off-by-One",
-    severity: "major",
-    catches: "Boundary condition uses < vs <= (or vice versa) incorrectly.",
+    category: "Maintainability",
+    id: "MAINTAINABILITY_PRINT_STATEMENT",
+    name: "Print Statement",
+    severity: "minor",
+    catches: "A bare print or console statement remains in production code.",
     example: {
       language: "javascript",
-      code: `for (let i = 0; i <= arr.length; i++) { console.log(arr[i]); }`,
-    },
-  },
-  {
-    category: "Correctness",
-    id: "CORRECTNESS_NULL_DEREF",
-    name: "Null Dereference",
-    severity: "major",
-    catches:
-      "Property access / method call on a value that may be null/undefined.",
-    example: {
-      language: "java",
-      code: `User u = repo.find(id);\nreturn u.getName();  // u may be null`,
+      code: `console.log("request payload", payload);`,
     },
   },
 ];
@@ -206,9 +187,8 @@ function TaxonomyContent() {
           <h1 className="text-3xl font-bold tracking-tight">Taxonomy</h1>
         </div>
         <p className="mt-2 text-muted-foreground">
-          The {PATTERNS.length} anti-patterns the automated-code-review-tool model was trained
-          to detect. Severity ratings follow{" "}
-          <span className="font-mono">ENGINEERING_PLAN.md §3</span>.
+          The {PATTERNS.length} anti-patterns in the canonical taxonomy.
+          Trainable model labels and deterministic-only rules are both shown.
         </p>
       </header>
 

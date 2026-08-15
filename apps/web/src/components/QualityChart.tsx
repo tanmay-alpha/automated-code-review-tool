@@ -51,7 +51,7 @@ export interface QualityChartProps {
 }
 
 /**
- * Quality trend visualisation (Issue #18).
+ * Quality trend visualisation.
  *
  *   - Blue line: avg quality score, 0–100, Y axis left.
  *   - Red translucent area: critical findings per day, Y axis right.

@@ -32,7 +32,7 @@ export interface RepoCardProps {
  * Dashboard tile for a single connected repository. Shows the repo name,
  * a colored quality badge (green ≥80, yellow ≥60, red <60), the number of
  * PRs reviewed, when the last review happened, an optional 7-day
- * sparkline (Issue #18), and a "View Details" link to the per-repo page.
+ * sparkline, and a "View Details" link to the per-repo page.
  */
 export function RepoCard({ repo, sparklineData }: RepoCardProps) {
   const score = repo.latestQualityScore;

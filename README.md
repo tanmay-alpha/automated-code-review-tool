@@ -1,322 +1,187 @@
-<div align="center" style="background: linear-gradient(135deg, #1e1e3f 0%, #0c0c14 100%); padding: 45px 30px; border-radius: 24px; border: 1px solid #2d2d5a; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4); margin-bottom: 30px;">
-  <h1 style="color: #ffffff; font-family: 'Outfit', sans-serif; font-size: 3.25rem; margin: 0; text-shadow: 0 4px 12px rgba(0,0,0,0.6); font-weight: 800; letter-spacing: -1.5px; border-bottom: none;">automated-code-review-tool 🔍</h1>
-  <p style="color: #a0a0d0; font-size: 1.3rem; font-weight: 400; margin-top: 12px; margin-bottom: 25px; font-family: 'Inter', sans-serif; line-height: 1.5;">Multi-Surface Automated Code Review Platform</p>
-  <div style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;">
-    <img src="https://img.shields.io/badge/Java-21-orange?style=flat-square&logo=openjdk&logoColor=white" alt="Java" />
-    <img src="https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python&logoColor=white" alt="Python" />
-    <img src="https://img.shields.io/badge/TypeScript_Next_15-blue?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
-    <img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="License" />
-  </div>
-</div>
+# automated-code-review-tool
 
-## What It Does
+automated-code-review-tool is a multi-service code-review platform that
+analyzes GitHub pull-request diffs using a deterministic fallback engine and an
+optional versioned multi-label CodeBERT classifier. It includes redacted data
+capture, human annotation, immutable dataset versioning, reproducible model
+experiments, Spring Boot orchestration, a Next.js dashboard, a GitHub Action,
+and a VS Code extension.
 
-automated-code-review-tool is a multi-surface automated code review platform. It ingests source
-files from a VS Code extension, PR diffs from GitHub webhooks and a GitHub
-Action, runs anti-pattern detection through a FastAPI ML worker, and surfaces
-inline squiggles, PR comments, and quality scores via a Next.js dashboard.
+## Production today
 
-The three user surfaces are:
-- **VS Code Extension** — inline diagnostics on save
-- **GitHub Action** — PR review annotations on pull_request events
-- **Next.js Web Dashboard** — repo-level quality trends and finding history
+| Capability | Current state |
+| --- | --- |
+| Production detector | Deterministic fallback |
+| CodeBERT checkpoint | Not present or deployed |
+| Frozen real dataset | Not present in Git |
+| Verified model evaluation | Not available |
+| Fallback operation | Supported with `MODEL_NAME=none` |
 
-Production detector: deterministic fallback scanner
-Fine-tuned checkpoint: not available
-Model training pipeline: under validation
-Real frozen dataset: not available
-Verified evaluation artifact: not available
-Redis rate limiting: implemented
-Hunk-level localisation: implemented
-
-The platform ships with a deterministic fallback scanner as its primary production detector. A fine-tuned CodeBERT model pipeline is under validation.
-
----
+The repository contains transformer training and inference code, but it does
+not claim model performance or a production CodeBERT deployment. A model must
+pass the documented data, compatibility, evaluation, and smoke-test gates
+before an operator explicitly promotes it.
 
 ## Architecture
 
-```
-                         ┌──────────────────────────┐
-                         │       User Surfaces      │
-                         ├──────────────────────────┤
-                         │  Next.js Dashboard       │
-                         │  VS Code Extension       │
-                         │  GitHub Action           │
-                         └────────────┬─────────────┘
-                                      │ HTTPS
-                                      ▼
-                         ┌──────────────────────────┐
-                         │   Spring Boot API        │
-                         │  Java 21 · JWT · JPA     │
-                         │  GitHub OAuth · Webhooks │
-                         └────┬───────────────┬─────┘
-                              │               │
-                       JPA    │               │ HTTP (internal)
-                              ▼               ▼
-                    ┌──────────────────┐  ┌──────────────────┐
-                    │  PostgreSQL 16   │  │  FastAPI ML      │
-                    │  Redis 7 cache   │  │  Worker          │
-                    └──────────────────┘  └────────┬─────────┘
-                                                  │
-                                                  ▼
-                                         ┌──────────────────┐
-                                         │  HF Hub / Rules  │
-                                         │  (model storage) │
-                                         └──────────────────┘
+```text
+GitHub webhook / Action / VS Code / dashboard
+                    |
+                    v
+           Spring Boot API (Java 21)
+             |                 |
+             v                 v
+     PostgreSQL + Redis   FastAPI ML worker
+                                |
+                      localized diff hunks
+                         |             |
+                         v             v
+                  approved model   rule fallback
 ```
 
-### System Topology
+The root [taxonomy YAML](taxonomy/anti_patterns.yaml) is the label-definition
+source. The worker parses unified diffs into hunks and reports the detector,
+taxonomy version, and localization it actually used. The API owns GitHub
+integration, review state, feedback, dataset lineage, and durable processing.
 
-```mermaid
-graph TD
-    UserSurface["User Surfaces (Dashboard / VS Code / GitHub Action)"]
-    Gateway["Spring Boot Gateway (Java 21)"]
-    DB[(PostgreSQL 16)]
-    Cache[(Redis 7)]
-    MLWorker["FastAPI ML Worker (Python 3.11)"]
-    HFRepo[("HuggingFace Hub or Rule-based Scanner")]
+See [ML system design](docs/ml-system-design.md) for the data and promotion
+contracts and [the training guide](apps/ml-worker/training/README.md) for the
+canonical lifecycle commands.
 
-    UserSurface -->|HTTPS API Requests / cookies / API Keys| Gateway
-    Gateway -->|JPA Persistence| DB
-    Gateway -->|Rate Limits & Sessions| Cache
-    Gateway -->|HTTP REST Client| MLWorker
-    MLWorker -->|Loads fine-tuned model OR rule-based scan| HFRepo
-```
+## Repository layout
 
----
+| Path | Purpose |
+| --- | --- |
+| `apps/api/` | Spring Boot control plane and PostgreSQL migrations |
+| `apps/ml-worker/` | FastAPI inference service and ML lifecycle tooling |
+| `apps/web/` | Next.js dashboard |
+| `apps/vscode-ext/` | Editor integration |
+| `github-action/` | Pull-request workflow integration; committed `dist/` is required |
+| `taxonomy/` | Canonical concrete anti-pattern taxonomy |
+| `infra/docker-compose.yml` | Local full-stack environment |
+| `render.yaml` | Production infrastructure declaration |
 
-## Webhook Review & Detection Pipeline
+## Local full stack
 
-When a developer opens a PR on a connected repository, the system runs the
-following end-to-end sequence:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Developer
-    participant GitHub as GitHub Webhook
-    participant Gateway as Spring Boot API
-    participant DB as Postgres & Redis
-    participant MLWorker as FastAPI ML Worker
-    participant Model as CodeBERT / Rule Scanner
-
-    Developer->>GitHub: Pushes code / Opens PR
-    GitHub->>Gateway: POST /api/webhook/github (HMAC Signature + Delivery ID)
-    rect rgb(240, 248, 255)
-        Note over Gateway,DB: Check Signature & Idempotency
-        Gateway->>Gateway: Verify SHA-256 HMAC Signature
-        Gateway->>DB: Query processed_webhooks (exists check)
-        DB-->>Gateway: Exists (Skip) or Not Exists (Save & Proceed)
-    end
-    Gateway-->>GitHub: HTTP 200 OK (Immediate response)
-
-    rect rgb(255, 240, 245)
-        Note over Gateway,MLWorker: Asynchronous PR Scanning (ThreadPoolTaskExecutor)
-        Gateway->>GitHub: GET PR Diff file (using decrypted OAuth Token)
-        GitHub-->>Gateway: Code Diff Payload
-        Gateway->>MLWorker: POST /ml/review (Raw Diff Content)
-        MLWorker->>Model: Sliding-window inference OR regex scan
-        Model-->>MLWorker: Findings + quality score
-        MLWorker-->>Gateway: Findings + quality score
-    end
-
-    Gateway->>DB: Save Scan PullRequestEntity & MlFindings
-    Gateway->>GitHub: POST /repos/{repo}/issues/{number}/comments (Quality Report)
-```
-
-### Pipeline Stages Explained
-
-1. **Authentication & HMAC signature validation.** Every GitHub webhook is
-   verified using constant-time SHA-256 HMAC comparisons against the
-   repository's registered secret.
-2. **Stateful Idempotency.** Webhook deliveries are tracked in Redis and
-   PostgreSQL (`processed_webhooks`) keyed on the unique `X-GitHub-Delivery`
-   header so replay attacks and redundant model runs are impossible.
-3. **Asynchronous Dispatch.** The API immediately returns `200 OK` to
-   GitHub. PR diff retrieval and ML worker orchestration run on a configured
-   Spring `ThreadPoolTaskExecutor`.
-4. **Diff Segmentation & Sliding Window.** Large PR diffs are split into
-   512-token windows with a 50-token overlapping stride so they fit inside
-   CodeBERT's sequence limit. Per-window logits are aggregated via max-pool.
-5. **Model Inference.** The FastAPI worker hosts a CodeBERT-based multi-label
-   classifier with six binary heads: `SECURITY`, `PERFORMANCE`,
-   `ARCHITECTURE`, `RELIABILITY`, `READABILITY`, and `MAINTAINABILITY`. When
-   the model is unavailable, a rule-based fallback scanner returns findings
-   for hardcoded credentials, SQL injection, sync I/O in async paths, bare
-   except, and quadratic loops.
-6. **Reporting.** Findings are persisted, the PR is updated, and a Markdown
-   quality report is posted as a comment on the PR.
-
----
-
-## Tech Stack
-
-| Component        | Language / Technology           | Path                   |
-| ---------------- | ------------------------------- | ---------------------- |
-| **API**          | Java 21 · Spring Boot 3.3       | `apps/api/`            |
-| **Security**     | JWT, OAuth 2.0, HMAC-SHA256     | `apps/api/src/main/java/com/automatedcodereviewtool/security/` |
-| **ML Worker**    | Python 3.11 · FastAPI · CodeBERT | `apps/ml-worker/`     |
-| **Web Dashboard**| TypeScript · Next.js 15         | `apps/web/`            |
-| **VS Code Ext**  | TypeScript · VS Code API        | `apps/vscode-ext/`     |
-| **GitHub Action**| TypeScript · @actions/core      | `github-action/`       |
-| **Database**     | PostgreSQL 16 · Flyway          | `apps/api/src/main/resources/db/migration/` |
-| **Cache / Queue**| Redis 7                         | `apps/api/src/main/resources/` |
-| **ML Model Host**| HuggingFace Hub (or rule-based) | configurable via `MODEL_NAME` env var |
-| **CI/CD**        | GitHub Actions                  | `.github/workflows/`   |
-| **Containerization**| Docker · Render blueprints   | `Dockerfile`, `render.yaml` |
-
----
-
-## Anti-Pattern Categories
-
-| Category         | Description                                        | Examples                                  |
-| ---------------- | -------------------------------------------------- | ----------------------------------------- |
-| SECURITY         | Vulnerabilities and credential exposure            | hardcoded API keys, SQL injection, weak crypto |
-| PERFORMANCE      | Inefficient data access or computation             | N+1 queries, quadratic loops              |
-| ARCHITECTURE     | Structural / module-level smells                   | god classes, circular imports             |
-| RELIABILITY      | Failure modes and missing safeguards               | bare except, missing retries, missing timeouts |
-| READABILITY      | Naming and structure clarity                       | magic numbers, cryptic names, long methods |
-| MAINTAINABILITY  | Code-rot and duplication                           | commented-out code, duplicate logic       |
-
----
-
-## Quick Start
-
-### Self-host with Docker Compose
+Prerequisites are Docker with Compose v2 and Git.
 
 ```bash
 git clone https://github.com/tanmay-alpha/automated-code-review-tool.git
 cd automated-code-review-tool
-cp .env.example .env          # fill in GITHUB_CLIENT_ID, JWT_SECRET, etc.
-docker compose up --build    # postgres, redis, ml-worker, api, web
+cp .env.example .env
+docker compose --env-file .env -f infra/docker-compose.yml up --build
 ```
 
-Open `http://localhost:3000` once the web container is healthy.
+The checked-in example uses public, local-only development values and starts
+the ML worker in fallback mode. Replace the GitHub OAuth values before using
+login or webhook flows, and replace every local secret before sharing a
+deployment.
 
-### Deploy to Render
+Local endpoints:
 
-The repo ships a `render.yaml` blueprint that defines four services:
-- `automated-code-review-tool-db` — PostgreSQL 16, Standard plan
-- `automated-code-review-tool-redis` — Redis 7, Starter plan
-- `automated-code-review-tool-api` — Spring Boot web service, Standard plan
-- `automated-code-review-tool-ml-worker` — FastAPI web service, Standard plan
+- dashboard: `http://localhost:3000`
+- API health: `http://localhost:8080/actuator/health`
+- ML health: `http://localhost:8000/ml/health`
 
-Connect the repo to Render as an "Infrastructure as Code" project and the
-four services spin up automatically. Set the `sync: false` env vars
-(`JWT_SECRET`, `ENCRYPTION_KEY`, `GITHUB_CLIENT_ID/SECRET`, `HF_TOKEN`,
-`ML_WORKER_SECRET`) before the first deploy.
-
-### Connect to Supabase (Production Cloud Database)
-
-To connect the application to **Supabase** PostgreSQL when deployed on Render or locally:
-1. Create a project at [Supabase](https://supabase.com).
-2. Set `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, and `SPRING_DATASOURCE_PASSWORD` on Render to your Supabase JDBC credentials.
-3. Spring Boot's Flyway integration automatically initializes and migrates your Supabase database schema on startup.
-
-See **[SUPABASE_SETUP.md](SUPABASE_SETUP.md)** for the complete integration step-by-step guide.
-
-### Train a CodeBERT model
+Stop without deleting PostgreSQL data:
 
 ```bash
+docker compose --env-file .env -f infra/docker-compose.yml down
+```
+
+## Production deployment
+
+Render is the single production deployment target described by this
+repository. [render.yaml](render.yaml) defines Render Postgres, Render Key
+Value, the API, the fallback-mode ML worker, and the web dashboard. Render owns
+deployment through Blueprint auto-deploys after checks pass; this repository
+does not contain a second production deployment workflow.
+
+Create a Render Blueprint from the repository, then provide the fields marked
+`sync: false`:
+
+1. Set `SPRING_DATASOURCE_URL` to the Render database's internal JDBC URL,
+   using `jdbc:postgresql://host:port/database`. Username and password are wired
+   from the managed database separately.
+2. Set `APP_BASE_URL` to the public API origin and `FRONTEND_URL` to the public
+   web origin.
+3. Set `WEBHOOK_CALLBACK_URL` to
+   `https://<api-host>/api/webhook/github`.
+4. Set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` from the production GitHub
+   OAuth application.
+5. Set the web service's `NEXT_PUBLIC_API_BASE_URL` to the public API origin.
+
+Render generates the 256-bit JWT, encryption, and shared ML-worker secrets. The
+Blueprint deliberately sets `MODEL_NAME=none`; adding a promoted private model
+and its access token is a separate operator action.
+
+## Developer integrations
+
+- [GitHub Action](github-action/README.md): scans pull-request diffs and emits
+  workflow annotations. Its bundled `dist/` must match `index.js`.
+- [VS Code extension](apps/vscode-ext/README.md): scans supported files and
+  renders deduplicated diagnostics with a timeout and 1 MB input guard.
+
+Both clients require an API key. Send credentials only to HTTPS endpoints
+outside localhost.
+
+## Verification commands
+
+Run commands from the repository root unless a `cd` is shown.
+
+```bash
+# Python worker
 cd apps/ml-worker
-pip install -r requirements-train.txt
+ruff check app training tests
+mypy app training
+pytest -m "not slow" -q
 
-# 1. Generate training data (4k synthetic samples)
-python training/generate_training_data.py \
-    --output-dir training/data \
-    --train-size 4000 --val-size 400 --test-size 400
+# Java API
+cd ../api
+mvn -B -ntp test
+mvn -B -ntp -Ppostgres-correctness test
 
-# 2. Fine-tune on a GPU machine or Colab Pro
-python training/train.py \
-    --output-dir ./automated-code-review-tool-model \
-    --data-dir training/data \
-    --model-name microsoft/codebert-base \
-    --epochs 5 --batch-size 16 --lr 2e-5 \
-    --push-to-hub --hf-repo YOUR_USER/automated-code-review-tool-codebert
+# Web
+cd ../web
+npm ci
+npx tsc --noEmit
+npm test
+npm run build
 
-# 3. (Optional) Evaluate on the held-out test set
-python training/evaluate.py \
-    --model-dir ./automated-code-review-tool-model \
-    --data-dir training/data \
-    --output evaluation_results.json
+# GitHub Action
+cd ../../github-action
+npm ci
+npm test
+npm run build
+git diff --exit-code -- dist
+
+# VS Code extension
+cd ../apps/vscode-ext
+npm ci
+npm run compile
+npm test
+
+# Container configuration
+cd ../..
+docker compose --env-file .env.example -f infra/docker-compose.yml config
+docker build -f apps/ml-worker/Dockerfile -t automated-code-review-tool-ml:local .
+docker build -f apps/api/Dockerfile -t automated-code-review-tool-api:local apps/api
+docker build -f apps/web/Dockerfile -t automated-code-review-tool-web:local apps/web
 ```
 
-See `apps/ml-worker/training/RUN_TRAINING.md` for the full pipeline.
+The PostgreSQL profile is reserved for real Testcontainers correctness tests;
+H2-only results are not evidence of PostgreSQL behavior.
 
----
+## Security and data boundaries
 
-## Evaluation
-
-The evaluation framework is fully implemented. Trained models can be evaluated
-on a held-out test set using precision, recall, and macro-F1. See
-`apps/ml-worker/training/evaluate.py` and `RUN_TRAINING.md` for the training
-pipeline.
-
-| Model                          | Macro-F1 | Precision | Recall | Inference latency (p50) |
-| ------------------------------ | -------- | --------- | ------ | ----------------------- |
-| CodeBERT fine-tune             | _run evaluate.py_ | _run_ | _run_ | _measure_ |
-| Rule-based baseline (regex)    | _run evaluate.py_ | _run_ | _run_ | ~5 ms                   |
-
-> **Honesty note:** The numeric cells are intentionally left blank. The
-> training data generator and training pipeline are functional but the
-> model has not been trained or benchmarked yet. Populate these cells
-> after running `python training/evaluate.py` against a trained checkpoint.
-> The README previously contained specific numbers (Macro-F1 0.75, 180 ms
-> latency, 50K+ dataset) that were not backed by an evaluation run. Those
-> numbers have been removed.
-
----
-
-## API Reference
-
-### `POST /api/scan/file` — file-level scan (VS Code extension, internal)
-
-```bash
-curl -X POST http://localhost:8080/api/scan/file \
-  -H "Authorization: Bearer $AUTOMATED_CODE_REVIEW_TOOL_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "content": "for u in users:\n  posts = Post.where(user=u)",
-    "language": "python",
-    "filePath": "app/services/posts.py"
-  }'
-# → { "findings": [...], "qualityScore": 62.5 }
-```
-
-### `POST /api/auth/api-key/regenerate` — issue a new VS Code key
-
-```bash
-curl -X POST http://localhost:8080/api/auth/api-key/regenerate \
-  -H "Cookie: automated_code_review_tool_session=$JWT" \
-# → { "apiKey": "cl_live_..." }
-```
-
----
-
-## Security Implementation
-
-- **JWT token blacklisting** — secure logout with JTI-based token invalidation
-- **OAuth 2.0 integration** — GitHub OAuth with proper error handling
-- **API key management** — rotatable API keys with rate limiting
-- **HMAC-SHA256 webhook verification** — constant-time signature comparison
-- **Sensitive data redaction** — automated filtering of credentials from logs
-- **Encrypted storage** — AES-GCM for GitHub OAuth tokens and webhook secrets
-- **Container hardening** — non-root users, read-only filesystems, health checks
-- **Input validation** — multi-layer validation with bean validation + size limits
-
----
-
-## Resume Bullet
-
-> Architected automated-code-review-tool, a multi-surface automated code review platform
-> featuring a Java 21 / Spring Boot REST API with HMAC-SHA256 webhook
-> ingestion, a FastAPI Python service with sliding-window CodeBERT
-> anti-pattern classification across the canonical anti-pattern taxonomy
-> (see `taxonomy/anti_patterns.yaml`), a VS Code extension,
-> and a GitHub Action.
-
----
+- Never commit `.env`, raw datasets, model weights, checkpoints, or experiment
+  output.
+- Redact source before durable ML ingestion and retain the redaction version.
+- Do not infer that a sample is clean merely because no finding exists.
+- Keep test data out of threshold tuning, early stopping, and model selection.
+- Treat GitHub tokens, API keys, webhook secrets, and annotation exports as
+  sensitive data.
 
 ## License
 
-[MIT](LICENSE) — © 2026 Tanmay Mangal.
+[MIT](LICENSE) © 2026 Tanmay Mangal.
