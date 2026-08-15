@@ -43,7 +43,8 @@ public final class HunkParser {
         List<FileDiff> files = new ArrayList<>();
         if (unifiedDiff == null || unifiedDiff.isBlank()) return new ParseResult(files);
 
-        String[] lines = unifiedDiff.split("\n", -1);
+        String normalizedDiff = unifiedDiff.replace("\r\n", "\n").replace('\r', '\n');
+        String[] lines = normalizedDiff.split("\n", -1);
         FileDiff currentFile = null;
         HunkBuilder currentHunk = null;
         int newLineNo = 0;
@@ -129,13 +130,16 @@ public final class HunkParser {
                     continue;
                 }
                 String newPath = currentFile.newPath() == null ? currentFile.oldPath() : currentFile.newPath();
-                currentHunk = new HunkBuilder(newPath, h.oldStart(), h.oldCount(), h.newStart(), h.newCount());
+                currentHunk = new HunkBuilder(
+                        newPath, h.oldStart(), h.oldCount(), h.newStart(), h.newCount(), line);
                 oldLineNo = h.oldStart();
                 newLineNo = h.newStart();
                 continue;
             }
 
             if (currentHunk == null) continue;
+
+            currentHunk.appendRaw(line);
 
             if (line.startsWith("+") && !line.startsWith("+++")) {
                 currentHunk.addAdded(line.substring(1), newLineNo);
@@ -148,6 +152,9 @@ public final class HunkParser {
                 currentHunk.addContext(ctx, oldLineNo, newLineNo);
                 oldLineNo++;
                 newLineNo++;
+            } else if (line.startsWith("\\")) {
+                // Unified-diff metadata (for example, no newline at EOF).
+                // It is part of hunk identity but not a source line.
             } else {
                 // Treat anything else as context to keep parser tolerant
                 currentHunk.addContext(line, oldLineNo, newLineNo);
@@ -233,24 +240,33 @@ public final class HunkParser {
         private final List<String> context = new ArrayList<>();
         private final StringBuilder raw = new StringBuilder();
 
-        HunkBuilder(String filePath, int oldStart, int oldCount, int newStart, int newCount) {
+        HunkBuilder(String filePath, int oldStart, int oldCount, int newStart, int newCount,
+                    String header) {
             this.filePath = filePath;
             this.oldStart = oldStart;
             this.oldCount = oldCount;
             this.newStart = newStart;
             this.newCount = newCount;
+            raw.append(header).append('\n');
         }
 
-        void addAdded(String text, int newLine) { added.add(text); raw.append('+').append(text).append('\n'); }
-        void addRemoved(String text, int oldLine) { removed.add(text); raw.append('-').append(text).append('\n'); }
+        void appendRaw(String line) { raw.append(line).append('\n'); }
+        void addAdded(String text, int newLine) { added.add(text); }
+        void addRemoved(String text, int oldLine) { removed.add(text); }
         void addContext(String text, int oldLine, int newLine) {
-            context.add(text); raw.append(' ').append(text).append('\n');
+            context.add(text);
         }
         FileHunk build() {
             return new FileHunk(filePath, detectLanguage(filePath),
                     oldStart, oldCount, newStart, newCount,
                     List.copyOf(added), List.copyOf(removed), List.copyOf(context),
-                    raw.toString());
+                    stripTrailingLf(raw.toString()));
+        }
+
+        private static String stripTrailingLf(String value) {
+            int end = value.length();
+            while (end > 0 && value.charAt(end - 1) == '\n') end--;
+            return value.substring(0, end);
         }
     }
 }

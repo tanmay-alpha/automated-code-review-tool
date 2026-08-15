@@ -14,10 +14,9 @@ import java.util.UUID;
 /**
  * Decouples dataset capture from normal PR review transactions.
  *
- * <p>Stored in {@code ml.ingestion_outbox}. The review transaction
- * inserts an outbox event; a background worker consumes it to persist
- * redacted code samples and associations. This ensures dataset capture
- * failure cannot affect normal PR review completion.</p>
+ * <p>Stored in {@code ml.ingestion_outbox}. The review transaction persists
+ * redacted samples and a reference-only event; a leased background worker
+ * then creates downstream associations.</p>
  */
 @Entity
 @Table(name = "ingestion_outbox", schema = "ml")
@@ -46,11 +45,29 @@ public class IngestionOutbox {
     @Column(name = "attempt_count", nullable = false)
     private Integer attemptCount = 0;
 
+    @Column(name = "max_attempts", nullable = false)
+    private Integer maxAttempts = 5;
+
     @Column(name = "available_at", nullable = false)
     private OffsetDateTime availableAt;
 
     @Column(name = "processed_at")
     private OffsetDateTime processedAt;
+
+    @Column(name = "locked_at")
+    private OffsetDateTime lockedAt;
+
+    @Column(name = "locked_by", length = 100)
+    private String lockedBy;
+
+    @Column(name = "dead_lettered_at")
+    private OffsetDateTime deadLetteredAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private OffsetDateTime updatedAt;
+
+    @Column(name = "deduplication_key", length = 255, unique = true)
+    private String deduplicationKey;
 
     @Column(name = "last_error", columnDefinition = "TEXT")
     private String lastError;
@@ -67,6 +84,9 @@ public class IngestionOutbox {
         if (createdAt == null) {
             createdAt = now;
         }
+        if (updatedAt == null) {
+            updatedAt = now;
+        }
         if (availableAt == null) {
             availableAt = now;
         }
@@ -75,6 +95,9 @@ public class IngestionOutbox {
         }
         if (attemptCount == null) {
             attemptCount = 0;
+        }
+        if (maxAttempts == null) {
+            maxAttempts = 5;
         }
     }
 
@@ -92,10 +115,22 @@ public class IngestionOutbox {
     public void setStatus(String status) { this.status = status; }
     public Integer getAttemptCount() { return attemptCount; }
     public void setAttemptCount(Integer attemptCount) { this.attemptCount = attemptCount; }
+    public Integer getMaxAttempts() { return maxAttempts; }
+    public void setMaxAttempts(Integer maxAttempts) { this.maxAttempts = maxAttempts; }
     public OffsetDateTime getAvailableAt() { return availableAt; }
     public void setAvailableAt(OffsetDateTime availableAt) { this.availableAt = availableAt; }
     public OffsetDateTime getProcessedAt() { return processedAt; }
     public void setProcessedAt(OffsetDateTime processedAt) { this.processedAt = processedAt; }
+    public OffsetDateTime getLockedAt() { return lockedAt; }
+    public void setLockedAt(OffsetDateTime lockedAt) { this.lockedAt = lockedAt; }
+    public String getLockedBy() { return lockedBy; }
+    public void setLockedBy(String lockedBy) { this.lockedBy = lockedBy; }
+    public OffsetDateTime getDeadLetteredAt() { return deadLetteredAt; }
+    public void setDeadLetteredAt(OffsetDateTime deadLetteredAt) { this.deadLetteredAt = deadLetteredAt; }
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public String getDeduplicationKey() { return deduplicationKey; }
+    public void setDeduplicationKey(String deduplicationKey) { this.deduplicationKey = deduplicationKey; }
     public String getLastError() { return lastError; }
     public void setLastError(String lastError) { this.lastError = lastError; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

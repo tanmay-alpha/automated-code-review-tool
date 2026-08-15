@@ -22,7 +22,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -58,32 +59,35 @@ public class ReviewService {
     private final PullRequestRepository pullRequestRepository;
     private final QualityMetricRepository qualityMetricRepository;
     private final RepositoryRepository repositoryRepository;
-    private final GitHubService gitHubService;
     private final ReviewSampleBridge reviewSampleBridge;
     private final IngestionOutboxRepository outboxRepository;
     private final PredictionEventRepository predictionEventRepository;
     private final ObjectMapper objectMapper;
+    private final SecretRedactor secretRedactor;
+    private final TransactionTemplate transactionTemplate;
 
     public ReviewService(MlWorkerService mlWorkerService,
                          FindingRepository findingRepository,
                          PullRequestRepository pullRequestRepository,
                          QualityMetricRepository qualityMetricRepository,
                          RepositoryRepository repositoryRepository,
-                         GitHubService gitHubService,
                          ReviewSampleBridge reviewSampleBridge,
                          IngestionOutboxRepository outboxRepository,
                          PredictionEventRepository predictionEventRepository,
-                         ObjectMapper objectMapper) {
+                         ObjectMapper objectMapper,
+                         SecretRedactor secretRedactor,
+                         PlatformTransactionManager transactionManager) {
         this.mlWorkerService = mlWorkerService;
         this.findingRepository = findingRepository;
         this.pullRequestRepository = pullRequestRepository;
         this.qualityMetricRepository = qualityMetricRepository;
         this.repositoryRepository = repositoryRepository;
-        this.gitHubService = gitHubService;
         this.reviewSampleBridge = reviewSampleBridge;
         this.outboxRepository = outboxRepository;
         this.predictionEventRepository = predictionEventRepository;
         this.objectMapper = objectMapper;
+        this.secretRedactor = secretRedactor;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     /**
@@ -93,10 +97,9 @@ public class ReviewService {
      * predictions. Unlocalized predictions become rejected events, not
      * silently dropped findings.</p>
      *
-     * <p>Dataset capture is decoupled via the outbox: if outbox insertion
-     * fails, the review still succeeds.</p>
+     * <p>The worker call runs without a database transaction. Persistence of
+     * findings, redacted samples, and their outbox references is atomic.</p>
      */
-    @Transactional
     public ReviewResult orchestrateReview(PullRequestEntity pr, String diff) {
         if (diff == null || diff.isBlank()) {
             diff = "";
@@ -118,6 +121,10 @@ public class ReviewService {
 
         // Parse the diff to extract file paths and code snippets for findings.
         DiffParseResult parsed = parseDiff(diff);
+        String reviewDiff = diff;
+
+        try {
+            ReviewResult persisted = transactionTemplate.execute(ignored -> {
 
         // Build a set of known files for unmapped-file detection.
         Set<String> knownFiles = new HashSet<>(parsed.fileOrder());
@@ -127,6 +134,7 @@ public class ReviewService {
 
         List<Finding> saved = new ArrayList<>();
         List<PredictionEvent> rejectedEvents = new ArrayList<>();
+        List<PredictionEvent> predictionEvents = new ArrayList<>();
         BigDecimal score = MlWorkerService.computeQualityScore(mlResponse);
 
         if (mlResponse.findings() != null) {
@@ -147,6 +155,7 @@ public class ReviewService {
                         rejectedEvents.add(event);
                         log.warn("Dropping ML finding {} — line {} does not match any file in the diff",
                                 ml.antiPattern(), ml.lineStart());
+                        predictionEvents.add(predictionEventRepository.save(event));
                         continue;
                     }
                     event.setStatus("persisted");
@@ -170,27 +179,32 @@ public class ReviewService {
                             .build();
                     saved.add(findingRepository.save(f));
                 }
-                predictionEventRepository.save(event);
+                predictionEvents.add(predictionEventRepository.save(event));
             }
         }
 
-        // -- outbox: decouple dataset capture ------------------------------
-        try {
-            IngestionOutbox outbox = new IngestionOutbox();
-            outbox.setEventType(OUTBOX_EVENT_TYPE);
-            outbox.setAggregateType("pull_request");
-            outbox.setAggregateId(pr.getRepo().getId());
-            outbox.setPayload(buildOutboxPayload(pr, saved, rejectedEvents, diff));
-            outbox.setStatus("pending");
-            outbox.setAttemptCount(0);
-            outbox.setAvailableAt(OffsetDateTime.now());
-            outbox.setCreatedAt(OffsetDateTime.now());
-            outboxRepository.save(outbox);
-            log.info("Inserted outbox event {} for PR #{}", outbox.getId(), pr.getGithubPrNumber());
-        } catch (Exception ex) {
-            // Outbox failure must not affect the review result.
-            log.error("Failed to insert outbox event for PR #{}: {}", pr.getGithubPrNumber(), ex.getMessage());
-        }
+        // Persist redacted samples before the outbox. The event contains only
+        // safe row references, never source text or a full diff.
+        List<CodeSample> samples = reviewSampleBridge.persistHunksForReview(
+                pr.getRepo().getId(), pr.getId(), pr.getHeadSha(), reviewDiff);
+
+        // -- outbox: decouple downstream association -----------------------
+        IngestionOutbox outbox = new IngestionOutbox();
+        outbox.setEventType(OUTBOX_EVENT_TYPE);
+        outbox.setAggregateType("pull_request");
+        outbox.setAggregateId(pr.getId());
+        outbox.setDeduplicationKey(OUTBOX_EVENT_TYPE + ":" + pr.getId() + ":" + pr.getHeadSha());
+        outbox.setPayload(buildOutboxPayload(pr, saved, predictionEvents, samples));
+        outbox.setStatus("pending");
+        outbox.setAttemptCount(0);
+        outbox.setMaxAttempts(5);
+        outbox.setAvailableAt(OffsetDateTime.now());
+        outbox.setCreatedAt(OffsetDateTime.now());
+        outbox.setUpdatedAt(OffsetDateTime.now());
+        IngestionOutbox durableEvent = outboxRepository
+                .findByDeduplicationKey(outbox.getDeduplicationKey())
+                .orElseGet(() -> outboxRepository.save(outbox));
+        log.info("Ensured outbox event {} for PR #{}", durableEvent.getId(), pr.getGithubPrNumber());
 
         // -- update PR ----------------------------------------------------
         pr.setQualityScore(score);
@@ -207,7 +221,18 @@ public class ReviewService {
 
         log.info("PR #{} reviewed — score={}, findings={}, rejected={}",
                 pr.getGithubPrNumber(), score, saved.size(), rejectedEvents.size());
-        return ReviewResult.of(pr, saved, score);
+                return ReviewResult.of(pr, saved, score);
+            });
+            return Objects.requireNonNull(persisted, "review transaction returned no result");
+        } catch (RuntimeException ex) {
+            String message = ex.getMessage() == null ? "review persistence failed" : ex.getMessage();
+            String safeError = secretRedactor.redact(message);
+            log.error("Review persistence failed for PR #{}: {}", pr.getGithubPrNumber(), safeError);
+            pr.setStatus(WebhookService.STATUS_FAILED);
+            pr.setErrorMessage(safeError);
+            pullRequestRepository.save(pr);
+            return ReviewResult.empty(safeError);
+        }
     }
 
     // -----------------------------------------------------------------
@@ -286,19 +311,20 @@ public class ReviewService {
 
     private String buildOutboxPayload(PullRequestEntity pr,
                                       List<Finding> findings,
-                                      List<PredictionEvent> rejectedEvents,
-                                      String diff) {
+                                      List<PredictionEvent> predictionEvents,
+                                      List<CodeSample> samples) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("pullRequestId", pr.getId().toString());
+        payload.put("repositoryId", pr.getRepo().getId().toString());
         payload.put("githubPrNumber", pr.getGithubPrNumber());
         payload.put("headSha", pr.getHeadSha());
-        payload.put("diff", diff == null ? "" : diff);
+        payload.put("codeSampleIds", samples.stream().map(s -> s.getId().toString()).toList());
         payload.put("findingIds", findings.stream().map(f -> f.getId().toString()).toList());
-        payload.put("rejectedEventIds", rejectedEvents.stream().map(e -> e.getId().toString()).toList());
+        payload.put("predictionEventIds", predictionEvents.stream().map(e -> e.getId().toString()).toList());
         try {
             return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException e) {
-            return "{}";
+            throw new IllegalStateException("Could not serialize redacted outbox payload", e);
         }
     }
 

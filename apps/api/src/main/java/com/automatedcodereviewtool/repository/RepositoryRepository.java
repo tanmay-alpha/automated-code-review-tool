@@ -3,6 +3,8 @@ package com.automatedcodereviewtool.repository;
 import com.automatedcodereviewtool.entity.Repository;
 import com.automatedcodereviewtool.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -17,6 +19,9 @@ import java.util.UUID;
  */
 public interface RepositoryRepository extends JpaRepository<Repository, UUID> {
     Optional<Repository> findByGithubId(Long githubId);
+
+    @Query("select r from Repository r join fetch r.owner where r.id = :id")
+    Optional<Repository> findWithOwnerById(@Param("id") UUID id);
 
     List<Repository> findAllByOwnerAndIsActiveTrue(User owner);
 }

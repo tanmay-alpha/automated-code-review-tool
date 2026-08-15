@@ -53,7 +53,7 @@ public class PullRequestEntity {
 
     @Column(name = "status", nullable = false)
     @Builder.Default
-    private String status = "pending";
+    private String status = "processing";
 
     @Column(name = "quality_score", precision = 5, scale = 2)
     private BigDecimal qualityScore;

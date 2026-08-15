@@ -29,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * </ul>
  */
 @Testcontainers
+@org.junit.jupiter.api.Tag("postgres")
 @SpringBootTest
 @org.springframework.test.context.ActiveProfiles("test")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)

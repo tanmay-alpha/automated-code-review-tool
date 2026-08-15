@@ -32,18 +32,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Integration tests for Phase 1B: annotation idempotency, reviewer
- * conflicts, outbox, rejected predictions, freeze protection.
+ * PostgreSQL integration checks for the ML data contract.
  */
 @Testcontainers
+@org.junit.jupiter.api.Tag("postgres")
 @SpringBootTest
 @org.springframework.test.context.ActiveProfiles("test")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-class Phase1BIntegrationTest {
+class MlDataContractPostgresTest {
 
     @Container
     static final PostgreSQLContainer<?> PG = new PostgreSQLContainer<>("postgres:16-alpine")
-            .withDatabaseName("acrt_phase1b_test")
+            .withDatabaseName("acrt_ml_contract_test")
             .withUsername("test")
             .withPassword("test");
 
