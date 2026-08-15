@@ -1,345 +1,225 @@
-"""
-automated-code-review-tool — rule-based anti-pattern fallback scanner.
+"""Deterministic, hunk-localized fallback detector."""
 
-Used when the CodeBERT model is unavailable (e.g., ``MODEL_NAME=none``).
-Runs zero-cost regex checks over the **added** lines of each diff hunk and
-produces findings mapped to actual file paths, hunk hashes, and 1-indexed
-new-file line numbers.
-
-Requirements:
-- Preserve destination path for renames
-- Skip binary files
-- Skip removed-only hunks
-- Scan only added lines
-- Map each finding to its actual new-file line
-- Deduplicate within a hunk
-"""
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
-from typing import List
 
+from app.diff_parser import DiffLine, FileHunk, parse_diff
 from app.model import compute_quality_score
 from app.schemas import Finding, ReviewResponse
-
-
-@dataclass
-class HunkLine:
-    real_line: int
-    content: str
-
-
-@dataclass
-class FileHunk:
-    file_path: str
-    hunk_hash: str
-    added_lines: list[HunkLine]
-    is_binary: bool = False
-
-
-# ---------------------------------------------------------------------------
-# Regex patterns for rules
-# ---------------------------------------------------------------------------
+from app.taxonomy import AntiPattern, Taxonomy, load_taxonomy
 
 _SECRET_RE = re.compile(
-    r'(?i)(api_key|api_token|apikey|secret_key|private_key|'
-    r'access_key|auth_token|password)\s*[=:]\s*["\'][A-Za-z0-9_\-]{32,}["\']'
+    r"(?i)(api_key|api_token|apikey|secret_key|private_key|access_key|"
+    r"auth_token|password)\s*[=:]\s*['\"][A-Za-z0-9_+/=\-]{16,}['\"]"
 )
-
-_SQL_CONCAT_RE = re.compile(r'execute\s*\(.*\+.*\)', re.IGNORECASE)
-_BROAD_EXC_RE = re.compile(r'^\s*except\s*(Exception\s*|$)', re.MULTILINE | re.IGNORECASE)
-_PY_PRINT_RE = re.compile(r'^\s*print\s*\(', re.MULTILINE)
-_JS_CONSOLE_RE = re.compile(r'console\.log\s*\(', re.IGNORECASE)
-
+_SQL_CONCAT_RE = re.compile(r"(?:execute|query)\s*\(.*(?:\+|f['\"])", re.I)
+_BROAD_EXC_RE = re.compile(r"^\s*except\s*(?:Exception\s*)?(?::|$)", re.I)
+_JAVA_CATCH_RE = re.compile(r"catch\s*\(\s*(?:Exception|Throwable)\b", re.I)
+_WEAK_CRYPTO_RE = re.compile(
+    r"\b(?:md5|sha1|des|rc4)\s*\(|MessageDigest\.getInstance\s*\(\s*['\"]SHA-?1",
+    re.I,
+)
+_PRINT_RE = re.compile(r"(?:^\s*print\s*\(|console\.log\s*\()", re.I)
+_MAGIC_NUMBER_RE = re.compile(r"(?<![\w.'\"])(?:[2-9]\d|[1-9]\d{2,})(?![\w.'\"])")
+_LOOP_RE = re.compile(r"^\s*(?:for|while)\b")
+_QUERY_RE = re.compile(r"\b(?:query|execute|findBy|fetch|request|get)\s*\(", re.I)
 _COMMENTED_CODE_RE = re.compile(
-    r'(?m)^(?:#{1,2}|\/\/)\s+.+\n(?:^(?:#{1,2}|\/\/)\s+.+\n){2,}',
-)
-
-_MAGIC_NUMBER_RE = re.compile(
-    r'[^A-Za-z_"\']\b(\d{2,})\b[^A-Za-z_"\']'
-)
-
-_LOOP_RE = re.compile(r'^\s*(?:for|while)\s+', re.MULTILINE)
-
-_JAVA_CATCH_RE = re.compile(
-    r'catch\s*\(\s*(?:Exception|Throwable|\.\.\.\s*\w+)\s*\)',
-    re.IGNORECASE,
+    r"(?m)^(?:\s*#|\s*//)\s*\S.+\n(?:^(?:\s*#|\s*//)\s*\S.+\n?){2,}"
 )
 
 
-_RULE_CONFIG: dict[str, dict] = {
-    "SECURITY_HARDCODED_SECRET": {
-        "severity": "critical",
-        "confidence": 0.70,
-        "explanation": (
-            "Possible API key or secret token hard-coded in source. "
-            "Rotate the credential immediately and load it from an environment variable."
-        ),
-    },
-    "SECURITY_SQL_INJECTION": {
-        "severity": "major",
-        "confidence": 0.65,
-        "explanation": (
-            "String concatenation inside a database execute() call risks SQL injection. "
-            "Use parameterised queries or an ORM."
-        ),
-    },
-    "RELIABILITY_BROAD_EXCEPTION": {
-        "severity": "major",
-        "confidence": 0.75,
-        "explanation": (
-            "Catching a broad exception swallows unexpected errors. Catch specific exceptions."
-        ),
-    },
-    "PERFORMANCE_QUADRATIC_LOOP": {
-        "severity": "major",
-        "confidence": 0.60,
-        "explanation": (
-            "Nested loops with O(n^2) complexity risk performance degradation."
-        ),
-    },
-    "READABILITY_MAGIC_NUMBER": {
-        "severity": "minor",
-        "confidence": 0.55,
-        "explanation": (
-            "Unexplained numeric literal in code — extract into a named constant."
-        ),
-    },
-    "READABILITY_LONG_METHOD": {
-        "severity": "minor",
-        "confidence": 0.40,
-        "explanation": (
-            "Single added line exceeds 200 characters."
-        ),
-    },
-    "MAINTAINABILITY_PRINT_STATEMENT": {
-        "severity": "minor",
-        "confidence": 0.65,
-        "explanation": (
-            "Direct print statement — use structured logging."
-        ),
-    },
-    "MAINTAINABILITY_COMMENTED_CODE": {
-        "severity": "minor",
-        "confidence": 0.60,
-        "explanation": (
-            "Commented-out code block should be removed."
-        ),
-    },
+@dataclass(frozen=True)
+class RuleHit:
+    anti_pattern_id: str
+    line_start: int
+    line_end: int
+    confidence: float
+
+
+_CONFIDENCE: dict[str, float] = {
+    "SECURITY_HARDCODED_SECRET": 0.70,
+    "SECURITY_SQL_INJECTION": 0.65,
+    "SECURITY_WEAK_CRYPTO": 0.65,
+    "PERFORMANCE_N_PLUS_ONE": 0.60,
+    "PERFORMANCE_QUADRATIC_LOOP": 0.60,
+    "RELIABILITY_BROAD_EXCEPTION": 0.75,
+    "READABILITY_MAGIC_NUMBER": 0.55,
+    "READABILITY_LONG_METHOD": 0.40,
+    "MAINTAINABILITY_PRINT_STATEMENT": 0.65,
+    "MAINTAINABILITY_COMMENTED_CODE": 0.60,
 }
 
 
-# ---------------------------------------------------------------------------
-# Diff Parsing (Hunk-Aware)
-# ---------------------------------------------------------------------------
+def _taxonomy_rules(taxonomy: Taxonomy) -> dict[str, AntiPattern]:
+    by_id = {entry.id: entry for entry in taxonomy.entries}
+    unknown = sorted(set(_CONFIDENCE) - set(by_id))
+    if unknown:
+        raise RuntimeError(f"Fallback rules reference unknown taxonomy IDs: {unknown}")
+    return by_id
 
-_DIFF_GIT_RE = re.compile(r'^diff --git a/(.*) b/(.*)$')
-_HUNK_HEADER_RE = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
+
+def _line_number(line: DiffLine, default: int) -> int:
+    return line.new_line if line.new_line is not None else default
 
 
-def parse_diff_hunks(diff: str) -> list[FileHunk]:
-    """Parse a unified diff into FileHunk objects."""
-    hunks: list[FileHunk] = []
-    if not diff or not diff.strip():
-        return hunks
+def _scan_hunk(hunk: FileHunk) -> list[RuleHit]:
+    lines = list(hunk.added_lines)
+    hits: list[RuleHit] = []
 
-    lines = diff.splitlines()
-    current_file = "unknown"
-    is_binary = False
-    i = 0
-    n = len(lines)
+    for index, diff_line in enumerate(lines):
+        text = diff_line.text
+        line_no = _line_number(diff_line, hunk.new_start)
+        if _SECRET_RE.search(text):
+            hits.append(RuleHit("SECURITY_HARDCODED_SECRET", line_no, line_no, 0.70))
+        if _SQL_CONCAT_RE.search(text):
+            hits.append(RuleHit("SECURITY_SQL_INJECTION", line_no, line_no, 0.65))
+        if _WEAK_CRYPTO_RE.search(text):
+            hits.append(RuleHit("SECURITY_WEAK_CRYPTO", line_no, line_no, 0.65))
+        if _BROAD_EXC_RE.search(text) or (
+            hunk.language == "java" and _JAVA_CATCH_RE.search(text)
+        ):
+            hits.append(RuleHit("RELIABILITY_BROAD_EXCEPTION", line_no, line_no, 0.75))
+        if _PRINT_RE.search(text):
+            hits.append(RuleHit("MAINTAINABILITY_PRINT_STATEMENT", line_no, line_no, 0.65))
+        if len(text.rstrip()) > 200:
+            hits.append(RuleHit("READABILITY_LONG_METHOD", line_no, line_no, 0.40))
+        if _MAGIC_NUMBER_RE.search(text):
+            hits.append(RuleHit("READABILITY_MAGIC_NUMBER", line_no, line_no, 0.55))
 
-    while i < n:
-        line = lines[i]
+        if _QUERY_RE.search(text):
+            recent = lines[max(0, index - 5) : index]
+            loop_line = next((item for item in reversed(recent) if _LOOP_RE.match(item.text)), None)
+            if loop_line is not None:
+                start = _line_number(loop_line, line_no)
+                hits.append(RuleHit("PERFORMANCE_N_PLUS_ONE", start, line_no, 0.60))
 
-        # diff --git header
-        m_git = _DIFF_GIT_RE.match(line)
-        if m_git:
-            current_file = m_git.group(2)
-            is_binary = False
-            i += 1
+    for index, line in enumerate(lines):
+        if not _LOOP_RE.match(line.text):
             continue
-
-        if line.startswith("rename to "):
-            current_file = line[10:].strip()
-            i += 1
-            continue
-
-        if line.startswith("+++ b/"):
-            current_file = line[6:].strip()
-            i += 1
-            continue
-        elif line.startswith("+++ /dev/null"):
-            current_file = "/dev/null"
-            i += 1
-            continue
-
-        if line.startswith("Binary files ") or line.startswith("GIT binary patch"):
-            is_binary = True
-            i += 1
-            continue
-
-        # Hunk header
-        m_hunk = _HUNK_HEADER_RE.match(line)
-        if m_hunk:
-            new_start = int(m_hunk.group(3))
-            hunk_raw_lines: list[str] = [line]
-            added_hunk_lines: list[HunkLine] = []
-            curr_new_line = new_start
-
-            i += 1
-            while i < n:
-                hline = lines[i]
-                if hline.startswith("diff --git") or hline.startswith("@@"):
-                    break
-
-                hunk_raw_lines.append(hline)
-
-                if hline.startswith("+") and not hline.startswith("+++"):
-                    added_hunk_lines.append(HunkLine(real_line=curr_new_line, content=hline[1:]))
-                    curr_new_line += 1
-                elif hline.startswith("-") and not hline.startswith("---"):
-                    pass
-                elif not hline.startswith("\\"):
-                    curr_new_line += 1
-
-                i += 1
-
-            # Ignore deleted files (/dev/null)
-            if current_file != "/dev/null":
-                raw_block = "\n".join(hunk_raw_lines)
-                h_hash = hashlib.sha256(raw_block.encode("utf-8")).hexdigest()[:16]
-                hunks.append(FileHunk(
-                    file_path=current_file,
-                    hunk_hash=h_hash,
-                    added_lines=added_hunk_lines,
-                    is_binary=is_binary,
-                ))
-            continue
-
-        i += 1
-
-    return hunks
-
-
-# ---------------------------------------------------------------------------
-# Per-hunk detectors
-# ---------------------------------------------------------------------------
-
-def _scan_hunk_lines(hunk_lines: list[HunkLine], language: str) -> list[tuple[str, int, int]]:
-    """Scan added lines of a single hunk. Returns list of (rule_id, line_start, line_end)."""
-    hits: list[tuple[str, int, int]] = []
-    lines_text = [hl.content for hl in hunk_lines]
-
-    for idx, hl in enumerate(hunk_lines):
-        line = hl.content
-        line_no = hl.real_line
-
-        if _SECRET_RE.search(line):
-            hits.append(("SECURITY_HARDCODED_SECRET", line_no, line_no))
-        if _SQL_CONCAT_RE.search(line):
-            hits.append(("SECURITY_SQL_INJECTION", line_no, line_no))
-        if _BROAD_EXC_RE.search(line):
-            hits.append(("RELIABILITY_BROAD_EXCEPTION", line_no, line_no))
-        if language == "java" and _JAVA_CATCH_RE.search(line):
-            hits.append(("RELIABILITY_BROAD_EXCEPTION", line_no, line_no))
-
-        if language in ("python", "unknown", None) and _PY_PRINT_RE.match(line):
-            hits.append(("MAINTAINABILITY_PRINT_STATEMENT", line_no, line_no))
-        if language in ("javascript", "typescript", "unknown", None) and _JS_CONSOLE_RE.search(line):
-            hits.append(("MAINTAINABILITY_PRINT_STATEMENT", line_no, line_no))
-
-        if len(line.rstrip()) > 200:
-            hits.append(("READABILITY_LONG_METHOD", line_no, line_no))
-
-        for m in _MAGIC_NUMBER_RE.finditer(line):
-            val = m.group(1)
-            if val not in ("0", "1"):
-                hits.append(("READABILITY_MAGIC_NUMBER", line_no, line_no))
+        indent = len(line.text) - len(line.text.lstrip())
+        for nested in lines[index + 1 :]:
+            if not nested.text.strip():
+                continue
+            nested_indent = len(nested.text) - len(nested.text.lstrip())
+            if nested_indent <= indent:
+                break
+            if _LOOP_RE.match(nested.text):
+                start = _line_number(line, hunk.new_start)
+                end = _line_number(nested, start)
+                hits.append(RuleHit("PERFORMANCE_QUADRATIC_LOOP", start, end, 0.60))
                 break
 
-    # Commented code over hunk
-    block = "\n".join(lines_text)
-    for m in _COMMENTED_CODE_RE.finditer(block):
-        start_idx = block[: m.start()].count("\n")
-        end_idx = start_idx + m.group(0).count("\n") - 1
-        if start_idx < len(hunk_lines) and end_idx < len(hunk_lines):
-            hits.append(("MAINTAINABILITY_COMMENTED_CODE", hunk_lines[start_idx].real_line, hunk_lines[end_idx].real_line))
-
-    # Quadratic loops
-    current_depth = 0
-    max_depth = 0
-    start_line = 0
-    for hl in hunk_lines:
-        line = hl.content
-        if _LOOP_RE.match(line):
-            current_depth += 1
-            if current_depth == 2 and max_depth < 2:
-                max_depth = 2
-                start_line = hl.real_line
-        elif line.strip() == "" or line.startswith("#"):
-            continue
-        else:
-            if current_depth > max_depth:
-                max_depth = current_depth
-            current_depth = 0
-
-    if max_depth >= 2 and start_line > 0:
-        hits.append(("PERFORMANCE_QUADRATIC_LOOP", start_line, start_line + max_depth - 1))
-
-    return hits
-
-
-# ---------------------------------------------------------------------------
-# Entry Point
-# ---------------------------------------------------------------------------
-
-def fallback_scan(diff: str, language: str = "unknown") -> ReviewResponse:
-    """Run rule-based anti-pattern detection on a unified diff.
-
-    Processes each file hunk independently and maps findings to the real line number
-    and file path.
-    """
-    findings: List[Finding] = []
-    hunks = parse_diff_hunks(diff)
-    windows_processed = max(1, len(hunks))
-
-    for hunk in hunks:
-        if hunk.is_binary or not hunk.added_lines:
-            continue
-
-        hunk_hits = _scan_hunk_lines(hunk.added_lines, language)
-        seen_hunk_keys: set[tuple] = set()
-
-        for rule_id, l_start, l_end in hunk_hits:
-            key = (rule_id, l_start, l_end)
-            if key in seen_hunk_keys:
-                continue
-            seen_hunk_keys.add(key)
-
-            cfg = _RULE_CONFIG[rule_id]
-            findings.append(
-                Finding(
-                    filePath=hunk.file_path,
-                    hunkHash=hunk.hunk_hash,
-                    lineStart=l_start,
-                    lineEnd=l_end,
-                    antiPattern=rule_id,
-                    category=rule_id.split("_", 1)[0],
-                    severity=cfg["severity"],
-                    confidence=cfg["confidence"],
-                    explanation=cfg["explanation"],
+    block = "\n".join(line.text for line in lines)
+    for match in _COMMENTED_CODE_RE.finditer(block):
+        start_index = block[: match.start()].count("\n")
+        end_index = min(
+            len(lines) - 1,
+            start_index + max(0, match.group(0).rstrip("\n").count("\n")),
+        )
+        if lines:
+            hits.append(
+                RuleHit(
+                    "MAINTAINABILITY_COMMENTED_CODE",
+                    _line_number(lines[start_index], hunk.new_start),
+                    _line_number(lines[end_index], hunk.new_start),
+                    0.60,
                 )
             )
 
+    unique: dict[tuple[str, int, int], RuleHit] = {}
+    for hit in hits:
+        unique[(hit.anti_pattern_id, hit.line_start, hit.line_end)] = hit
+    return list(unique.values())
+
+
+def _file_mode_hunk(content: str, language: str, file_path: str | None) -> FileHunk:
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    source_lines = normalized.split("\n")
+    raw_hunk = "\n".join(
+        [f"@@ -0,0 +1,{len(source_lines)} @@", *[f"+{line}" for line in source_lines]]
+    )
+    return FileHunk(
+        file_path=file_path or "input",
+        language=language or "unknown",
+        old_start=0,
+        old_count=0,
+        new_start=1,
+        new_count=len(source_lines),
+        added_lines=tuple(
+            DiffLine("added", line, None, index)
+            for index, line in enumerate(source_lines, start=1)
+        ),
+        removed_lines=(),
+        context_lines=(),
+        raw_hunk=raw_hunk,
+        is_new_file=True,
+    )
+
+
+def fallback_findings(
+    diff: str,
+    *,
+    mode: str = "diff",
+    language: str = "unknown",
+    file_path: str | None = None,
+) -> tuple[list[Finding], int, str]:
+    """Return localized findings, processed-hunk count, and taxonomy version."""
+    taxonomy = load_taxonomy()
+    metadata = _taxonomy_rules(taxonomy)
+    hunks = (
+        [_file_mode_hunk(diff, language, file_path)]
+        if mode == "file"
+        else parse_diff(diff)
+    )
+    findings: list[Finding] = []
+
+    for hunk in hunks:
+        if not hunk.added_lines:
+            continue
+        for hit in _scan_hunk(hunk):
+            anti_pattern = metadata[hit.anti_pattern_id]
+            findings.append(
+                Finding(
+                    filePath=hunk.file_path,
+                    hunkHash=hunk.hunk_sha256,
+                    lineStart=hit.line_start,
+                    lineEnd=hit.line_end,
+                    antiPattern=anti_pattern.id,
+                    category=anti_pattern.category,
+                    severity=anti_pattern.default_severity,
+                    confidence=hit.confidence,
+                    explanation=(
+                        anti_pattern.description.strip().splitlines()[0]
+                        if anti_pattern.description
+                        else f"{anti_pattern.display_name} detected."
+                    ),
+                )
+            )
+    return findings, max(1, len(hunks)), taxonomy.version
+
+
+def fallback_scan(
+    diff: str,
+    language: str = "unknown",
+    *,
+    mode: str = "diff",
+    file_path: str | None = None,
+) -> ReviewResponse:
+    """Analyze a unified diff without a model checkpoint."""
+    findings, hunks_processed, taxonomy_version = fallback_findings(
+        diff,
+        mode=mode,
+        language=language,
+        file_path=file_path,
+    )
     return ReviewResponse(
         findings=findings,
         qualityScore=compute_quality_score(findings),
         processingTimeMs=0,
-        windowsProcessed=windows_processed,
+        windowsProcessed=hunks_processed,
         engine="fallback",
         modelVersion="rule-baseline-v1",
-        taxonomyVersion="1.0.0",
+        taxonomyVersion=taxonomy_version,
     )

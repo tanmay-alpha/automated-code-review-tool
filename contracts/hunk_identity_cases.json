@@ -1,0 +1,16 @@
+{
+  "algorithm": "sha256",
+  "encoding": "utf-8",
+  "lineEndings": "lf",
+  "trailingNewline": false,
+  "includesPath": false,
+  "includesRangeHeader": true,
+  "redactionStage": "pre-redaction structural hunk; use contentSha256 for redacted dataset identity",
+  "cases": [
+    {
+      "name": "javascript replacement",
+      "rawHunk": "@@ -10,2 +10,3 @@ function demo()\n const x = 1;\n-old();\n+newCall();",
+      "hunkSha256": "53b1ce59bd7f5714f9a68fc4033686620f6c695526c7df90ac56ad9d679cfd04"
+    }
+  ]
+}

@@ -1,9 +1,4 @@
-"""
-automated-code-review-tool — ML worker configuration (Issue #9).
-
-Single BaseSettings source-of-truth. Loaded from environment + a .env
-file at startup. Importable as `from app.config import settings`.
-"""
+"""Environment-backed ML worker configuration."""
 from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,17 +19,20 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # HuggingFace model to load for inference.
-    MODEL_NAME: str = "tanmay-alpha/automated-code-review-tool-codebert"
+    # A checkpoint is opt-in. A clean checkout always boots the rule engine.
+    MODEL_NAME: str = "none"
     # Optional HF token (only needed for private models / first-time push).
     HF_TOKEN: str = ""
     # Shared secret the API gateway uses to authenticate calls.
     ML_WORKER_SECRET: str = ""
-    # Sigmoid threshold for converting logits → binary findings.
-    THRESHOLD: float = 0.5
+    # Optional debug override. Promoted checkpoints normally use their
+    # validation-tuned per-label thresholds.
+    MODEL_THRESHOLD_OVERRIDE: float | None = None
     # CodeBERT max sequence length; windows beyond this are split.
     MAX_SEQ_LENGTH: int = 512
-    # Max seconds to wait for a single inference before returning 504.
+    # Content-token overlap between adjacent inference windows.
+    MODEL_STRIDE: int = 64
+    # Max seconds before the request degrades to the fallback engine.
     ML_INFERENCE_TIMEOUT_S: float = 30.0
     # Comma-separated list of CORS origins allowed to call this service
     # from a browser. Empty list disables CORS entirely.

@@ -1,7 +1,7 @@
 {
   "finding_example": {
     "filePath": "src/payment.py",
-    "hunkHash": "a1b2c3d4e5f60718",
+    "hunkHash": "53b1ce59bd7f5714f9a68fc4033686620f6c695526c7df90ac56ad9d679cfd04",
     "lineStart": 42,
     "lineEnd": 42,
     "antiPattern": "SECURITY_HARDCODED_SECRET",
@@ -14,7 +14,7 @@
     "findings": [
       {
         "filePath": "src/payment.py",
-        "hunkHash": "a1b2c3d4e5f60718",
+        "hunkHash": "53b1ce59bd7f5714f9a68fc4033686620f6c695526c7df90ac56ad9d679cfd04",
         "lineStart": 42,
         "lineEnd": 42,
         "antiPattern": "SECURITY_HARDCODED_SECRET",
@@ -24,7 +24,7 @@
         "explanation": "Hardcoded API secret key detected in line."
       }
     ],
-    "qualityScore": 100.0,
+    "qualityScore": 81.8,
     "processingTimeMs": 4,
     "windowsProcessed": 1,
     "engine": "fallback",

@@ -1,12 +1,11 @@
-"""
-automated-code-review-tool — Unified diff parser (Phase 1A).
+"""Parse unified diffs into independently identifiable file hunks.
 
-The previous parser collapsed a file into a single :class:`FileHunk`,
-hiding per-hunk source line numbers and missing new-file line ranges.
-
-This parser produces one :class:`FileHunk` per real unified-diff hunk,
-preserves per-line old/new line numbers, and gives every hunk a
-deterministic SHA-256 hash for dataset deduplication.
+``hunk_sha256`` is the lowercase SHA-256 hex digest of the UTF-8 bytes of
+``raw_hunk``: the hunk header and body with line endings normalized to ``\n``
+and no trailing newline. The path is excluded; line ranges are included in the
+header. ``content_sha256`` identifies the added content separately.
+The structural hash is computed before persistence redaction; dataset records
+must use their separate hash of redacted content for data identity.
 """
 from __future__ import annotations
 
@@ -78,15 +77,15 @@ class FileHunk:
     is_new_file: bool = False
     is_deleted_file: bool = False
     hunk_sha256: str = ""
-    file_sha256: str = ""  # hash of added code only — for near-dup detection
+    content_sha256: str = ""
 
     def __post_init__(self) -> None:
         # Compute deterministic hashes if not provided.
         if not self.hunk_sha256:
             object.__setattr__(self, "hunk_sha256", _hash_text(self.raw_hunk))
-        if not self.file_sha256:
+        if not self.content_sha256:
             object.__setattr__(
-                self, "file_sha256", _hash_text(self.added_code())
+                self, "content_sha256", _hash_text(self.added_code())
             )
 
     def added_code(self) -> str:

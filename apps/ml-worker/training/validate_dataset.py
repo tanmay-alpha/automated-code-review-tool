@@ -1,226 +1,208 @@
-"""Data-quality validator for produced dataset directories.
-
-Checks (each carries a severity; ``critical`` failures fail the run):
-
-* missing diff content                  (critical)
-* missing language                      (critical)
-* unknown taxonomy IDs                  (critical)
-* invalid line ranges                   (critical)
-* duplicate hashes                      (warning)
-* samples present in multiple splits    (critical)
-* PR groups present in multiple splits  (critical)
-* empty labels                          (critical)
-* labels without supporting annotation  (critical)
-* trainable labels with zero examples   (warning)
-* extreme label imbalance               (warning)
-* secrets that escaped redaction        (critical)
-
-Emits ``data_quality_report.json`` and ``.md`` into the dataset dir.
-"""
+"""Quality gates for immutable dataset artifacts."""
 
 from __future__ import annotations
 
+import hashlib
 import json
-import re
-import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
-_HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parent.parent
-for _p in (str(_HERE.parent), str(_REPO_ROOT)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-from taxonomy import load_canonical_taxonomy, trainable_ids  # noqa: E402
+from app.secret_redaction import redact_secrets
+from app.taxonomy import load_taxonomy
+from training.dataset_contract import ALLOWED_DATA_USE, read_records
+from training.dataset_manifest import file_sha256, read_manifest
+from training.group_split import duplicate_components
 
 
-SPLITS = ("train", "validation", "test")
-
-_SECRET_PATTERNS = [
-    re.compile(r"(?i)(password|secret|api[_-]?key)\s*[:=]\s*['\"][^'\"]{4,}['\"]"),
-    re.compile(r"['\"][A-Za-z0-9+/=_-]{32,}['\"]"),
-]
-
-
-@dataclass
+@dataclass(frozen=True)
 class Finding:
     severity: str
     code: str
     message: str
+    sample_ids: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "severity": self.severity,
+            "code": self.code,
+            "message": self.message,
+            "sample_ids": list(self.sample_ids),
+        }
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    if not path.exists():
-        return []
-    out = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        out.append(json.loads(line))
-    return out
+def _load_splits(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise FileNotFoundError(f"splits artifact not found: {path}")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+        raise ValueError("splits.json must be a schema_version=1 object")
+    if not isinstance(raw.get("samples"), dict) or not isinstance(raw.get("components"), dict):
+        raise ValueError("splits.json requires samples and components mappings")
+    return raw
 
 
-def _looks_like_secret(text: str) -> bool:
-    return any(p.search(text or "") for p in _SECRET_PATTERNS)
-
-
-def validate_dataset_dir(dataset_dir: Path) -> Dict[str, Any]:
-    """Validate a dataset directory.
-
-    Returns a dict with keys ``findings`` (list of Finding dicts),
-    ``critical_failures`` (int) and ``summary``.
-    """
-
-    findings: List[Finding] = []
-    critical_failures = 0
-
+def validate_dataset_dir(dataset_dir: Path) -> dict[str, Any]:
+    findings: list[Finding] = []
     manifest_path = dataset_dir / "manifest.json"
     samples_path = dataset_dir / "samples.jsonl"
     splits_path = dataset_dir / "splits.json"
 
-    if not manifest_path.exists():
-        return _result(findings, 1, "manifest.json missing")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        manifest = read_manifest(manifest_path)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        return _report([Finding("critical", "invalid_manifest", str(exc))], {})
+    try:
+        records = read_records(samples_path)
+    except (FileNotFoundError, ValueError) as exc:
+        return _report([Finding("critical", "invalid_samples", str(exc))], {})
+    try:
+        splits = _load_splits(splits_path)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        return _report([Finding("critical", "invalid_splits", str(exc))], {})
 
-    if not samples_path.exists():
-        return _result(findings, 1, "samples.jsonl missing")
-    if not splits_path.exists():
-        return _result(findings, 1, "splits.json missing")
+    taxonomy = load_taxonomy()
+    trainable = set(taxonomy.trainable_ids())
+    if manifest.taxonomy_version != taxonomy.version:
+        findings.append(Finding("critical", "taxonomy_version_mismatch", "manifest taxonomy does not match canonical taxonomy"))
+    if file_sha256(samples_path) != manifest.samples_sha256:
+        findings.append(Finding("critical", "samples_hash_mismatch", "samples.jsonl hash does not match manifest"))
+    if file_sha256(splits_path) != manifest.splits_sha256:
+        findings.append(Finding("critical", "splits_hash_mismatch", "splits.json hash does not match manifest"))
 
-    samples = _read_jsonl(samples_path)
-    splits = json.loads(splits_path.read_text(encoding="utf-8"))
+    seen_ids: set[str] = set()
+    group_splits: dict[str, set[str]] = defaultdict(set)
+    label_distribution: Counter[str] = Counter()
+    negative_label_distribution: Counter[str] = Counter()
+    language_distribution: Counter[str] = Counter()
+    repository_ids: set[str] = set()
+    sample_mapping = {str(key): str(value) for key, value in splits["samples"].items()}
 
-    taxonomy = load_canonical_taxonomy()
-    trainable = set(trainable_ids())
-    valid_ids = {item["id"] for item in taxonomy["entries"]}  # noqa: E402
+    if set(sample_mapping) != {record.sample_id for record in records}:
+        findings.append(
+            Finding(
+                "critical",
+                "split_sample_set_mismatch",
+                "splits.json sample IDs do not exactly match samples.jsonl",
+            )
+        )
 
-    sample_split: Dict[str, str] = {}
-    group_split: Dict[str, str] = {}
-    label_counts: Counter = Counter()
-    missing_diff = missing_lang = 0
-    unknown_labels = 0
-    invalid_line_ranges = 0
-    secrets = 0
+    for record in records:
+        if record.sample_id in seen_ids:
+            findings.append(Finding("critical", "duplicate_sample_id", "sample ID appears more than once", (record.sample_id,)))
+        seen_ids.add(record.sample_id)
+        repository_ids.add(record.repository_id)
+        language_distribution[record.language] += 1
 
-    for record in samples:
-        sid = record.get("id")
-        added = record.get("added_code") or ""
-        language = record.get("language")
-        labels = record.get("labels") or []
-        group = record.get("group_key")
-        split = splits.get(group)
+        mapped_split = sample_mapping.get(record.sample_id)
+        if mapped_split != record.split:
+            findings.append(Finding("critical", "split_mapping_mismatch", f"record split {record.split!r} != splits.json {mapped_split!r}", (record.sample_id,)))
+        group_splits[record.group_key].add(record.split)
+        if record.data_use_status not in ALLOWED_DATA_USE:
+                findings.append(Finding("critical", "blocked_data_use", f"disallowed data-use status {record.data_use_status}", (record.sample_id,)))
+        if record.taxonomy_version != taxonomy.version:
+            findings.append(Finding("critical", "record_taxonomy_mismatch", "record taxonomy does not match canonical taxonomy", (record.sample_id,)))
+        if redact_secrets(record.raw_hunk).redaction_count or redact_secrets(record.added_code).redaction_count:
+            findings.append(Finding("critical", "secret_escaped_redaction", "likely secret remains in dataset text", (record.sample_id,)))
+        expected_content_hash = hashlib.sha256(record.added_code.encode("utf-8")).hexdigest()
+        if record.content_sha256 != expected_content_hash:
+            findings.append(Finding("critical", "content_hash_mismatch", "content_sha256 is not SHA-256 of added_code", (record.sample_id,)))
 
-        if not added.strip():
-            missing_diff += 1
-            findings.append(Finding("critical", "missing_diff",
-                                    f"sample {sid} has empty added_code"))
-        if not language or language == "unknown":
-            missing_lang += 1
-            findings.append(Finding("critical", "missing_language",
-                                    f"sample {sid} has no language"))
-        for label in labels:
-            if label not in valid_ids:
-                unknown_labels += 1
-                findings.append(Finding("critical", "unknown_taxonomy_id",
-                                        f"sample {sid} has unknown label {label}"))
-            elif label not in trainable:
-                findings.append(Finding("critical", "non_trainable_label",
-                                        f"sample {sid} has non-trainable label {label}"))
+        label_ids: set[str] = set()
+        for evidence in record.labels:
+            if evidence.anti_pattern_id in label_ids:
+                findings.append(Finding("critical", "duplicate_label_state", f"label {evidence.anti_pattern_id} appears more than once", (record.sample_id,)))
+            label_ids.add(evidence.anti_pattern_id)
+            if evidence.anti_pattern_id not in trainable:
+                findings.append(Finding("critical", "unknown_or_non_trainable_label", f"invalid model label {evidence.anti_pattern_id}", (record.sample_id,)))
+            if evidence.trust_level in {"fallback", "model"}:
+                findings.append(Finding("critical", "automated_gold_label", "model/fallback evidence cannot become gold", (record.sample_id,)))
+            if evidence.state == "positive":
+                label_distribution[evidence.anti_pattern_id] += 1
             else:
-                label_counts[label] += 1
-        sid_str = str(sid or "")
-        group_str = str(group or "")
-        new_start = record.get("new_start")
-        if new_start is None or not isinstance(new_start, (int, float)) or new_start < 0:
-            invalid_line_ranges += 1
-            findings.append(Finding("critical", "invalid_line_range",
-                                    f"sample {sid_str} has invalid new_start"))
-        if _looks_like_secret(added):
-            secrets += 1
-            findings.append(Finding("critical", "secret_escaped_redaction",
-                                    f"sample {sid_str} contains a likely secret"))
+                negative_label_distribution[evidence.anti_pattern_id] += 1
 
-        if sid_str in sample_split and sample_split[sid_str] != split:
-            findings.append(Finding("critical", "split_conflict_sample",
-                                    f"sample {sid_str} appears in both "
-                                    f"{sample_split[sid_str]} and {split}"))
-        sample_split[sid_str] = split or "train"
+    for group_key, assigned in group_splits.items():
+        if len(assigned) > 1:
+            findings.append(Finding("critical", "group_split_leakage", f"group {group_key!r} crosses splits {sorted(assigned)}"))
 
-        if group_str in group_split and group_split[group_str] != split:
-            findings.append(Finding("critical", "split_conflict_group",
-                                    f"group {group_str} appears in both "
-                                    f"{group_split[group_str]} and {split}"))
-        group_split[group_str] = split or "train"
+    _, duplicate_pairs = duplicate_components(
+        records, near_threshold=manifest.near_duplicate_threshold
+    )
+    for pair in duplicate_pairs:
+        left_split = sample_mapping.get(pair.left_sample_id)
+        right_split = sample_mapping.get(pair.right_sample_id)
+        severity = "critical" if left_split != right_split else "warning"
+        code = f"{pair.kind}_duplicate_cross_split" if severity == "critical" else f"{pair.kind}_duplicate_same_split"
+        findings.append(Finding(severity, code, f"{pair.kind} duplicate similarity={pair.similarity:.3f}", (pair.left_sample_id, pair.right_sample_id)))
 
-    # trainable labels with zero examples
+    actual_split_counts = Counter(record.split for record in records)
+    expected_split_counts = {name: actual_split_counts.get(name, 0) for name in ("train", "validation", "test")}
+    for split, count in expected_split_counts.items():
+        if count == 0:
+            findings.append(
+                Finding("critical", "empty_split", f"{split} split has no samples")
+            )
     for label in sorted(trainable):
-        if label_counts.get(label, 0) == 0:
-            findings.append(Finding("warning", "zero_examples",
-                                    f"trainable label {label} has zero examples"))
-
-    # extreme imbalance
-    counts = sorted(label_counts.values())
-    if counts and counts[0] > 0 and counts[-1] / counts[0] > 100:
-        findings.append(Finding("warning", "extreme_imbalance",
-                                f"label imbalance ratio = {counts[-1] / counts[0]:.1f}x"))
-
-    critical_failures = sum(1 for f in findings if f.severity == "critical")
-    warnings = sum(1 for f in findings if f.severity == "warning")
-
-    summary = {
-        "samples": len(samples),
-        "labels_seen": len(label_counts),
-        "duplicates": manifest.get("duplicate_count", 0),
-        "missing_diff": missing_diff,
-        "missing_language": missing_lang,
-        "unknown_taxonomy_ids": unknown_labels,
-        "invalid_line_ranges": invalid_line_ranges,
-        "secrets_escaped": secrets,
-        "critical_failures": critical_failures,
-        "warnings": warnings,
-    }
-
-    return {
-        "summary": summary,
-        "findings": [f.__dict__ for f in findings],
-        "critical_failures": critical_failures,
-        "warnings": warnings,
-    }
-
-
-def _result(findings: List[Finding], critical: int, message: str) -> Dict[str, Any]:
-    findings.append(Finding("critical", "missing_file", message))
-    return {
-        "summary": {"critical_failures": critical, "warnings": 0},
-        "findings": [f.__dict__ for f in findings],
-        "critical_failures": critical,
-        "warnings": 0,
-    }
-
-
-def render_markdown(report: Dict[str, Any]) -> str:
-    lines = [
-        "# Data Quality Report",
-        "",
-        f"Samples: {report['summary'].get('samples', 0)}",
-        f"Labels seen: {report['summary'].get('labels_seen', 0)}",
-        f"Duplicates: {report['summary'].get('duplicates', 0)}",
-        f"Missing diff: {report['summary'].get('missing_diff', 0)}",
-        f"Missing language: {report['summary'].get('missing_language', 0)}",
-        f"Unknown taxonomy IDs: {report['summary'].get('unknown_taxonomy_ids', 0)}",
-        f"Invalid line ranges: {report['summary'].get('invalid_line_ranges', 0)}",
-        f"Secrets escaped: {report['summary'].get('secrets_escaped', 0)}",
-        "",
-        f"Critical failures: {report['critical_failures']}",
-        f"Warnings: {report['warnings']}",
-        "",
-        "## Findings",
-        "",
+        if label_distribution[label] == 0:
+            findings.append(
+                Finding(
+                    "critical",
+                    "missing_positive_label_support",
+                    f"{label} has no explicit positive evidence",
+                )
+            )
+        if negative_label_distribution[label] == 0:
+            findings.append(
+                Finding(
+                    "critical",
+                    "missing_negative_label_support",
+                    f"{label} has no explicit negative evidence",
+                )
+            )
+    comparisons: list[tuple[bool, str, str]] = [
+        (manifest.sample_count == len(records), "sample_count_mismatch", "manifest sample_count does not match samples.jsonl"),
+        (manifest.repository_count == len(repository_ids), "repository_count_mismatch", "manifest repository_count does not match records"),
+        (manifest.split_counts == expected_split_counts, "split_count_mismatch", "manifest split_counts do not match records"),
+        (manifest.label_distribution == dict(sorted(label_distribution.items())), "label_distribution_mismatch", "manifest label_distribution does not match records"),
+        (manifest.negative_label_distribution == dict(sorted(negative_label_distribution.items())), "negative_label_distribution_mismatch", "manifest negative_label_distribution does not match records"),
+        (manifest.language_distribution == dict(sorted(language_distribution.items())), "language_distribution_mismatch", "manifest language_distribution does not match records"),
+        (sorted(manifest.redaction_versions) == sorted({record.redaction_version for record in records}), "redaction_versions_mismatch", "manifest redaction_versions do not match records"),
     ]
-    for f in report["findings"]:
-        lines.append(f"- **{f['severity']}** `{f['code']}` — {f['message']}")
-    return "\n".join(lines) + "\n"
+    for valid, code, message in comparisons:
+        if not valid:
+            findings.append(Finding("critical", code, message))
+
+    statistics = {
+        "sample_count": len(records),
+        "repository_count": len(repository_ids),
+        "split_counts": expected_split_counts,
+        "label_distribution": dict(sorted(label_distribution.items())),
+        "negative_label_distribution": dict(sorted(negative_label_distribution.items())),
+        "language_distribution": dict(sorted(language_distribution.items())),
+        "exact_duplicate_pairs": sum(pair.kind == "exact" for pair in duplicate_pairs),
+        "near_duplicate_pairs": sum(pair.kind == "near" for pair in duplicate_pairs),
+        "synthetic": manifest.synthetic,
+        "frozen": manifest.frozen,
+    }
+    if manifest.synthetic:
+        findings.append(Finding("warning", "synthetic_smoke_dataset", "synthetic data is for lifecycle smoke tests, not performance claims"))
+    return _report(findings, statistics)
+
+
+def _report(findings: list[Finding], statistics: dict[str, Any]) -> dict[str, Any]:
+    critical = sum(item.severity == "critical" for item in findings)
+    warnings = sum(item.severity == "warning" for item in findings)
+    return {
+        "critical_failures": critical,
+        "warnings": warnings,
+        "statistics": statistics,
+        "findings": [item.to_dict() for item in findings],
+    }
+
+
+def write_quality_report(dataset_dir: Path, report: dict[str, Any]) -> Path:
+    path = dataset_dir / "data_quality_report.json"
+    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path

@@ -1,5 +1,5 @@
 """
-automated-code-review-tool — diff_parser unit tests (Issue #7).
+Unified-diff parser unit tests.
 
 Pure unit tests — no model loading, no network. Fast.
 
@@ -8,17 +8,12 @@ Run from the repo root:
 """
 from __future__ import annotations
 
-import sys
+import json
 from pathlib import Path
 
 import pytest
 
-# Allow `from app.diff_parser import ...` regardless of where pytest is invoked from.
-_HERE = Path(__file__).resolve().parent
-_ML_WORKER = _HERE.parent
-sys.path.insert(0, str(_ML_WORKER))
-
-from app.diff_parser import FileHunk, hunks_to_text, parse_diff  # noqa: E402
+from app.diff_parser import FileHunk, hunks_to_text, parse_diff
 
 
 # ----------------------------------------------------------------------
@@ -132,9 +127,8 @@ def test_skips_binary_files():
 
 
 def test_raises_on_empty_diff():
-    # Phase 1A: empty diff is treated as "no hunks" rather than as a hard
-    # error — callers can still inspect the empty result. Verify the
-    # graceful behaviour.
+    # Empty input is a valid diff with no hunks, so callers can handle it
+    # without a parser exception.
     assert parse_diff("") == []
     assert parse_diff("   \n\n  \n") == []
     # None still raises (the type contract is non-null input).
@@ -209,3 +203,23 @@ def test_hunks_to_text_includes_added_and_removed():
 def test_returns_list_of_filehunks():
     hunks = parse_diff(SINGLE_FILE_DIFF)
     assert all(isinstance(h, FileHunk) for h in hunks)
+
+
+def test_shared_hunk_identity_contract() -> None:
+    fixture_path = (
+        Path(__file__).resolve().parents[3]
+        / "contracts"
+        / "hunk_identity_cases.json"
+    )
+    contract = json.loads(fixture_path.read_text(encoding="utf-8"))
+    case = contract["cases"][0]
+    diff = (
+        "diff --git a/demo.js b/demo.js\r\n"
+        "--- a/demo.js\r\n"
+        "+++ b/demo.js\r\n"
+        + case["rawHunk"].replace("\n", "\r\n")
+    )
+    hunk = parse_diff(diff)[0]
+    assert hunk.raw_hunk == case["rawHunk"]
+    assert hunk.hunk_sha256 == case["hunkSha256"]
+    assert len(hunk.content_sha256) == 64
