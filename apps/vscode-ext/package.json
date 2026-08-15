@@ -1,7 +1,7 @@
 {
   "name": "automated-code-review-tool-reviewer",
   "displayName": "automated-code-review-tool — Semantic Code Review",
-  "description": "Catches architectural anti-patterns that linters miss",
+  "description": "Displays automated-code-review-tool API findings as editor diagnostics",
   "version": "1.0.0",
   "publisher": "tanmay-alpha",
   "license": "MIT",
@@ -17,8 +17,7 @@
   "keywords": [
     "review",
     "anti-pattern",
-    "linter",
-    "ai",
+    "static-analysis",
     "quality"
   ],
   "engines": {
@@ -34,8 +33,7 @@
     "onLanguage:javascriptreact",
     "onLanguage:typescript",
     "onLanguage:typescriptreact",
-    "onLanguage:java",
-    "workspaceContains:**/automated-code-review-tool.config.json"
+    "onLanguage:java"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -88,8 +86,8 @@
     "compile": "tsc -p ./",
     "package": "vsce package --no-dependencies",
     "watch": "tsc -watch -p ./",
-    "lint": "echo 'no linter yet'",
-    "test": "echo 'no tests yet'"
+    "lint": "tsc -p ./ --noEmit",
+    "test": "npm run compile && node --test test/*.test.cjs"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

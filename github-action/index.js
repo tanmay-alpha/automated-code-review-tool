@@ -10,7 +10,7 @@ import * as github from '@actions/github';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** @typedef {{antiPattern:string,severity:string,confidence:number,explanation:string,filePath?:string,lineStart?:number|null,lineEnd?:number|null,category?:string}} FindingDto */
+/** @typedef {{id?:string,antiPattern:string,severity:string,confidence:number,explanation:string,filePath?:string,lineStart?:number|null,lineEnd?:number|null,category?:string}} FindingDto */
 
 async function run(deps = {}) {
   const coreApi = deps.core || core;
@@ -20,6 +20,7 @@ async function run(deps = {}) {
   try {
     const apiUrl = (coreApi.getInput('api-url') || '').trim().replace(/\/+$/, '');
     const apiKey = (coreApi.getInput('api-key') || '').trim();
+    const githubToken = (coreApi.getInput('github-token') || '').trim();
     const language = (coreApi.getInput('language') || 'python').trim();
     const failThreshold = Number.parseInt(
       coreApi.getInput('fail-threshold') || '60',
@@ -33,6 +34,9 @@ async function run(deps = {}) {
 
     if (!apiUrl) return coreApi.setFailed('Missing required input: api-url');
     if (!apiKey) return coreApi.setFailed('Missing required input: api-key');
+    if (!githubToken) return coreApi.setFailed('Missing required input: github-token');
+    coreApi.setSecret?.(apiKey);
+    coreApi.setSecret?.(githubToken);
     if (Number.isNaN(failThreshold) || failThreshold < 0 || failThreshold > 100) {
       return coreApi.setFailed(
         `Invalid fail-threshold: must be 0-100, got ${failThreshold}`,
@@ -72,7 +76,7 @@ async function run(deps = {}) {
       `automated-code-review-tool: scanning ${repoFullName}#${prNumber} (language=${language})`,
     );
 
-    const octokit = githubApi.getOctokit(process.env.GITHUB_TOKEN);
+    const octokit = githubApi.getOctokit(githubToken);
     // Bound the GitHub diff fetch with the same timeout so we don't hang
     // forever waiting on api.github.com.
     const { data: diff } = await octokit.rest.pulls.get({
@@ -113,7 +117,9 @@ async function run(deps = {}) {
 
     const result = await response.json();
     /** @type {FindingDto[]} */
-    const findings = Array.isArray(result.findings) ? result.findings : [];
+    const findings = dedupeFindings(
+      Array.isArray(result.findings) ? result.findings : [],
+    );
     const qualityScore =
       typeof result.qualityScore === 'number' ? result.qualityScore : null;
 
@@ -134,9 +140,9 @@ async function run(deps = {}) {
         .filter(Boolean)
         .join('\n');
 
-      if (finding.lineStart) {
+      if (finding.lineStart && finding.filePath) {
         const annotation = {
-          file: finding.filePath || '',
+          file: finding.filePath,
           startLine: finding.lineStart,
           endLine: finding.lineEnd || finding.lineStart,
           title,
@@ -172,8 +178,26 @@ async function run(deps = {}) {
   }
 }
 
+function dedupeFindings(findings) {
+  const seen = new Set();
+  return findings.filter((finding) => {
+    const key = finding.id
+      ? `id:${finding.id}`
+      : [
+          finding.antiPattern || '',
+          finding.filePath || '',
+          finding.lineStart || '',
+          finding.lineEnd || '',
+          finding.explanation || '',
+        ].join('\u0000');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   void run();
 }
 
-export { run };
+export { dedupeFindings, run };

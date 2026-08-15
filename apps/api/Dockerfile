@@ -12,7 +12,7 @@ RUN --mount=type=cache,target=/root/.m2 \
 COPY src ./src
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -ntp -Dmaven.wagon.http.retryHandler.count=5 \
-    -DskipTests=false -Dtest="!LocalWebSecurityTest" package
+    -DskipTests=false -DexcludedGroups=postgres package
 
 # Runtime stage — minimal JRE image
 FROM eclipse-temurin:21-jre-alpine
@@ -37,6 +37,6 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=5 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/actuator/health || exit 1
 
 # Production-ready JVM settings
-ENV JAVA_OPTS="-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
+ENV JAVA_OPTS="-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
 
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]

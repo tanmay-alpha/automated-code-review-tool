@@ -1,94 +1,77 @@
 name: ci-api
 
-# Run Spring Boot tests whenever apps/api/** changes (or this workflow).
 on:
   push:
     branches: [main]
     paths:
-      - 'apps/api/**'
-      - '.github/workflows/ci-api.yml'
+      - "apps/api/**"
+      - "taxonomy/**"
+      - "contracts/**"
+      - ".github/workflows/ci-api.yml"
   pull_request:
     paths:
-      - 'apps/api/**'
-      - '.github/workflows/ci-api.yml'
+      - "apps/api/**"
+      - "taxonomy/**"
+      - "contracts/**"
+      - ".github/workflows/ci-api.yml"
 
-# Cancel in-flight runs for the same ref so we don't waste runners.
 concurrency:
   group: ci-api-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  JWT_SECRET: ci-only-jwt-signing-key-with-at-least-32-characters
+  ENCRYPTION_KEY: bG9jYWwtZGV2LWVuY3J5cHRpb24ta2V5LTMyYnl0ZXM=
+  ML_WORKER_URL: http://localhost:8000
+  ML_WORKER_SECRET: ci-only-ml-worker-secret
+  GITHUB_CLIENT_ID: ci-client-id
+  GITHUB_CLIENT_SECRET: ci-client-secret
+
 jobs:
-  test:
-    name: mvn test
+  unit-and-slice-tests:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: automated-code-review-tool_test
-          POSTGRES_USER: automated-code-review-tool
-          POSTGRES_PASSWORD: automated-code-review-tool_test
-        ports:
-          - 5432:5432
-        # Match local dev default so Spring Boot's healthcheck works.
-        options: >-
-          --health-cmd "pg_isready -U automated-code-review-tool"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 5
-
-    env:
-      # Note: no SPRING_PROFILES_ACTIVE here. The @SpringBootTest
-      # integration tests set @ActiveProfiles("test") which wins over
-      # the env var anyway, and application-test.yml configures an
-      # in-memory H2 datasource with H2-compatible Flyway migrations.
-      # We do NOT pass SPRING_DATASOURCE_URL because the test profile
-      # intentionally uses H2; the Postgres service container defined
-      # above is preserved for any future ad-hoc `mvn` runs against
-      # a real Postgres (e.g. `mvn flyway:migrate`).
-      #
-      # Secrets MUST be set in repo settings; no hardcoded fallbacks.
-      JWT_SECRET: ${{ secrets.JWT_SECRET_TEST }}
-      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY_TEST }}
-      ML_WORKER_URL: http://localhost:8000
-      ML_WORKER_SECRET: ${{ secrets.ML_WORKER_SECRET_TEST }}
-      GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID_TEST }}
-      GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET_TEST }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 21 (Temurin)
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
           cache: maven
-
-      - name: Show toolchain
-        run: |
-          java -version
-          mvn -v
-
-      - name: Cache Maven dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('apps/api/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-maven-
-            ${{ runner.os }}-
-
-      - name: Run tests
+      - name: Run API tests
         working-directory: apps/api
         run: mvn -B -ntp test
-
-      - name: Upload surefire reports on failure
+      - name: Upload Surefire reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: api-surefire-reports
           path: apps/api/target/surefire-reports
           if-no-files-found: ignore
+
+  postgres-correctness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Run PostgreSQL Testcontainers correctness tests
+        working-directory: apps/api
+        run: mvn -B -ntp -Ppostgres-correctness test
+      - name: Upload PostgreSQL test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-postgres-surefire-reports
+          path: apps/api/target/surefire-reports
+          if-no-files-found: ignore
+
+  docker-build:
+    needs: [unit-and-slice-tests, postgres-correctness]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -f apps/api/Dockerfile -t automated-code-review-tool-api:ci apps/api

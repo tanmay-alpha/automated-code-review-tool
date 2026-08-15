@@ -1,122 +1,94 @@
-# docker-compose.yml — local development stack for the entire automated-code-review-tool MVP.
-#
-# Brings up: postgres, redis, ml-worker, api, web.
-# Run:   docker compose up --build
-# Tear down (keep data):  docker compose down
-# Tear down (wipe data):  docker compose down -v
-#
-# Environment variables are loaded from .env at the repo root. See
-# ENGINEERING_PLAN.md §10 for a list of every variable.
-
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: automated-code-review-tool-postgres
     environment:
-      POSTGRES_DB: automated-code-review-tool
+      POSTGRES_DB: ${POSTGRES_DB:-automated-code-review-tool}
       POSTGRES_USER: ${POSTGRES_USER:-automated-code-review-tool}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-automated-code-review-tool_local}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Optional: seed sample data on first run (only runs when the data
-      # volume is empty — i.e. the very first time you bring up the stack).
       - ../scripts/seed-db.sql:/docker-entrypoint-initdb.d/seed.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-automated-code-review-tool}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
-      retries: 5
-      start_period: 30s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /var/lib/postgresql/tmp
 
   redis:
     image: redis:7-alpine
-    container_name: automated-code-review-tool-redis
-    # Tiny inline healthcheck — Redis is fast enough that the default
-    # 30s probe is way too long for the api's depends_on to gate on.
-    #
-    # Auth: password from $REDIS_PASSWORD (dev default is non-empty so the
-    # stack still boots without an .env, but production overrides MUST set
-    # a long random value). requirepass is honored even if the env var
-    # is unset/empty — we always pass a non-empty value through compose.
     command:
-      - "redis-server"
-      - "--save"
+      - redis-server
+      - --save
       - ""
-      - "--appendonly"
+      - --appendonly
       - "no"
-      - "--requirepass"
-      - "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"
-      - "--bind"
-      - "0.0.0.0"
-      - "--protected-mode"
+      - --requirepass
+      - ${REDIS_PASSWORD:-automated-code-review-tool_local}
+      - --bind
+      - 0.0.0.0
+      - --protected-mode
       - "yes"
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-automated-code-review-tool_local}", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
   ml-worker:
     build:
-      context: ../apps/ml-worker
-      dockerfile: Dockerfile
-    container_name: automated-code-review-tool-ml-worker
-    user: "10001:10001"
+      context: ..
+      dockerfile: apps/ml-worker/Dockerfile
     environment:
-      - MODEL_NAME=${ML_MODEL_NAME:-tanmay-alpha/automated-code-review-tool-codebert}
-      - HF_TOKEN=${HF_TOKEN:-}
-      - ML_WORKER_SECRET=${ML_WORKER_SECRET}
-      - HF_HOME=/home/automated-code-review-tool/.cache/huggingface
+      MODEL_NAME: ${MODEL_NAME:-none}
+      HF_TOKEN: ${HF_TOKEN:-}
+      ML_WORKER_SECRET: ${ML_WORKER_SECRET:-local-ml-worker-secret-change-me}
+      HF_HOME: /home/automated-code-review-tool/.cache/huggingface
     ports:
       - "8000:8000"
-    # NOTE: First startup is slow — model downloads ~500MB from HuggingFace.
-    # After first run, model is cached in Docker volume.
     volumes:
       - hf_cache:/home/automated-code-review-tool/.cache/huggingface
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ml/health', timeout=2).status==200 else 1)"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s  # allow time for first-time model download
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ml/health', timeout=2).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
   api:
     build:
       context: ../apps/api
       dockerfile: Dockerfile
-    container_name: automated-code-review-tool-api
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/automated-code-review-tool
-      - SPRING_DATASOURCE_USERNAME=automated-code-review-tool
-      - SPRING_DATASOURCE_PASSWORD=automated-code-review-tool_local
-      - SPRING_REDIS_HOST=redis
-      - SPRING_REDIS_PORT=6379
-      - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
-      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
-      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
-      - JWT_SECRET=${JWT_SECRET}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - ML_WORKER_URL=http://ml-worker:8000
-      - ML_WORKER_SECRET=${ML_WORKER_SECRET}
-      - FRONTEND_URL=${NEXTAUTH_URL:-http://localhost:3000}
-      # COOKIE_SECURE is intentionally NOT set here.
-      # Set COOKIE_SECURE=true in production (requires HTTPS).
-      - APP_BASE_URL=${APP_BASE_URL:-http://localhost:8080}
-      - WEBHOOK_CALLBACK_URL=${WEBHOOK_CALLBACK_URL:-http://localhost:8080/api/webhook/github}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-automated-code-review-tool}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-automated-code-review-tool}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-automated-code-review-tool_local}
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: "6379"
+      SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD:-automated-code-review-tool_local}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-local-github-client-id}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-local-github-client-secret}
+      JWT_SECRET: ${JWT_SECRET:-local-only-jwt-secret-change-before-sharing}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-bG9jYWwtZGV2LWVuY3J5cHRpb24ta2V5LTMyYnl0ZXM=}
+      ML_WORKER_URL: http://ml-worker:8000
+      ML_WORKER_SECRET: ${ML_WORKER_SECRET:-local-ml-worker-secret-change-me}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      COOKIE_SECURE: "false"
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      WEBHOOK_CALLBACK_URL: ${WEBHOOK_CALLBACK_URL:-http://localhost:8080/api/webhook/github}
     ports:
       - "8080:8080"
     depends_on:
@@ -130,9 +102,11 @@ services:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
       interval: 15s
       timeout: 5s
-      retries: 5
+      retries: 10
       start_period: 40s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
   web:
     build:
@@ -140,18 +114,16 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
-    container_name: automated-code-review-tool-web
     environment:
-      - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      NODE_ENV: production
     ports:
       - "3000:3000"
     depends_on:
       api:
         condition: service_healthy
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   postgres_data:

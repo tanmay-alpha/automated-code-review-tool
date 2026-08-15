@@ -1,7 +1,7 @@
 {
   "name": "automated-code-review-tool-action",
   "version": "1.0.0",
-  "description": "GitHub Action: semantic code review via the automated-code-review-tool API",
+  "description": "GitHub Action for pull-request analysis via the automated-code-review-tool API",
   "main": "index.js",
   "type": "module",
   "private": true,
