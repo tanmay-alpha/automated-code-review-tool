@@ -26,9 +26,6 @@ RUN pip install --no-cache-dir --retries 10 --timeout 120 -r /tmp/requirements.t
 COPY apps/ml-worker/app/ /app/app/
 COPY taxonomy/anti_patterns.yaml /app/taxonomy/anti_patterns.yaml
 
-# Training utilities (dataset builder, evaluation). Read-only at runtime.
-COPY apps/ml-worker/training/ /app/training/
-
 # Create non-root user with a writable HF cache directory.
 RUN useradd --create-home --uid 10001 automated-code-review-tool \
     && mkdir -p /home/automated-code-review-tool/.cache/huggingface \
@@ -36,6 +33,7 @@ RUN useradd --create-home --uid 10001 automated-code-review-tool \
     && chmod -R 500 /app
 
 ENV HF_HOME=/home/automated-code-review-tool/.cache/huggingface
+ENV MODEL_NAME=none
 ENV PYTHONUNBUFFERED=1
 USER automated-code-review-tool
 EXPOSE 8000

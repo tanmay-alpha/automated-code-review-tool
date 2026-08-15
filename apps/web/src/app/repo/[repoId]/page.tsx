@@ -114,7 +114,7 @@ function RepoDetailContent() {
 
       <Separator />
 
-      {/* Summary stats (Issue #18) */}
+      {/* Summary statistics for this repository. */}
       <section className="mt-6 grid gap-4 md:grid-cols-4">
         <SummaryStat
           label="Current score"

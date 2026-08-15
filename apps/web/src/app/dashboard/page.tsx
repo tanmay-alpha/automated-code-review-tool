@@ -26,7 +26,7 @@ import type {
 } from "@/lib/types";
 
 /**
- * Top-level dashboard (Issue #18 enhancements).
+ * Top-level repository review dashboard.
  *
  *   1. Stats bar — repos / PRs / avg quality.
  *   2. **Global quality trend chart** — aggregate score across all repos,
@@ -85,7 +85,7 @@ function DashboardContent() {
         />
       </section>
 
-      {/* Global quality trend (Issue #18) */}
+      {/* Global quality trend. */}
       <section>
         <GlobalQualityChart repos={repos} isLoading={isLoading} />
       </section>

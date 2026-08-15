@@ -3,7 +3,7 @@ name: ci-ml-worker
 # Run FastAPI tests, type-checks and lints whenever apps/ml-worker/**
 # taxonomy/** or contracts/** change (or this workflow).
 # 'pytest -m "not slow"' skips tests tagged @pytest.mark.slow — those
-# are the ones that download the full model and run real inference.
+# model-heavy tests, when present, require an explicit external artifact.
 on:
   push:
     branches: [main]
@@ -43,22 +43,21 @@ jobs:
           cache: pip
           cache-dependency-path: |
             apps/ml-worker/requirements.txt
+            apps/ml-worker/requirements-train.txt
             apps/ml-worker/requirements-test.txt
 
-      - name: Install runtime + test dependencies
+      - name: Install training + test dependencies
         working-directory: apps/ml-worker
         run: |
           python -m pip install --upgrade pip
           # Install the CPU-only torch wheel before the complete test set.
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1+cpu
-          pip install -r requirements.txt
+          pip install -r requirements-train.txt
           pip install -r requirements-test.txt
 
-      - name: Install lint + type-check tools (mandatory)
+      - name: Verify lint and type-check tools
         working-directory: apps/ml-worker
         run: |
-          pip install "ruff==0.6.9" "mypy==1.13.0"
-          # Verify the tools are actually callable.
           ruff --version
           mypy --version
 
@@ -110,17 +109,33 @@ jobs:
             -e MODEL_NAME=none \
             -e ML_WORKER_SECRET=ci-secret \
             automated-code-review-tool/ml-worker:ci
-          # Wait for /ml/health to return 200.
+          trap 'docker logs ml-smoke || true; docker stop ml-smoke || true' EXIT
+          healthy=false
           for i in 1 2 3 4 5 6 7 8 9 10; do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8001/ml/health || true)
             if [ "$code" = "200" ]; then
               echo "ML worker healthy on attempt $i"
-              docker stop ml-smoke
-              exit 0
+              healthy=true
+              break
             fi
             sleep 2
           done
-          echo "ML worker failed to come up"
-          docker logs ml-smoke || true
-          docker stop ml-smoke
-          exit 1
+          if [ "$healthy" != "true" ]; then
+            echo "ML worker failed to come up"
+            exit 1
+          fi
+
+          response=$(curl --fail-with-body --silent --show-error \
+            -H 'content-type: application/json' \
+            -H 'x-ml-worker-secret: ci-secret' \
+            --data '{"diff":"diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1 @@\n+value = 1","language":"python","mode":"diff"}' \
+            http://localhost:8001/ml/review)
+          REVIEW_RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+
+          body = json.loads(os.environ["REVIEW_RESPONSE"])
+          assert body["engine"] == "fallback", body
+          assert isinstance(body["modelVersion"], str) and body["modelVersion"], body
+          assert isinstance(body["findings"], list), body
+          PY

@@ -1,13 +1,16 @@
 name: 'automated-code-review-tool Code Review'
-description: 'Semantic code review that catches anti-patterns linters miss'
-author: 'automated-code-review-tool'
+description: 'Analyze a pull-request diff with an automated-code-review-tool API'
+author: 'tanmay-alpha'
 
 inputs:
   api-url:
-    description: 'automated-code-review-tool API URL (e.g. https://api.automated-code-review-tool.dev)'
+    description: 'HTTPS base URL of an automated-code-review-tool API'
     required: true
   api-key:
-    description: 'automated-code-review-tool API key from dashboard (Settings → API Key)'
+    description: 'automated-code-review-tool API key from the dashboard'
+    required: true
+  github-token:
+    description: 'Token used to read the pull-request diff'
     required: true
   language:
     description: 'Primary language of the PR (python | javascript | java)'

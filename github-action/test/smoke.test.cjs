@@ -33,7 +33,7 @@ test('action.yml is well-formed YAML with required fields', () => {
     );
   }
   // Required inputs (api-url, api-key) must be declared.
-  for (const requiredInput of ['api-url:', 'api-key:']) {
+  for (const requiredInput of ['api-url:', 'api-key:', 'github-token:']) {
     assert.ok(
       txt.includes(requiredInput),
       `action.yml must declare input "${requiredInput}"`,
@@ -62,6 +62,7 @@ function actionHarness(overrides = {}) {
   const inputs = {
     'api-url': 'https://localhost:8080',
     'api-key': 'cl_live_test',
+    'github-token': 'github-token-test',
     language: 'python',
     'fail-threshold': '60',
     'fetch-timeout-ms': '30000',
@@ -75,6 +76,7 @@ function actionHarness(overrides = {}) {
     warning: (...args) => calls.warnings.push(args),
     error: (...args) => calls.errors.push(args),
     notice: (...args) => calls.notices.push(args),
+    setSecret: () => {},
   };
   const github = {
     context: {
@@ -82,9 +84,12 @@ function actionHarness(overrides = {}) {
       payload: { pull_request: { number: 42 } },
       repo: { owner: 'tanmay-alpha', repo: 'automated-code-review-tool' },
     },
-    getOctokit: () => ({
-      rest: { pulls: { get: async () => ({ data: 'diff --git a/a.py b/a.py\n+x = 1' }) } },
-    }),
+    getOctokit: (token) => {
+      calls.githubToken = token;
+      return {
+        rest: { pulls: { get: async () => ({ data: 'diff --git a/a.py b/a.py\n+x = 1' }) } },
+      };
+    },
   };
   return { calls, core, github };
 }
@@ -110,10 +115,46 @@ test('action submits the PR diff to the file scan endpoint', async () => {
     filePath: 'tanmay-alpha/automated-code-review-tool#42',
   });
   assert.equal(request.init.headers.Authorization, 'Bearer cl_live_test');
+  assert.equal(harness.calls.githubToken, 'github-token-test');
   assert.deepEqual(harness.calls.failed, []);
   assert.equal(harness.calls.outputs['quality-score'], '100');
   // The fetch now carries an AbortSignal so we can enforce a timeout.
   assert.ok(request.init.signal instanceof AbortSignal, 'fetch must accept an AbortSignal');
+});
+
+test('action requires an explicit GitHub token', async () => {
+  const { run } = await import('../index.js');
+  const harness = actionHarness({ inputs: { 'github-token': '' } });
+
+  await run({ ...harness, fetch: async () => { throw new Error('unexpected fetch'); } });
+
+  assert.match(harness.calls.failed[0], /github-token/);
+});
+
+test('action deduplicates repeated API findings', async () => {
+  const { run } = await import('../index.js');
+  const harness = actionHarness();
+  const finding = {
+    id: 'finding-1',
+    antiPattern: 'RELIABILITY_BROAD_EXCEPTION',
+    severity: 'major',
+    confidence: 0.8,
+    explanation: 'Broad exception handler.',
+    filePath: 'a.py',
+    lineStart: 3,
+    lineEnd: 3,
+  };
+
+  await run({
+    ...harness,
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({ qualityScore: 80, findings: [finding, finding] }),
+    }),
+  });
+
+  assert.equal(harness.calls.outputs['findings-count'], '1');
+  assert.equal(harness.calls.warnings.length, 1);
 });
 
 test('action annotates findings and fails a score below threshold', async () => {
