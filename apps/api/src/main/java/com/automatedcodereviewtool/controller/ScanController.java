@@ -77,7 +77,8 @@ public class ScanController {
 
         MlReviewResponse ml = mlWorkerService.reviewFile(
                 req.content(),
-                language
+                language,
+                req.filePath()
         );
 
         List<MlFinding> findings = ml.findings() == null ? List.of() : ml.findings();

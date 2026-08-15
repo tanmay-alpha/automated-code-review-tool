@@ -49,8 +49,8 @@ public class SecretRedactor {
      */
     public String redact(String input) {
         if (input == null || input.isEmpty()) return input;
-        String step1 = ASSIGNMENT_PATTERN.matcher(input).replaceAll(
-                Matcher.quoteReplacement("$1") + " = " + Matcher.quoteReplacement("\"" + REDACTION_PLACEHOLDER + "\""));
+        String step1 = ASSIGNMENT_PATTERN.matcher(input).replaceAll(match ->
+                Matcher.quoteReplacement(match.group(1) + " = \"" + REDACTION_PLACEHOLDER + "\""));
         return HIGH_ENTROPY.matcher(step1).replaceAll(
                 Matcher.quoteReplacement("\"" + REDACTION_PLACEHOLDER + "\""));
     }

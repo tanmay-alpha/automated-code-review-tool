@@ -35,7 +35,7 @@ public class CodeSampleService {
     }
 
     /**
-     * Persist a code sample derived from a redacted PR hunk.
+     * Persist a code sample derived from a PR hunk.
      *
      * <p>If a sample with the same uniqueness key already exists,
      * that existing row is returned unchanged.</p>
@@ -43,6 +43,9 @@ public class CodeSampleService {
     @Transactional
     public CodeSample persistSample(PersistRequest req) {
         String rawHunk = req.rawHunk == null ? "" : req.rawHunk;
+        // Structural identity is computed before redaction. Only the digest is
+        // retained; the raw value is redacted before any database write.
+        String hunkSha = sha256Hex(canonicalizeRawHunk(rawHunk));
         String redactedRaw = redactor.redact(rawHunk);
         String addedCode = req.addedCode == null ? "" : redactor.redact(req.addedCode);
         String contextCode = req.contextCode == null ? "" : redactor.redact(req.contextCode);
@@ -72,6 +75,7 @@ public class CodeSampleService {
         sample.setAddedCode(addedCode.isEmpty() ? null : addedCode);
         sample.setContextCode(contextCode.isEmpty() ? null : contextCode);
         sample.setContentSha256(sha);
+        sample.setHunkSha256(hunkSha);
         sample.setGroupKey(req.repositoryId + ":" + req.pullRequestId);
         sample.setSourceType(req.sourceType == null ? "pr_diff" : req.sourceType);
         sample.setRedactionVersion(redactor.version());
@@ -96,6 +100,23 @@ public class CodeSampleService {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
+    }
+
+    /**
+     * Canonical structural bytes shared with the Python diff parser: LF line
+     * endings and no trailing LF. This runs on the original hunk before
+     * persistence redaction; only the digest and redacted content are stored.
+     */
+    public static String canonicalizeRawHunk(String rawHunk) {
+        if (rawHunk == null || rawHunk.isEmpty()) {
+            return "";
+        }
+        String normalized = rawHunk.replace("\r\n", "\n").replace('\r', '\n');
+        int end = normalized.length();
+        while (end > 0 && normalized.charAt(end - 1) == '\n') {
+            end--;
+        }
+        return normalized.substring(0, end);
     }
 
     /**

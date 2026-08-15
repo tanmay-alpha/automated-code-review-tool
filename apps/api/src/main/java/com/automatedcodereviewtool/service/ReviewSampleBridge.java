@@ -16,10 +16,9 @@ import java.util.UUID;
 /**
  * Glue between {@link HunkParser} and {@link CodeSampleService}.
  *
- * <p>Before a PR scan invokes inference, every hunk in the diff is
- * persisted (redacted) as a {@code ml.code_samples} row. The
- * resulting sample IDs are then stamped onto the {@code findings}
- * that the ML worker emits for that hunk.</p>
+ * <p>After inference succeeds, every hunk is persisted in redacted form as
+ * a {@code ml.code_samples} row in the same short persistence transaction as
+ * the review's findings and outbox reference.</p>
  */
 @Service
 public class ReviewSampleBridge {
@@ -95,9 +94,11 @@ public class ReviewSampleBridge {
             return null;
         }
         for (CodeSample s : samples) {
-            if (s.getNewStart() <= mf.lineStart()
+            if (mf.filePath() != null
+                    && mf.filePath().equals(s.getFilePath())
+                    && s.getNewStart() <= mf.lineStart()
                     && mf.lineEnd() != null
-                    && mf.lineEnd() <= s.getNewStart() + Math.max(s.getNewCount(), 1)) {
+                    && mf.lineEnd() <= s.getNewStart() + Math.max(s.getNewCount(), 1) - 1) {
                 return s;
             }
         }

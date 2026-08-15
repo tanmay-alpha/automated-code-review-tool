@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * User-facing API key management (issue #15).
+ * User-facing API key management.
  *
  * <p>All endpoints require a valid JWT — keys are issued to a logged-in
  * user and bound to their account. The plaintext key is shown only

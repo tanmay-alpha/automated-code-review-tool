@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Uses Testcontainers PostgreSQL — no mocks for migration behaviour.</p>
  */
 @Testcontainers
+@org.junit.jupiter.api.Tag("postgres")
 @SpringBootTest
 @org.springframework.test.context.ActiveProfiles("test")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)

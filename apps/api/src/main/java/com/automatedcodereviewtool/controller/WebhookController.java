@@ -1,7 +1,5 @@
 package com.automatedcodereviewtool.controller;
 
-import com.automatedcodereviewtool.entity.ProcessedWebhook;
-import com.automatedcodereviewtool.repository.ProcessedWebhookRepository;
 import com.automatedcodereviewtool.service.WebhookService;
 import com.automatedcodereviewtool.webhook.GitHubWebhookEvent;
 import com.automatedcodereviewtool.webhook.HmacVerificationException;
@@ -25,10 +23,8 @@ import java.util.Set;
 /**
  * Endpoint that receives GitHub {@code pull_request} webhooks.
  *
- * <p>All responses are 200 OK unless the signature is forged — GitHub
- * marks slow / non-2xx responses as failures and will redeliver. So the
- * controller is intentionally permissive: pings, pushes, and
- * uninteresting actions all return 200 with no processing.</p>
+ * <p>Forged signatures are rejected and durability failures return 503 so
+ * GitHub can redeliver. Pings and uninteresting actions return 200.</p>
  */
 @RestController
 @RequestMapping("/api/webhook")
@@ -42,19 +38,16 @@ public class WebhookController {
 
     private final HmacVerifier hmacVerifier;
     private final WebhookService webhookService;
-    private final ProcessedWebhookRepository processedWebhookRepository;
     private final ObjectMapper objectMapper;
 
     @Autowired
     private SecurityEventLogger securityEventLogger;
 
     public WebhookController(HmacVerifier hmacVerifier,
-                            WebhookService webhookService,
-                            ProcessedWebhookRepository processedWebhookRepository,
-                            ObjectMapper objectMapper) {
+                             WebhookService webhookService,
+                             ObjectMapper objectMapper) {
         this.hmacVerifier = hmacVerifier;
         this.webhookService = webhookService;
-        this.processedWebhookRepository = processedWebhookRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -126,31 +119,26 @@ public class WebhookController {
             return ResponseEntity.ok().build();
         }
 
-        // 4. Idempotency: skip if we've already processed this delivery.
-        if (processedWebhookRepository.existsById(deliveryId)) {
-            return ResponseEntity.ok().build();
-        }
-
-        // 5. Action filter: only opened / synchronize / reopened produce a review.
+        // Only opened / synchronize / reopened produce a review.
         if (!PROCESSED_ACTIONS.contains(body.action())) {
-            // Still record the delivery so we don't reprocess on retry.
-            processedWebhookRepository.save(ProcessedWebhook.builder()
-                    .deliveryId(deliveryId).build());
             return ResponseEntity.ok().build();
         }
 
-        // 6. Record the delivery up front — even if the async work fails,
-        //    we don't want GitHub to redeliver.
+        // Commit durable delivery state before acknowledging GitHub.
+        boolean accepted;
         try {
-            processedWebhookRepository.save(ProcessedWebhook.builder()
-                    .deliveryId(deliveryId).build());
+            accepted = webhookService.receiveDelivery(
+                    deliveryId, body, body.repository().id());
         } catch (Exception ex) {
-            log.warn("Failed to record delivery {}: {}", deliveryId, ex.getMessage());
+            log.error("Failed to durably accept delivery {}: {}", deliveryId, ex.getMessage());
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+        }
+
+        if (!accepted) {
             return ResponseEntity.ok().build();
         }
 
-        // 7. Hand off to the async worker. Returns immediately.
-        webhookService.processAsync(body, body.repository().id().toString());
+        webhookService.processAsync(deliveryId);
 
         return ResponseEntity.ok().build();
     }

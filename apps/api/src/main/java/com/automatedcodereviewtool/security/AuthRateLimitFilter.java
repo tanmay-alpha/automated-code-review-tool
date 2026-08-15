@@ -24,8 +24,7 @@ import java.util.Set;
  *
  * <p>Applies to {@code /api/auth/github}, {@code /api/auth/callback}, and
  * {@code /api/auth/refresh} — the three routes the OAuth handshake hits
- * repeatedly. Spec'd at 10 requests/minute per client IP (ENGINEERING_PLAN.md
- * §8).</p>
+ * repeatedly. The limit is 10 requests per minute for each client IP.</p>
  *
  * <p>IP is extracted from {@code X-Forwarded-For} when present (taking the
  * first hop) and falls back to {@link HttpServletRequest#getRemoteAddr()}.

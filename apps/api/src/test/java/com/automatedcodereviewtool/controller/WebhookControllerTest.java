@@ -1,7 +1,6 @@
 package com.automatedcodereviewtool.controller;
 
 import com.automatedcodereviewtool.config.SecurityConfig;
-import com.automatedcodereviewtool.repository.ProcessedWebhookRepository;
 import com.automatedcodereviewtool.security.ApiKeyAuthFilter;
 import com.automatedcodereviewtool.security.AuthRateLimitFilter;
 import com.automatedcodereviewtool.security.JwtAuthFilter;
@@ -39,7 +38,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Slice tests for {@link WebhookController}.
  *
  * <p>Uses {@code @WebMvcTest} so only the web layer is loaded. The
- * HmacVerifier, WebhookService, and ProcessedWebhookRepository are
+ * HmacVerifier and WebhookService are
  * mocked. SecurityConfig is imported so requests go through the
  * production filter chain (with the webhook path on permitAll); the
  * JwtService / JwtAuthFilter it depends on are stubbed to a pass-through
@@ -54,7 +53,6 @@ class WebhookControllerTest {
 
     @MockBean HmacVerifier hmacVerifier;
     @MockBean WebhookService webhookService;
-    @MockBean ProcessedWebhookRepository processedWebhookRepository;
     // SecurityConfig wires JwtAuthFilter which needs JwtService; stub both
     // with a pass-through filter so the chain actually calls into the
     // controller (a Mockito mock filter would do nothing and stall the
@@ -128,7 +126,8 @@ class WebhookControllerTest {
     void testValidWebhookReturns200() throws Exception {
         String body = payload("opened", 123L);
         when(hmacVerifier.verify(eq(body), anyString(), eq("123"))).thenReturn(true);
-        when(processedWebhookRepository.existsById(DELIVERY)).thenReturn(false);
+        when(webhookService.receiveDelivery(eq(DELIVERY), any(GitHubWebhookEvent.class), eq(123L)))
+                .thenReturn(true);
 
         mockMvc.perform(post("/api/webhook/github")
                         .header("X-Hub-Signature-256", "sha256=valid")
@@ -138,9 +137,7 @@ class WebhookControllerTest {
                         .content(body))
                 .andExpect(status().isOk());
 
-        verify(webhookService, times(1))
-                .processAsync(any(GitHubWebhookEvent.class), eq("123"));
-        verify(processedWebhookRepository, times(1)).save(any());
+        verify(webhookService, times(1)).processAsync(DELIVERY);
     }
 
     @Test
@@ -156,14 +153,15 @@ class WebhookControllerTest {
                         .content(body))
                 .andExpect(status().isBadRequest());
 
-        verify(webhookService, never()).processAsync(any(), anyString());
+        verify(webhookService, never()).processAsync(anyString());
     }
 
     @Test
     void testDuplicateDeliveryIdReturns200WithNoProcessing() throws Exception {
         String body = payload("opened", 123L);
         when(hmacVerifier.verify(eq(body), anyString(), eq("123"))).thenReturn(true);
-        when(processedWebhookRepository.existsById(DELIVERY)).thenReturn(true);
+        when(webhookService.receiveDelivery(eq(DELIVERY), any(GitHubWebhookEvent.class), eq(123L)))
+                .thenReturn(false);
 
         mockMvc.perform(post("/api/webhook/github")
                         .header("X-Hub-Signature-256", "sha256=valid")
@@ -173,7 +171,25 @@ class WebhookControllerTest {
                         .content(body))
                 .andExpect(status().isOk());
 
-        verify(webhookService, never()).processAsync(any(), anyString());
+        verify(webhookService, never()).processAsync(anyString());
+    }
+
+    @Test
+    void testDurableIngressFailureReturns503ForRedelivery() throws Exception {
+        String body = payload("opened", 123L);
+        when(hmacVerifier.verify(eq(body), anyString(), eq("123"))).thenReturn(true);
+        when(webhookService.receiveDelivery(eq(DELIVERY), any(GitHubWebhookEvent.class), eq(123L)))
+                .thenThrow(new IllegalStateException("database unavailable"));
+
+        mockMvc.perform(post("/api/webhook/github")
+                        .header("X-Hub-Signature-256", "sha256=valid")
+                        .header("X-GitHub-Event", "pull_request")
+                        .header("X-GitHub-Delivery", DELIVERY)
+                        .contentType("application/json")
+                        .content(body))
+                .andExpect(status().isServiceUnavailable());
+
+        verify(webhookService, never()).processAsync(anyString());
     }
 
     @Test
@@ -190,7 +206,7 @@ class WebhookControllerTest {
                 .andExpect(status().isOk());
 
         verify(hmacVerifier, never()).verify(anyString(), anyString(), anyString());
-        verify(webhookService, never()).processAsync(any(), anyString());
+        verify(webhookService, never()).processAsync(anyString());
     }
 
     @Test
@@ -209,6 +225,6 @@ class WebhookControllerTest {
                         .content(body))
                 .andExpect(status().isOk());
 
-        verify(webhookService, never()).processAsync(any(), anyString());
+        verify(webhookService, never()).processAsync(anyString());
     }
 }

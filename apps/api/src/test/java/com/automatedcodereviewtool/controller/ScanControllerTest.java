@@ -158,10 +158,10 @@ class ScanControllerTest {
                 0,
                 "fallback", "v1", "1.0.0");
 
-        when(mlWorkerService.reviewFile("public class A {}", "java")).thenReturn(mlResp);
+        when(mlWorkerService.reviewFile("public class A {}", "java", "src/A.java")).thenReturn(mlResp);
 
         String body = """
-                {"content":"public class A {}","language":"java"}
+                {"content":"public class A {}","language":"java","filePath":"src/A.java"}
                 """;
 
         mockMvc.perform(post("/api/scan/file")
@@ -190,7 +190,10 @@ class ScanControllerTest {
 
     @Test
     void scanFile_returns400_whenMlWorkerRejects() throws Exception {
-        when(mlWorkerService.reviewFile(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+        when(mlWorkerService.reviewFile(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.isNull()))
                 .thenThrow(new IllegalArgumentException("not a real diff"));
 
         String body = """
