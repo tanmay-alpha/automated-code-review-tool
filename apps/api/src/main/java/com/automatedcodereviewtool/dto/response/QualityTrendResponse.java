@@ -9,7 +9,7 @@ import java.util.UUID;
  * Daily quality-score series for a single repository, plus the
  * most-frequent anti-pattern found in that window (if any).
  *
- * <p>Used by the Next.js dashboard's line chart (issue #18) — the
+ * <p>Used by the Next.js dashboard's line chart — the
  * client renders one point per day, and the {@code topAntiPattern}
  * field drives the "biggest issue this week" callout.</p>
  */

@@ -128,12 +128,37 @@ class MlWorkerServiceTest {
 
     @Test
     void review_throwsMlWorkerException_on503() {
-        server.enqueue(new MockResponse()
-                .setResponseCode(503)
-                .setBody("down"));
+        for (int i = 0; i < 3; i++) {
+            server.enqueue(new MockResponse()
+                    .setResponseCode(503)
+                    .setBody("down"));
+        }
 
         assertThatThrownBy(() -> service.review("diff", "java"))
                 .isInstanceOf(MlWorkerException.class);
+    }
+
+    @Test
+    void review_retriesRetryable503_thenSucceeds() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(503).setBody("temporary"));
+        server.enqueue(new MockResponse()
+                .setHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .setResponseCode(200)
+                .setBody("{\"findings\":[],\"qualityScore\":100}"));
+
+        MlReviewResponse response = service.review("diff", "java");
+
+        assertThat(response.qualityScore()).isEqualByComparingTo("100");
+        assertThat(server.getRequestCount()).isEqualTo(2);
+    }
+
+    @Test
+    void review_doesNotRetry400() {
+        server.enqueue(new MockResponse().setResponseCode(400).setBody("bad diff"));
+
+        assertThatThrownBy(() -> service.review("bad", "java"))
+                .isInstanceOf(InvalidDiffException.class);
+        assertThat(server.getRequestCount()).isEqualTo(1);
     }
 
     @Test
@@ -147,13 +172,13 @@ class MlWorkerServiceTest {
     }
 
     @Test
-    void isHealthy_returnsFalse_whenModelNotLoaded() {
+    void isHealthy_returnsTrue_whenFallbackEngineIsOperational() {
         server.enqueue(new MockResponse()
                 .setHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .setResponseCode(200)
-                .setBody("{\"status\":\"ok\",\"modelLoaded\":false}"));
+                .setBody("{\"status\":\"healthy\",\"engine\":\"fallback\",\"modelLoaded\":false}"));
 
-        assertThat(service.isHealthy()).isFalse();
+        assertThat(service.isHealthy()).isTrue();
     }
 
     @Test
@@ -179,7 +204,7 @@ class MlWorkerServiceTest {
                 .setResponseCode(200)
                 .setBody("{\"findings\":[],\"qualityScore\":0.9}"));
 
-        MlReviewResponse out = service.reviewFile("public class A {}", "java");
+        MlReviewResponse out = service.reviewFile("public class A {}", "java", "src/A.java");
 
         assertThat(out).isNotNull();
         assertThat(out.findings()).isEmpty();
@@ -188,6 +213,7 @@ class MlWorkerServiceTest {
         RecordedRequest req = server.takeRequest(2, TimeUnit.SECONDS);
         assertThat(req).isNotNull();
         assertThat(req.getPath()).isEqualTo("/ml/review");
+        assertThat(req.getBody().readUtf8()).contains("\"filePath\":\"src/A.java\"");
     }
 
     @Test

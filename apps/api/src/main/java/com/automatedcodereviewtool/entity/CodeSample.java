@@ -82,6 +82,9 @@ public class CodeSample {
     @Column(name = "content_sha256", nullable = false, length = 64)
     private String contentSha256;
 
+    @Column(name = "hunk_sha256", nullable = false, length = 64)
+    private String hunkSha256;
+
     @Column(name = "group_key", nullable = false, length = 255)
     private String groupKey;
 
@@ -150,6 +153,8 @@ public class CodeSample {
     public void setContextCode(String contextCode) { this.contextCode = contextCode; }
     public String getContentSha256() { return contentSha256; }
     public void setContentSha256(String contentSha256) { this.contentSha256 = contentSha256; }
+    public String getHunkSha256() { return hunkSha256; }
+    public void setHunkSha256(String hunkSha256) { this.hunkSha256 = hunkSha256; }
     public String getGroupKey() { return groupKey; }
     public void setGroupKey(String groupKey) { this.groupKey = groupKey; }
     public String getSourceType() { return sourceType; }

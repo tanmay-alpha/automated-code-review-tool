@@ -27,7 +27,7 @@ import java.util.UUID;
  * <p>{@code GET /api/metrics/quality-trend?repo=…&days=30} —
  * daily quality scores plus the single most-frequent anti-pattern
  * found in that window. Powers the line chart in
- * {@code apps/web/app/dashboard/repo/[id]/page.tsx} (issue #18).</p>
+ * {@code apps/web/src/app/dashboard/page.tsx}.</p>
  */
 @RestController
 @RequestMapping("/api/metrics")

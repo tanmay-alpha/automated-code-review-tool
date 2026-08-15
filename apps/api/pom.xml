@@ -185,8 +185,7 @@
 
     <build>
         <finalName>automated-code-review-tool-api</finalName>
-        <!-- Phase 1A: expose contracts/ to the test classpath so that
-             Java parity tests read the same fixtures as Python tests. -->
+        <!-- Java and Python parity tests consume the same contract fixtures. -->
         <testResources>
             <testResource>
                 <directory>src/test/resources</directory>
@@ -219,6 +218,10 @@
                         </exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
             </plugin>
             <!-- OWASP Dependency Check for CVE scanning -->
             <plugin>
@@ -272,4 +275,21 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>postgres-correctness</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <groups>postgres</groups>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
