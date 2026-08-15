@@ -1,5 +1,5 @@
 """
-automated-code-review-tool — Secret redaction (Phase 1A).
+Deterministic secret redaction for persisted ML data.
 
 Lightweight, deterministic pre-storage scrubber that replaces leaked
 credentials with the placeholder ``<REDACTED_SECRET>``. The pattern set
@@ -125,4 +125,3 @@ def looks_like_secret_line(line: str) -> bool:
     if not line:
         return False
     return any(pattern.search(line) for _name, pattern in _PATTERNS)
-

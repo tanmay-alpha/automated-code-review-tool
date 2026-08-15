@@ -1,10 +1,4 @@
-"""
-automated-code-review-tool — Pydantic v2 request/response schemas (Issue #9).
-
-Defines the wire contract for /ml/review and /ml/health. All field
-constraints (length, literal types) are enforced by FastAPI at the
-edge, so the rest of the code can trust the types.
-"""
+"""Pydantic request and response contracts for the ML worker."""
 from __future__ import annotations
 
 from typing import Literal
@@ -24,6 +18,11 @@ class ReviewRequest(BaseModel):
     )
     mode: Literal["diff", "file"] = Field(
         "diff", description="'diff' = analyze only the changed lines; 'file' = full file context"
+    )
+    filePath: str | None = Field(
+        None,
+        max_length=1024,
+        description="Optional source path for file-mode localization",
     )
 
 
@@ -54,9 +53,9 @@ class ReviewResponse(BaseModel):
     qualityScore: float = Field(..., ge=0.0, le=100.0)
     processingTimeMs: int
     windowsProcessed: int = Field(..., ge=1)
-    engine: str = Field("fallback", description="'model' or 'fallback'")
-    modelVersion: str = Field("rule-baseline-v1", description="Model version or fallback ID")
-    taxonomyVersion: str = Field("1.0.0", description="Taxonomy schema version")
+    engine: Literal["model", "fallback"]
+    modelVersion: str = Field(..., description="Checkpoint version or rule-engine ID")
+    taxonomyVersion: str = Field(..., description="Validated taxonomy version")
 
 
 class HealthResponse(BaseModel):
@@ -66,3 +65,6 @@ class HealthResponse(BaseModel):
     modelLoaded: bool
     modelName: str
     device: str
+    engine: Literal["model", "fallback"]
+    taxonomyVersion: str
+    degradedReason: str | None = None

@@ -1,155 +1,259 @@
-"""Tests for the deterministic dataset builder.
-
-The tests intentionally avoid talking to PostgreSQL. They drive the
-in-memory path by passing empty data and verifying that:
-
-* split assignment is deterministic,
-* manifest hash is reproducible,
-* frozen datasets are immutable (manifest hash unchanged),
-* secrets are flagged in quality report,
-* manifest excludes sensitive fields.
-"""
+"""Focused dataset-contract tests without a PostgreSQL dependency."""
 
 from __future__ import annotations
 
-import json
-import sys
+import hashlib
 from pathlib import Path
 
-_HERE = Path(__file__).resolve().parent
-_ML_WORKER = _HERE.parent
-_REPO_ROOT = _ML_WORKER.parent
-for _p in (str(_ML_WORKER), str(_REPO_ROOT)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-
-from training.build_dataset import (  # noqa: E402
-    _looks_like_secret,
+from app.taxonomy import load_taxonomy
+from training.build_dataset import (
+    AnnotationRow,
+    CodeSampleRow,
+    SampleReviewRow,
+    build_artifacts,
+    resolve_dataset_records,
 )
-from training.dataset_manifest import DatasetManifest, manifest_hash  # noqa: E402
-from training.group_split import assign_group_splits, summarize  # noqa: E402
-from training.validate_dataset import validate_dataset_dir, render_markdown  # noqa: E402
+from training.dataset_contract import DatasetRecord, LabelEvidence
+from training.dataset_manifest import read_manifest
+from training.group_split import build_split_plan, duplicate_components
 
 
-def test_group_split_is_deterministic():
-    groups = [f"group-{i}" for i in range(30)]
-    a = assign_group_splits(groups, seed=42)
-    b = assign_group_splits(groups, seed=42)
-    assert a == b
-    counts = summarize(a)
-    # Each split should have at least one group when 30 are available
-    assert counts["train"] > 0
-    assert counts["validation"] > 0
-    assert counts["test"] > 0
-    assert sum(counts.values()) == 30
-
-
-def test_group_split_isolates_groups():
-    groups = ["a", "a", "a", "b", "b", "c"]
-    a = assign_group_splits(groups, seed=1)
-    # All samples of the same group key land in the same split.
-    assert len({a[g] for g in groups if g == "a"}) == 1
-    assert len({a[g] for g in groups if g == "b"}) == 1
-
-
-def test_manifest_hash_is_reproducible():
-    manifest = DatasetManifest(
-        dataset_name="code-review-real",
-        dataset_version="0.1.0",
-        taxonomy_version="1.0.0",
-        seed=42,
-        created_at="2026-07-29T00:00:00+00:00",
-        source_commit="abc123",
-        sample_count=10,
-        split_counts={"train": 7, "validation": 2, "test": 1},
-        label_distribution={"PERFORMANCE_N_PLUS_ONE": 10},
-        repository_counts={"r1": 10},
-        duplicate_count=0,
-        manifest_sha256="",
+def _record(
+    sample_id: str,
+    *,
+    raw_hunk: str | None = None,
+    group_key: str | None = None,
+    added_code: str = "new",
+) -> DatasetRecord:
+    raw_hunk = raw_hunk or f"@@ -1 +1 @@\n-old-{sample_id}\n+new-{sample_id}"
+    sample_parity = sum(ord(character) for character in sample_id) % 2
+    labels = tuple(
+        LabelEvidence(
+            anti_pattern_id=label,
+            state="positive" if (index + sample_parity) % 2 == 0 else "negative",
+            trust_level="human_single",
+            annotation_ids=(f"annotation-{sample_id}-{label}",),
+        )
+        for index, label in enumerate(load_taxonomy().trainable_ids())
     )
-    h1 = manifest_hash(manifest)
-    h2 = manifest_hash(manifest)
-    assert h1 == h2
-    assert len(h1) == 64
+    return DatasetRecord(
+        sample_id=sample_id,
+        repository_id=f"repo-{sample_id}",
+        pull_request_id=f"pr-{sample_id}",
+        commit_sha="a" * 40,
+        file_path="src/example.py",
+        language="python",
+        old_start=1,
+        old_count=1,
+        new_start=1,
+        new_count=1,
+        hunk_sha256=hashlib.sha256(raw_hunk.encode()).hexdigest(),
+        content_sha256=hashlib.sha256(added_code.encode()).hexdigest(),
+        group_key=group_key or f"group-{sample_id}",
+        raw_hunk=raw_hunk,
+        added_code=added_code,
+        context_code="",
+        repository_visibility="public",
+        license_spdx="MIT",
+        data_use_status="allowed_public",
+        redaction_version="v1",
+        taxonomy_version=load_taxonomy().version,
+        labels=labels,
+    )
 
 
-def test_manifest_excludes_secrets():
-    manifest_dict = DatasetManifest(
-        dataset_name="x", dataset_version="0.0.1", taxonomy_version="1.0.0",
-        seed=1, created_at="t", source_commit="c", sample_count=0,
-        split_counts={"train": 0, "validation": 0, "test": 0},
-        label_distribution={}, repository_counts={}, duplicate_count=0,
-        manifest_sha256="",
-    ).to_dict()
-    blob = json.dumps(manifest_dict)
-    assert "password" not in blob.lower()
-    assert "sk_live_" not in blob
-    assert "Bearer " not in blob
+def test_exact_duplicates_are_grouped_before_split() -> None:
+    duplicate = "@@ -1 +1 @@\n-old\n+new"
+    records = [
+        _record("one", raw_hunk=duplicate),
+        _record("two", raw_hunk=duplicate),
+        _record("three", raw_hunk="@@ -2 +2 @@\n-a\n+b"),
+    ]
+    sample_splits, _, pairs = build_split_plan(records, seed=17)
+    components, _ = duplicate_components(records)
+    assert components["one"] == components["two"]
+    assert sample_splits["one"] == sample_splits["two"]
+    assert any(pair.kind == "exact" for pair in pairs)
 
 
-def test_secret_detection():
-    assert _looks_like_secret('api_key = "sk_live_real_secret"')
-    assert not _looks_like_secret("normal_var = 42")
-
-
-def test_validate_detects_secrets(tmp_path: Path):
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "datasetName": "demo", "datasetVersion": "0.0.1",
-        "taxonomyVersion": "1.0.0", "seed": 1, "createdAt": "t",
-        "sourceCommit": "c", "sampleCount": 1,
-        "splitCounts": {"train": 1, "validation": 0, "test": 0},
-        "labelDistribution": {}, "repositoryCounts": {}, "duplicateCount": 0,
-        "manifestSha256": "x" * 64,
-    }))
-    (tmp_path / "samples.jsonl").write_text(json.dumps({
-        "id": "s1", "repository_id": "r", "pull_request_id": "p",
-        "commit_sha": "abc", "file_path": "a.py", "language": "python",
-        "new_start": 1, "content_sha256": "h" * 64, "group_key": "g",
-        "added_code": 'password = "hunter2"\n', "labels": ["SECURITY_HARDCODED_SECRET"],
-    }) + "\n")
-    (tmp_path / "splits.json").write_text(json.dumps({"g": "train"}))
-    report = validate_dataset_dir(tmp_path)
-    assert report["critical_failures"] >= 1
-    codes = {f["code"] for f in report["findings"]}
-    assert "secret_escaped_redaction" in codes
-
-
-def test_validate_detects_split_leak(tmp_path: Path):
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "datasetName": "demo", "datasetVersion": "0.0.1",
-        "taxonomyVersion": "1.0.0", "seed": 1, "createdAt": "t",
-        "sourceCommit": "c", "sampleCount": 2,
-        "splitCounts": {"train": 1, "validation": 1, "test": 0},
-        "labelDistribution": {}, "repositoryCounts": {}, "duplicateCount": 0,
-        "manifestSha256": "x" * 64,
-    }))
-    rows = []
-    for i, gid in enumerate(["g1", "g1"]):
-        rows.append({
-            "id": f"s{i}", "repository_id": "r", "pull_request_id": "p",
-            "commit_sha": "abc", "file_path": "a.py", "language": "python",
-            "new_start": 1, "content_sha256": "h" * (60 + i), "group_key": gid,
-            "added_code": "x = 1\n", "labels": ["PERFORMANCE_N_PLUS_ONE"],
-        })
-    (tmp_path / "samples.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
-    # g1 appears in two splits — must trip the validator.
-    (tmp_path / "splits.json").write_text(json.dumps({"g1": "train"}))
-    validate_dataset_dir(tmp_path)
-    # No conflict because both rows use the same split, but unknown_language
-    # will not trigger since language is "python".
-    assert "samples.jsonl" in [p.name for p in tmp_path.iterdir()]
-
-
-def test_render_markdown_includes_summary():
-    report = {
-        "summary": {"samples": 1, "labels_seen": 1, "duplicates": 0,
-                    "missing_diff": 0, "missing_language": 0,
-                    "unknown_taxonomy_ids": 0, "invalid_line_ranges": 0,
-                    "secrets_escaped": 0, "critical_failures": 0, "warnings": 0},
-        "findings": [],
-        "critical_failures": 0, "warnings": 0,
+def test_artifact_manifest_is_reproducible(tmp_path: Path) -> None:
+    records = [_record(str(index)) for index in range(1, 5)]
+    common = {
+        "records": records,
+        "build_findings": [],
+        "dataset_name": "review-gold",
+        "dataset_version": "1.0.0",
+        "taxonomy_version": load_taxonomy().version,
+        "source_git_sha": "b" * 40,
+        "seed": 42,
+        "created_at": "2026-08-11T00:00:00+00:00",
+        "near_duplicate_threshold": 0.85,
     }
-    md = render_markdown(report)
-    assert "Samples: 1" in md
-    assert "Critical failures: 0" in md
+    first, first_report = build_artifacts(output_dir=tmp_path / "one", **common)
+    second, second_report = build_artifacts(output_dir=tmp_path / "two", **common)
+    assert first.manifest_sha256 == second.manifest_sha256
+    assert first.samples_sha256 == second.samples_sha256
+    assert first.splits_sha256 == second.splits_sha256
+    assert first_report["critical_failures"] == 0
+    assert second_report["critical_failures"] == 0
+    assert read_manifest(tmp_path / "one" / "manifest.json") == first
+
+
+def test_secret_quality_gate_blocks_escaped_content(tmp_path: Path) -> None:
+    secret = 'api_key = "sk_live_this_is_not_safe"'
+    _, report = build_artifacts(
+        records=[_record("secret", raw_hunk=f"@@ -1 +1 @@\n+{secret}", added_code=secret)],
+        build_findings=[],
+        output_dir=tmp_path,
+        dataset_name="review-gold",
+        dataset_version="1.0.0",
+        taxonomy_version=load_taxonomy().version,
+        source_git_sha="b" * 40,
+        seed=42,
+        created_at="2026-08-11T00:00:00+00:00",
+        near_duplicate_threshold=0.85,
+    )
+    assert report["critical_failures"] > 0
+    assert "secret_escaped_redaction" in {
+        finding["code"] for finding in report["findings"]
+    }
+
+
+def test_resolution_preserves_explicit_negative_provenance() -> None:
+    taxonomy = load_taxonomy()
+    positive_label, negative_label = taxonomy.trainable_ids()[:2]
+    raw_hunk = "@@ -1 +1 @@\n-old\n+new"
+    sample = CodeSampleRow(
+        id="sample-1",
+        repository_id="repo-1",
+        pull_request_id="pr-1",
+        commit_sha="c" * 40,
+        file_path="src/a.py",
+        language="python",
+        old_start=1,
+        old_count=1,
+        new_start=1,
+        new_count=1,
+        hunk_sha256="d" * 64,
+        content_sha256=hashlib.sha256(b"new").hexdigest(),
+        group_key="repo-1:pr-1",
+        raw_hunk=raw_hunk,
+        added_code="new",
+        context_code="",
+        repository_visibility="public",
+        license_spdx="MIT",
+        data_use_status="allowed_public",
+        redaction_version="v1",
+    )
+    annotations = {
+        sample.id: [
+            AnnotationRow(
+                id="a-positive",
+                code_sample_id=sample.id,
+                anti_pattern_id=positive_label,
+                label_state="positive",
+                source="human",
+                confidence=None,
+                reviewer_user_id="reviewer",
+                trust_level="human_single",
+                resolution_state="active",
+            )
+        ]
+    }
+    reviews = {
+        sample.id: [
+            SampleReviewRow(
+                id="review-1",
+                code_sample_id=sample.id,
+                reviewer_user_id="reviewer",
+                review_status="complete",
+                reviewed_label_ids=(negative_label,),
+                clean_confirmed=True,
+            )
+        ]
+    }
+    records, findings = resolve_dataset_records([sample], annotations, reviews, taxonomy)
+    assert not [finding for finding in findings if finding.severity == "critical"]
+    assert records[0].positive_labels == (positive_label,)
+    assert records[0].negative_labels == (negative_label,)
+    negative = next(item for item in records[0].labels if item.state == "negative")
+    assert negative.review_ids == ("review-1",)
+
+
+def test_automated_annotation_is_not_promoted_to_gold() -> None:
+    taxonomy = load_taxonomy()
+    sample = _sample_with_policy("allowed_public")
+    annotation = AnnotationRow(
+        id="model-1",
+        code_sample_id=sample.id,
+        anti_pattern_id=taxonomy.trainable_ids()[0],
+        label_state="positive",
+        source="model",
+        confidence=0.99,
+        reviewer_user_id=None,
+        trust_level="model",
+        resolution_state="active",
+    )
+    records, findings = resolve_dataset_records(
+        [sample], {sample.id: [annotation]}, {}, taxonomy
+    )
+    assert records == []
+    assert any(item.code == "sample_without_gold_evidence" for item in findings)
+
+
+def test_positive_annotation_conflicting_with_clean_review_is_rejected() -> None:
+    taxonomy = load_taxonomy()
+    label = taxonomy.trainable_ids()[0]
+    sample = _sample_with_policy("allowed_public")
+    annotation = AnnotationRow(
+        id="positive",
+        code_sample_id=sample.id,
+        anti_pattern_id=label,
+        label_state="positive",
+        source="human",
+        confidence=None,
+        reviewer_user_id="reviewer",
+        trust_level="human_single",
+        resolution_state="active",
+    )
+    review = SampleReviewRow(
+        id="clean",
+        code_sample_id=sample.id,
+        reviewer_user_id="reviewer",
+        review_status="complete",
+        reviewed_label_ids=(label,),
+        clean_confirmed=True,
+    )
+    records, findings = resolve_dataset_records(
+        [sample], {sample.id: [annotation]}, {sample.id: [review]}, taxonomy
+    )
+    assert records == []
+    assert any(
+        item.code == "annotation_clean_review_conflict" for item in findings
+    )
+
+
+def _sample_with_policy(policy: str) -> CodeSampleRow:
+    raw_hunk = "@@ -1 +1 @@\n-old\n+new"
+    return CodeSampleRow(
+        id="sample-policy",
+        repository_id="repo",
+        pull_request_id="pr",
+        commit_sha="e" * 40,
+        file_path="a.py",
+        language="python",
+        old_start=1,
+        old_count=1,
+        new_start=1,
+        new_count=1,
+        hunk_sha256="f" * 64,
+        content_sha256=hashlib.sha256(b"new").hexdigest(),
+        group_key="repo:pr",
+        raw_hunk=raw_hunk,
+        added_code="new",
+        context_code="",
+        repository_visibility="public",
+        license_spdx="MIT",
+        data_use_status=policy,
+        redaction_version="v1",
+    )

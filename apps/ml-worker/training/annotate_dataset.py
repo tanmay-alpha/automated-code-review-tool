@@ -1,529 +1,398 @@
-"""Terminal-based annotation workflow for ML dataset curation.
+"""Export safe annotation queues and import deduplicated human decisions."""
 
-Usage:
-    python training/annotate_dataset.py queue    --limit 50 --strategy uncertainty --output annotation_queue.jsonl
-    python training/annotate_dataset.py import    --input completed_annotations.jsonl --reviewer-id <uuid>
-    python training/annotate_dataset.py stats
-    python training/annotate_dataset.py conflicts --output annotation_conflicts.jsonl
-    python training/annotate_dataset.py adjudicate --input adjudicated_annotations.jsonl --reviewer-id <uuid>
-
-Queue strategies: random, uncertainty, high_confidence, label_balance, language_balance,
-conflict, unreviewed.
-
-Never includes raw source, secrets, or tokens.
-"""
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-import logging
 import os
-import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Iterable
 
-# Allow ``import taxonomy`` from anywhere.
-_HERE = Path(__file__).resolve().parent
-_ML_WORKER = _HERE.parent
-_REPO_ROOT = _ML_WORKER.parent
-for _p in (str(_ML_WORKER), str(_REPO_ROOT)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+from app.secret_redaction import redact_secrets
+from app.taxonomy import load_taxonomy
+from training.dataset_contract import ALLOWED_DATA_USE
 
-from taxonomy import trainable_ids  # noqa: E402
-from training.label_resolution import (  # noqa: E402
-    AnnotationEvidence,
-    Resolution,
-    resolve_label,
-)
-
-log = logging.getLogger("annotate_dataset")
-
-# Fields that may be exported — never includes raw tokens, secrets, or credentials.
-ALLOWED_EXPORT_FIELDS = {
-    "sampleId", "repository", "pullRequest", "commitSha", "filePath",
-    "language", "lineRange", "redactedHunk", "existingPredictions",
-    "existingAnnotations", "taxonomyVersion", "repositoryVisibility",
-    "licenseSpdx", "dataUseStatus",
-}
+LABEL_STATES = frozenset({"positive", "negative", "uncertain"})
 
 
-def _db_url() -> Optional[str]:
-    return os.environ.get("ML_DATASET_DATABASE_URL", "")
+def annotation_idempotency_key(record: dict[str, Any], *, adjudicated: bool = False) -> str:
+    """Return a stable key for one reviewer decision without embedding PII."""
+    payload = {
+        "anti_pattern_id": record["anti_pattern_id"],
+        "label_state": record["label_state"],
+        "reviewer_id": record["reviewer_id"],
+        "sample_id": record["sample_id"],
+        "type": "adjudication" if adjudicated else "annotation",
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return f"annotation:v1:{hashlib.sha256(encoded).hexdigest()}"
 
 
-def _connect():
-    if not _db_url():
-        return None
-    try:
-        import psycopg
-        return psycopg.connect(_db_url(), autocommit=True)
-    except Exception as ex:
-        log.warning("Database unavailable: %s", ex)
-        return None
+def normalize_annotation(raw: dict[str, Any], trainable_ids: set[str]) -> dict[str, Any]:
+    """Validate external JSON and return the database field vocabulary."""
+    anti_pattern_id = str(raw.get("antiPatternId", "")).strip()
+    if anti_pattern_id not in trainable_ids:
+        raise ValueError(f"antiPatternId is not a trainable taxonomy ID: {anti_pattern_id!r}")
+    label_state = str(raw.get("label", "")).strip().lower()
+    if label_state not in LABEL_STATES:
+        raise ValueError("label must be positive, negative, or uncertain")
+    sample_id = str(raw.get("sampleId", "")).strip()
+    reviewer_id = str(raw.get("reviewerId", "")).strip()
+    if not sample_id or not reviewer_id:
+        raise ValueError("sampleId and reviewerId are required")
+    line_start = int(raw.get("lineStart", 1))
+    line_end = int(raw.get("lineEnd", line_start))
+    if line_start < 1 or line_end < line_start:
+        raise ValueError("lineStart/lineEnd must be a positive inclusive range")
+    return {
+        "sample_id": sample_id,
+        "anti_pattern_id": anti_pattern_id,
+        "label_state": label_state,
+        "reviewer_id": reviewer_id,
+        "line_start": line_start,
+        "line_end": line_end,
+        "notes": str(raw.get("notes", "")).strip() or None,
+    }
+
+
+def _read_jsonl(path: Path) -> Iterable[tuple[int, dict[str, Any]]]:
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        value = json.loads(line)
+        if not isinstance(value, dict):
+            raise ValueError(f"{path}:{line_number}: expected a JSON object")
+        yield line_number, value
+
+
+def _connect(database_url: str) -> Any:
+    import psycopg
+
+    return psycopg.connect(database_url)
+
+
+def _require_database_url(args: argparse.Namespace) -> str:
+    value = args.database_url or os.environ.get("ML_DATASET_DATABASE_URL")
+    if not value:
+        raise SystemExit("ML_DATASET_DATABASE_URL or --database-url is required")
+    return str(value)
+
+
+def _queue_rows(conn: Any) -> list[dict[str, Any]]:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT s.id::text AS sample_id, s.language, s.raw_hunk,
+                   s.new_start, s.new_count, s.data_use_status,
+                   COALESCE(r.review_status, 'unreviewed') AS review_status
+              FROM ml.code_samples s
+              LEFT JOIN ml.sample_reviews r ON r.code_sample_id = s.id
+             WHERE s.data_use_status = ANY(%s)
+             ORDER BY s.id
+            """,
+            (sorted(ALLOWED_DATA_USE),),
+        )
+        names = [getattr(item, "name", item[0]) for item in cursor.description]
+        return [dict(zip(names, row)) for row in cursor.fetchall()]
 
 
 def cmd_queue(args: argparse.Namespace) -> int:
-    """Export annotation queue records."""
-    conn = _connect()
-    if conn is None:
-        log.error("ML_DATASET_DATABASE_URL not set; cannot build queue")
-        return 2
+    taxonomy = load_taxonomy()
+    with _connect(_require_database_url(args)) as conn:
+        rows = _queue_rows(conn)
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT code_sample_id::text, anti_pattern_id, label_state,
+                       source, trust_level, resolution_state
+                  FROM ml.annotations
+                 WHERE resolution_state = 'active'
+                 ORDER BY code_sample_id, anti_pattern_id, created_at, id
+                """
+            )
+            annotations = list(cursor.fetchall())
 
-    strategy = args.strategy
-    limit = args.limit
+    by_sample: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for sample_id, anti_pattern_id, state, source, trust, resolution in annotations:
+        by_sample[str(sample_id)].append(
+            {
+                "antiPatternId": str(anti_pattern_id),
+                "label": str(state),
+                "source": str(source),
+                "trustLevel": str(trust),
+                "resolutionState": str(resolution),
+            }
+        )
+
+    payloads: list[dict[str, Any]] = []
+    for row in rows:
+        safe = redact_secrets(str(row["raw_hunk"]))
+        payloads.append(
+            {
+                "sampleId": str(row["sample_id"]),
+                "language": str(row["language"]),
+                "rawHunk": safe.text,
+                "lineStart": int(row["new_start"]),
+                "lineEnd": max(
+                    int(row["new_start"]),
+                    int(row["new_start"]) + max(0, int(row["new_count"]) - 1),
+                ),
+                "reviewStatus": str(row["review_status"]),
+                "taxonomyVersion": taxonomy.version,
+                "allowedLabels": taxonomy.trainable_ids(),
+                "activeAnnotations": by_sample.get(str(row["sample_id"]), []),
+            }
+        )
+    if args.strategy == "conflict":
+        payloads = [
+            item
+            for item in payloads
+            if any(
+                len({a["label"] for a in item["activeAnnotations"] if a["antiPatternId"] == label}) > 1
+                for label in taxonomy.trainable_ids()
+            )
+        ]
+    elif args.strategy == "unreviewed":
+        payloads = [item for item in payloads if item["reviewStatus"] == "unreviewed"]
+    elif args.strategy == "language_balance":
+        counts = Counter(item["language"] for item in payloads)
+        payloads.sort(key=lambda item: (counts[item["language"]], item["sampleId"]))
+    payloads = payloads[: args.limit]
     output = Path(args.output)
-
-    # Fetch samples with pending annotation state.
-    sql = """
-        SELECT s.id::text, s.repository_id::text, s.pull_request_id::text,
-               s.commit_sha, s.file_path, s.language,
-               s.new_start, s.new_count, COALESCE(s.added_code, '') as added_code,
-               s.content_sha256, s.group_key,
-               s.repository_visibility, s.license_spdx, s.data_use_status
-          FROM ml.code_samples s
-         WHERE s.data_use_status NOT IN ('blocked_private_no_consent', 'blocked_policy')
-         ORDER BY s.created_at DESC
-         LIMIT %s
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql, (limit * 3,))  # Fetch extra for filtering
-        cols = [c.name for c in cur.description]
-        samples = [dict(zip(cols, row)) for row in cur.fetchall()]
-
-    if not samples:
-        log.warning("No samples found for queue")
-        return 0
-
-    trainable = set(trainable_ids())
-    selected: List[Dict[str, Any]] = []
-
-    for sample in samples:
-        record = _build_queue_record(sample, conn, trainable)
-        if record is None:
-            continue
-
-        # Apply strategy filtering.
-        if strategy == "unreviewed" and record.get("existingAnnotations"):
-            continue
-        if strategy == "conflict" and not record.get("hasConflict"):
-            continue
-        if strategy == "high_confidence" and not record.get("hasHighConfidence"):
-            continue
-
-        selected.append(record)
-        if len(selected) >= limit:
-            break
-
-    # Write output — never include raw source or credentials.
-    with output.open("w", encoding="utf-8") as f:
-        for rec in selected:
-            f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
-
-    log.info("Wrote %d queue records to %s (strategy=%s)", len(selected), output, strategy)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        "".join(json.dumps(item, sort_keys=True) + "\n" for item in payloads),
+        encoding="utf-8",
+    )
     return 0
 
 
-def _build_queue_record(sample: Dict, conn, trainable: set) -> Optional[Dict]:
-    """Build a single queue record from a sample row."""
-    # Check data-use policy.
-    if sample.get("data_use_status") in ("blocked_private_no_consent", "blocked_policy"):
-        return None
-
-    sample_id = sample["id"]
-    added_code = sample.get("added_code", "")
-
-    # Fetch existing annotations for this sample.
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT anti_pattern_id, label_state, source, confidence, trust_level, "
-            "       reviewer_user_id::text, id::text "
-            "  FROM ml.annotations WHERE code_sample_id = %s::uuid",
-            (sample_id,),
-        )
-        ann_rows = cur.fetchall()
-
-    annotations = [
-        {
-            "antiPatternId": r[0],
-            "label": r[1],
-            "source": r[2],
-            "confidence": float(r[3]) if r[3] is not None else None,
-            "trustLevel": r[4],
-            "reviewerId": r[5],
-            "id": r[6],
-        }
-        for r in ann_rows
-    ]
-
-    # Detect conflicts.
-    trust_groups: Dict[str, List] = defaultdict(list)
-    for ann in annotations:
-        trust_groups[ann.get("trustLevel", "model")].append(ann)
-
-    has_conflict = False
-    for level, group in trust_groups.items():
-        if level.startswith("human") and len(group) >= 2:
-            labels = {a["label"] for a in group}
-            if len(labels) > 1:
-                has_conflict = True
-                break
-
-    # Check for high-confidence model predictions.
-    has_high = any(
-        a.get("confidence", 0) >= 0.8 and a.get("source") == "model"
-        for a in annotations
+def _sample_policy_and_range(cursor: Any, sample_id: str) -> tuple[str, int, int] | None:
+    cursor.execute(
+        """
+        SELECT data_use_status, new_start,
+               GREATEST(new_start, new_start + GREATEST(new_count - 1, 0))
+          FROM ml.code_samples
+         WHERE id = %s::uuid
+        """,
+        (sample_id,),
     )
-
-    # Resolution check.
-    evidence = [
-        AnnotationEvidence(
-            annotation_id=a["id"],
-            trust_level=a.get("trustLevel", a["source"]),
-            label=a["label"],
-            reviewer_id=a.get("reviewerId"),
-            source=a["source"],
-        )
-        for a in annotations
-    ]
-
-    resolution = resolve_label(evidence)
-    is_unreviewed = resolution.resolution == Resolution.UNREVIEWED
-
-    return {
-        "sampleId": sample_id,
-        "repository": sample.get("repository_id"),
-        "pullRequest": sample.get("pull_request_id"),
-        "commitSha": sample.get("commit_sha"),
-        "filePath": sample.get("file_path"),
-        "language": sample.get("language"),
-        "lineRange": {
-            "newStart": sample.get("new_start"),
-            "newCount": sample.get("new_count"),
-        },
-        "redactedHunk": added_code[:2000] if added_code else "",  # Truncate for safety.
-        "existingPredictions": [
-            a for a in annotations if a["source"] in ("model", "fallback")
-        ],
-        "existingAnnotations": [
-            a for a in annotations if a["source"] in ("human", "finding_feedback", "import")
-        ],
-        "taxonomyVersion": "1.0.0",  # Current canonical version.
-        "repositoryVisibility": sample.get("repository_visibility", "private"),
-        "licenseSpdx": sample.get("license_spdx"),
-        "dataUseStatus": sample.get("data_use_status"),
-        "hasConflict": has_conflict,
-        "hasHighConfidence": has_high,
-        "isUnreviewed": is_unreviewed,
-        "currentResolution": resolution.resolution.value,
-    }
+    row = cursor.fetchone()
+    return None if row is None else (str(row[0]), int(row[1]), int(row[2]))
 
 
 def cmd_import(args: argparse.Namespace) -> int:
-    """Import completed annotations from a JSONL file."""
-    input_path = Path(args.input)
-    reviewer_id = args.reviewer_id
-
-    if not input_path.exists():
-        log.error("Input file not found: %s", input_path)
-        return 2
-
-    conn = _connect()
-    if conn is None:
-        log.error("ML_DATASET_DATABASE_URL not set; cannot import")
-        return 2
-
-    imported = 0
+    trainable = set(load_taxonomy().trainable_ids())
+    accepted = 0
     skipped = 0
-    errors = 0
-
-    with input_path.open("r", encoding="utf-8") as f:
-        for line_no, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
+    with _connect(_require_database_url(args)) as conn, conn.cursor() as cursor:
+        for line_number, raw in _read_jsonl(Path(args.input)):
             try:
-                record = json.loads(line)
-            except json.JSONDecodeError as ex:
-                log.warning("Line %d: invalid JSON: %s", line_no, ex)
-                errors += 1
-                continue
-
-            try:
-                sample_id = record.get("sampleId")
-                anti_pattern_id = record.get("antiPatternId")
-                label = record.get("label", "positive")
-                notes = record.get("notes", "")
-                trust_level = record.get("trustLevel", "human_single")
-
-                if not sample_id or not anti_pattern_id:
-                    log.warning("Line %d: missing sampleId or antiPatternId", line_no)
-                    skipped += 1
-                    continue
-
-                if anti_pattern_id not in trainable_ids() and anti_pattern_id not in ("MAINTAINABILITY_PRINT_STATEMENT", "READABILITY_LONG_METHOD"):
-                    log.warning("Line %d: unknown antiPatternId %r", line_no, anti_pattern_id)
-                    skipped += 1
-                    continue
-
-                if label not in ("positive", "negative", "uncertain"):
-                    log.warning("Line %d: invalid label %r", line_no, label)
-                    skipped += 1
-                    continue
-
-                import uuid
-                annotation_id = str(uuid.uuid4())
-                idempotency_key = f"manual:{sample_id}:{anti_pattern_id}:{reviewer_id}:manual_{label}"
-
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT id FROM ml.annotations WHERE idempotency_key = %s",
-                        (idempotency_key,),
+                record = normalize_annotation(raw, trainable)
+                sample = _sample_policy_and_range(cursor, record["sample_id"])
+                if sample is None:
+                    raise ValueError("sampleId does not exist")
+                policy, first_line, last_line = sample
+                if policy not in ALLOWED_DATA_USE:
+                    raise ValueError(f"sample policy {policy!r} forbids annotation export use")
+                if record["line_start"] < first_line or record["line_end"] > last_line:
+                    raise ValueError(f"line range must be within [{first_line}, {last_line}]")
+                key = annotation_idempotency_key(record)
+                cursor.execute(
+                    """
+                    INSERT INTO ml.annotations
+                        (code_sample_id, anti_pattern_id, label_state, line_start,
+                         line_end, source, reviewer_user_id, rationale,
+                         feedback_action, idempotency_key, trust_level,
+                         resolution_state)
+                    VALUES (%s::uuid, %s, %s, %s, %s, 'human', %s::uuid, %s,
+                            %s, %s, 'human_single', 'active')
+                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+                    DO NOTHING
+                    """,
+                    (
+                        record["sample_id"],
+                        record["anti_pattern_id"],
+                        record["label_state"],
+                        record["line_start"],
+                        record["line_end"],
+                        record["reviewer_id"],
+                        record["notes"],
+                        f"manual_{record['label_state']}",
+                        key,
+                    ),
+                )
+                accepted += int(cursor.rowcount == 1)
+                skipped += int(cursor.rowcount == 0)
+                cursor.execute(
+                    """
+                    SELECT count(DISTINCT label_state)
+                      FROM ml.annotations
+                     WHERE code_sample_id=%s::uuid AND anti_pattern_id=%s
+                       AND resolution_state='active'
+                       AND label_state IN ('positive', 'negative')
+                    """,
+                    (record["sample_id"], record["anti_pattern_id"]),
+                )
+                if cursor.fetchone()[0] > 1:
+                    cursor.execute(
+                        """
+                        INSERT INTO ml.sample_reviews
+                            (code_sample_id, reviewer_user_id, review_status)
+                        VALUES (%s::uuid, %s::uuid, 'needs_adjudication')
+                        ON CONFLICT (code_sample_id, reviewer_user_id)
+                        WHERE reviewer_user_id IS NOT NULL
+                        DO UPDATE SET review_status='needs_adjudication', updated_at=NOW()
+                        """,
+                        (record["sample_id"], record["reviewer_id"]),
                     )
-                    if cur.fetchone():
-                        log.debug("Line %d: idempotent, skipping", line_no)
-                        skipped += 1
-                        continue
-
-                    cur.execute(
-                        """INSERT INTO ml.annotations
-                            (id, code_sample_id, anti_pattern_id, label_state, source,
-                             reviewer_user_id, trust_level, rationale, resolution_state,
-                             feedback_action, idempotency_key, created_at, updated_at)
-                           VALUES (%s::uuid, %s::uuid, %s, %s, 'human', %s::uuid, %s, %s, 'active', %s, %s, NOW(), NOW())""",
-                        (
-                            annotation_id,
-                            sample_id,
-                            anti_pattern_id,
-                            label,
-                            reviewer_id,
-                            trust_level,
-                            notes,
-                            f"manual_{label}",
-                            idempotency_key,
-                        ),
-                    )
-                imported += 1
-            except Exception as ex:
-                log.warning("Line %d: import error: %s", line_no, ex)
-                errors += 1
-
-    log.info("Imported %d annotations, skipped %d, errors %d", imported, skipped, errors)
-    return 0 if errors == 0 else 1
-
-
-def cmd_stats(args: argparse.Namespace) -> int:
-    """Print annotation statistics."""
-    conn = _connect()
-    if conn is None:
-        log.error("ML_DATASET_DATABASE_URL not set; cannot show stats")
-        return 2
-
-    stats: Dict[str, Any] = {
-        "total_annotations": 0,
-        "by_source": {},
-        "by_trust_level": {},
-        "by_label": {},
-        "conflicts": 0,
-        "unreviewed": 0,
-        "by_language": {},
-    }
-
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM ml.annotations")
-            stats["total_annotations"] = cur.fetchone()[0]
-
-            cur.execute("SELECT source, count(*) FROM ml.annotations GROUP BY source")
-            stats["by_source"] = {r[0]: r[1] for r in cur.fetchall()}
-
-            cur.execute("SELECT trust_level, count(*) FROM ml.annotations GROUP BY trust_level")
-            stats["by_trust_level"] = {r[0]: r[1] for r in cur.fetchall()}
-
-            cur.execute("SELECT label_state, count(*) FROM ml.annotations GROUP BY label_state")
-            stats["by_label"] = {r[0]: r[1] for r in cur.fetchall()}
-
-            # Count human conflicts.
-            cur.execute(
-                """SELECT count(DISTINCT a1.code_sample_id, a1.anti_pattern_id)
-                     FROM ml.annotations a1
-                    WHERE a1.trust_level IN ('human_adjudicated', 'human_single', 'finding_feedback')
-                      AND EXISTS (
-                          SELECT 1 FROM ml.annotations a2
-                           WHERE a2.code_sample_id = a1.code_sample_id
-                             AND a2.anti_pattern_id = a1.anti_pattern_id
-                             AND a2.trust_level = a1.trust_level
-                             AND a2.id != a1.id
-                             AND a2.label_state != a1.label_state
-                      )"""
-            )
-            stats["conflicts"] = cur.fetchone()[0]
-
-            # Language distribution from code_samples.
-            cur.execute(
-                """SELECT s.language, count(DISTINCT a.id)
-                     FROM ml.code_samples s
-                     JOIN ml.annotations a ON a.code_sample_id = s.id
-                    GROUP BY s.language"""
-            )
-            stats["by_language"] = {r[0]: r[1] for r in cur.fetchall()}
-    except Exception as ex:
-        log.warning("Stats query error: %s", ex)
-
-    print(json.dumps(stats, indent=2, sort_keys=True))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"{args.input}:{line_number}: {exc}") from exc
+        conn.commit()
+    print(json.dumps({"inserted": accepted, "deduplicated": skipped}, sort_keys=True))
     return 0
 
 
 def cmd_conflicts(args: argparse.Namespace) -> int:
-    """Export annotation conflicts to a JSONL file."""
-    conn = _connect()
-    if conn is None:
-        log.error("ML_DATASET_DATABASE_URL not set; cannot detect conflicts")
-        return 2
-
-    output = Path(args.output)
-    conflicts: List[Dict] = []
-
-    with conn.cursor() as cur:
-        cur.execute(
-            """SELECT DISTINCT a1.code_sample_id::text, a1.anti_pattern_id,
-                      array_agg(a1.id::text) FILTER (WHERE a1.label_state = 'positive') as positives,
-                      array_agg(a1.id::text) FILTER (WHERE a1.label_state = 'negative') as negatives,
-                      array_agg(a1.reviewer_user_id::text) as reviewers,
-                      max(a1.trust_level) as trust_level
-                 FROM ml.annotations a1
-                WHERE a1.trust_level IN ('human_adjudicated', 'human_single', 'finding_feedback')
-                GROUP BY a1.code_sample_id, a1.anti_pattern_id
-                  HAVING count(DISTINCT a1.label_state) > 1"""
+    with _connect(_require_database_url(args)) as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT code_sample_id::text, anti_pattern_id,
+                   array_agg(id::text ORDER BY created_at, id) AS annotation_ids
+              FROM ml.annotations
+             WHERE resolution_state='active'
+               AND label_state IN ('positive', 'negative')
+             GROUP BY code_sample_id, anti_pattern_id
+            HAVING count(DISTINCT label_state) > 1
+             ORDER BY code_sample_id, anti_pattern_id
+            """
         )
-        for row in cur.fetchall():
-            conflicts.append({
-                "codeSampleId": row[0],
-                "antiPatternId": row[1],
-                "positiveAnnotations": row[2] or [],
-                "negativeAnnotations": row[3] or [],
-                "reviewerIds": [r for r in (row[4] or []) if r is not None],
-                "trustLevel": row[5],
-                "resolution": "needs_adjudication",
-            })
-
-    with output.open("w", encoding="utf-8") as f:
-        for c in conflicts:
-            f.write(json.dumps(c, ensure_ascii=False) + "\n")
-
-    log.info("Wrote %d conflicts to %s", len(conflicts), output)
+        rows = [
+            {"sampleId": str(row[0]), "antiPatternId": str(row[1]), "annotationIds": list(row[2])}
+            for row in cursor.fetchall()
+        ]
+    print(json.dumps(rows, indent=2, sort_keys=True))
     return 0
 
 
 def cmd_adjudicate(args: argparse.Namespace) -> int:
-    """Apply adjudicated decisions from a JSONL file."""
-    input_path = Path(args.input)
-    reviewer_id = args.reviewer_id
-
-    if not input_path.exists():
-        log.error("Input file not found: %s", input_path)
-        return 2
-
-    conn = _connect()
-    if conn is None:
-        log.error("ML_DATASET_DATABASE_URL not set; cannot adjudicate")
-        return 2
-
-    adjudicated = 0
-    skipped = 0
-    errors = 0
-
-    with input_path.open("r", encoding="utf-8") as f:
-        for line_no, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
+    trainable = set(load_taxonomy().trainable_ids())
+    with _connect(_require_database_url(args)) as conn, conn.cursor() as cursor:
+        for line_number, raw in _read_jsonl(Path(args.input)):
             try:
-                record = json.loads(line)
-            except json.JSONDecodeError as ex:
-                log.warning("Line %d: invalid JSON: %s", line_no, ex)
-                errors += 1
-                continue
-
-            try:
-                sample_id = record.get("codeSampleId") or record.get("sampleId")
-                anti_pattern_id = record.get("antiPatternId")
-                resolved_label = record.get("resolvedLabel", "positive")
-                notes = record.get("notes", "adjudicated")
-
-                if not sample_id or not anti_pattern_id:
-                    log.warning("Line %d: missing required fields", line_no)
-                    skipped += 1
+                normalized_raw = dict(raw)
+                normalized_raw["label"] = raw.get("resolvedLabel")
+                record = normalize_annotation(normalized_raw, trainable)
+                if record["label_state"] == "uncertain":
+                    raise ValueError("adjudication must resolve to positive or negative")
+                sample = _sample_policy_and_range(cursor, record["sample_id"])
+                if sample is None or sample[0] not in ALLOWED_DATA_USE:
+                    raise ValueError("sample is missing or not approved for ML use")
+                if record["line_start"] < sample[1] or record["line_end"] > sample[2]:
+                    raise ValueError(f"line range must be within [{sample[1]}, {sample[2]}]")
+                key = annotation_idempotency_key(record, adjudicated=True)
+                cursor.execute(
+                    "SELECT 1 FROM ml.annotations WHERE idempotency_key=%s",
+                    (key,),
+                )
+                if cursor.fetchone() is not None:
                     continue
+                cursor.execute(
+                    """
+                    SELECT id::text
+                      FROM ml.annotations
+                     WHERE code_sample_id=%s::uuid AND anti_pattern_id=%s
+                       AND resolution_state='active'
+                     ORDER BY created_at DESC, id DESC
+                    """,
+                    (record["sample_id"], record["anti_pattern_id"]),
+                )
+                active_ids = [str(row[0]) for row in cursor.fetchall()]
+                if not active_ids:
+                    raise ValueError("no active evidence exists to adjudicate")
+                cursor.execute(
+                    """
+                    UPDATE ml.annotations SET resolution_state='superseded', updated_at=NOW()
+                     WHERE id = ANY(%s::uuid[])
+                    """,
+                    (active_ids,),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO ml.annotations
+                        (code_sample_id, anti_pattern_id, label_state, line_start,
+                         line_end, source, reviewer_user_id, rationale,
+                         feedback_action, idempotency_key, trust_level,
+                         resolution_state, supersedes_annotation_id)
+                    VALUES (%s::uuid, %s, %s, %s, %s, 'human', %s::uuid, %s,
+                            %s, %s, 'human_adjudicated', 'active', %s::uuid)
+                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+                    DO NOTHING
+                    """,
+                    (
+                        record["sample_id"], record["anti_pattern_id"],
+                        record["label_state"], record["line_start"],
+                        record["line_end"], record["reviewer_id"], record["notes"],
+                        f"manual_{record['label_state']}", key, active_ids[0],
+                    ),
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"{args.input}:{line_number}: {exc}") from exc
+        conn.commit()
+    return 0
 
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """INSERT INTO ml.annotations
-                            (code_sample_id, anti_pattern_id, label_state, source,
-                             reviewer_user_id, trust_level, rationale, resolution_state,
-                             feedback_action, created_at, updated_at)
-                           VALUES (%s::uuid, %s, %s, 'manual_annotation', %s::uuid,
-                                   'human_adjudicated', %s, 'active', 'manual_positive', NOW(), NOW())""",
-                        (sample_id, anti_pattern_id, resolved_label, reviewer_id, notes),
-                    )
-                adjudicated += 1
-            except Exception as ex:
-                log.warning("Line %d: adjudication error: %s", line_no, ex)
-                errors += 1
 
-    log.info("Adjudicated %d annotations, errors %d", adjudicated, errors)
-    return 0 if errors == 0 else 1
+def cmd_stats(args: argparse.Namespace) -> int:
+    with _connect(_require_database_url(args)) as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT anti_pattern_id, label_state, trust_level, count(*)
+              FROM ml.annotations
+             WHERE resolution_state='active'
+             GROUP BY anti_pattern_id, label_state, trust_level
+             ORDER BY anti_pattern_id, label_state, trust_level
+            """
+        )
+        rows = [
+            {"antiPatternId": row[0], "label": row[1], "trustLevel": row[2], "count": row[3]}
+            for row in cursor.fetchall()
+        ]
+    print(json.dumps(rows, indent=2, sort_keys=True))
+    return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Terminal annotation workflow for ML dataset curation",
-    )
-    parser.add_argument(
-        "--database-url",
-        default=os.environ.get("ML_DATASET_DATABASE_URL"),
-        help="PostgreSQL connection URL (or set ML_DATASET_DATABASE_URL)",
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--database-url", default=os.environ.get("ML_DATASET_DATABASE_URL"))
+    commands = parser.add_subparsers(dest="command", required=True)
 
-    # queue
-    p_queue = sub.add_parser("queue", help="Export annotation queue")
-    p_queue.add_argument("--limit", type=int, default=50)
-    p_queue.add_argument("--strategy", default="random",
-                         choices=["random", "uncertainty", "high_confidence",
-                                  "label_balance", "language_balance", "conflict", "unreviewed"])
-    p_queue.add_argument("--output", required=True)
-    p_queue.set_defaults(func=cmd_queue)
+    queue = commands.add_parser("queue")
+    queue.add_argument("--output", required=True)
+    queue.add_argument("--limit", type=int, default=100)
+    queue.add_argument("--strategy", choices=("unreviewed", "conflict", "language_balance"), default="unreviewed")
+    queue.set_defaults(func=cmd_queue)
 
-    # import
-    p_import = sub.add_parser("import", help="Import completed annotations")
-    p_import.add_argument("--input", required=True)
-    p_import.add_argument("--reviewer-id", required=True)
-    p_import.set_defaults(func=cmd_import)
+    importer = commands.add_parser("import")
+    importer.add_argument("--input", required=True)
+    importer.set_defaults(func=cmd_import)
 
-    # stats
-    p_stats = sub.add_parser("stats", help="Show annotation statistics")
-    p_stats.set_defaults(func=cmd_stats)
+    conflicts = commands.add_parser("conflicts")
+    conflicts.set_defaults(func=cmd_conflicts)
 
-    # conflicts
-    p_conflicts = sub.add_parser("conflicts", help="Export annotation conflicts")
-    p_conflicts.add_argument("--output", required=True)
-    p_conflicts.set_defaults(func=cmd_conflicts)
+    adjudicate = commands.add_parser("adjudicate")
+    adjudicate.add_argument("--input", required=True)
+    adjudicate.set_defaults(func=cmd_adjudicate)
 
-    # adjudicate
-    p_adj = sub.add_parser("adjudicate", help="Apply adjudicated decisions")
-    p_adj.add_argument("--input", required=True)
-    p_adj.add_argument("--reviewer-id", required=True)
-    p_adj.set_defaults(func=cmd_adjudicate)
+    stats = commands.add_parser("stats")
+    stats.set_defaults(func=cmd_stats)
 
     args = parser.parse_args(argv)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-    return args.func(args)
+    if getattr(args, "limit", 1) <= 0:
+        parser.error("--limit must be positive")
+    return int(args.func(args))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

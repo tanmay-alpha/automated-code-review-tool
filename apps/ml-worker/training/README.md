@@ -1,228 +1,85 @@
-# automated-code-review-tool — Training Pipeline
+# ML dataset and checkpoint lifecycle
 
-> Step-by-step guide to: download the dataset, label it, verify the labels, split by PR, fine-tune CodeBERT on Colab, and evaluate on the held-out test set.
->
-> Source plan: [ENGINEERING_PLAN.md](../../../ENGINEERING_PLAN.md) (Sections 6, 7).
-> Issues: #1 → #6 (Milestone 1 of the 30-day plan).
+Run every command below from `apps/ml-worker`. The canonical label order comes
+from `../../taxonomy/anti_patterns.yaml`; none of these tools defines labels
+locally. Runtime inference dependencies remain in `requirements.txt`, while
+PostgreSQL, scikit-learn, and training utilities stay in
+`requirements-train.txt`.
 
----
+## Install and verify
 
-## Overview
-
-The pipeline is six scripts, run in this order:
-
-```
-download-dataset.sh → dataset.py
-                    ↓
-              label_mapper.py
-                    ↓
-              verify_sample.py   (interactive, 10–15 min)
-                    ↓
-              split.py
-                    ↓
-              train.py           (Google Colab, T4 GPU)
-                    ↓
-              evaluate.py        (held-out test, run ONCE)
+```powershell
+python -m pip install -r requirements-train.txt -r requirements-test.txt
+ruff check app training tests
+mypy app training
+pytest -m "not slow" -q
 ```
 
-Every script is run from the **repo root** with `python apps/ml-worker/training/<script>.py`, except `download-dataset.sh` which is run as `bash scripts/download-dataset.sh`.
+## Annotation
 
----
+Set the dataset database connection without writing it to an artifact:
 
-## 1. Download the dataset (Issue #1)
-
-```bash
-bash scripts/download-dataset.sh
+```powershell
+$env:ML_DATASET_DATABASE_URL = "postgresql://user:password@localhost:5432/code_review"
+python -m training.annotate_dataset queue --output artifacts/annotation-queue.jsonl --limit 100 --strategy unreviewed
+python -m training.annotate_dataset import --input artifacts/annotation-decisions.jsonl
+python -m training.annotate_dataset conflicts
+python -m training.annotate_dataset adjudicate --input artifacts/adjudications.jsonl
+python -m training.annotate_dataset stats
 ```
 
-This clones `microsoft/CodeBERT` shallow into `/tmp/codebert`, copies the `CodeReviewer/code-review-data/` folder into `apps/ml-worker/training/data/raw/`, and cleans up. Expected output:
+An annotation decision is one JSON object per line:
 
-```
-Dataset downloaded successfully
-Location: <repo>/apps/ml-worker/training/data/raw
-```
-
-**Sanity check:**
-
-```bash
-python apps/ml-worker/training/dataset.py
+```json
+{"sampleId":"00000000-0000-0000-0000-000000000001","antiPatternId":"SECURITY_HARDCODED_SECRET","label":"positive","reviewerId":"00000000-0000-0000-0000-000000000002","lineStart":10,"lineEnd":10}
 ```
 
-Should print `Loaded N samples`, total + median counts, and 5 random examples. Save the output as `dataset_stats.md` for the Issue #1 acceptance record.
+Adjudication uses the same fields with `resolvedLabel` instead of `label`.
+Imports reject unknown taxonomy IDs, unsafe repository policy, invalid ranges,
+and duplicate reviewer decisions. Active same-trust positive/negative evidence
+is a conflict until adjudicated.
 
----
+## Build and freeze a dataset
 
-## 2. Label the dataset (Issue #2)
-
-```bash
-python apps/ml-worker/training/label_mapper.py
+```powershell
+python -m training.build_dataset create --name review-gold --version 1.0.0 --output-dir artifacts/datasets/review-gold-1.0.0
+python -m training.build_dataset validate --dataset-dir artifacts/datasets/review-gold-1.0.0
+python -m training.build_dataset freeze --dataset-dir artifacts/datasets/review-gold-1.0.0
 ```
 
-Loads every JSON under `data/raw/`, drops:
-- comments shorter than 20 chars,
-- pure style-nits (short comments made entirely of words like "nit", "typo", "rename"),
-- zero-label samples,
+`create` reads approved redacted samples, explicit per-label human evidence,
+and clean-review negatives from PostgreSQL. It writes deterministic
+`samples.jsonl`, `splits.json`, `manifest.json`, and
+`data_quality_report.json`. Exact and near-duplicate components are assigned as
+groups, so they cannot cross train, validation, and test. `freeze` refuses any
+critical quality failure and makes the database release immutable.
 
-then prints per-category counts and 3 random examples. Use this output to sanity-check that the keyword taxonomy is producing reasonable distributions.
+## Baselines, train, tune, and evaluate
 
----
-
-## 3. Manually verify 500 samples (Issue #3)
-
-```bash
-python apps/ml-worker/training/verify_sample.py
+```powershell
+python -m training.baselines --dataset-dir artifacts/datasets/review-gold-1.0.0 --output artifacts/baselines.json
+python -m training.train --dataset-dir artifacts/datasets/review-gold-1.0.0 --output-dir artifacts/checkpoint-raw
+python -m training.tune_thresholds --dataset-dir artifacts/datasets/review-gold-1.0.0 --checkpoint artifacts/checkpoint-raw --output-dir artifacts/checkpoint-tuned
+python -m training.evaluate --dataset-dir artifacts/datasets/review-gold-1.0.0 --checkpoint artifacts/checkpoint-tuned --output-dir artifacts/evaluation
 ```
 
-You will be walked through 500 random labeled samples. For each:
+Training reads only train and validation records, applies masked loss to
+explicit label decisions, caps train-derived positive weights, and stops on
+validation loss. Thresholds are tuned per label on validation only. Evaluation
+then reads test once and records the transformer, production-rule, and
+train-only TF-IDF/logistic baselines. Empty support remains visible; results
+are never synthesized.
 
-```
-Sample 47 of 500
-Labels assigned: ['PERFORMANCE']
-Labels vector:   [0, 1, 0, 0, 0, 0]
-Comment:
-This is a classic N+1 — move the query outside the loop.
-Diff (first 8 lines):
-...
-Labels correct? [y/n/s to skip/q to quit]:
-```
+## Smoke and approve, without deployment
 
-- **y** = approve
-- **n** = reject (counted toward "most commonly wrong categories")
-- **s** = skip (excluded from agreement rate)
-- **q** = quit early; partial report is still saved
-
-When you finish (or quit), `training/data/verification_report.json` and `verification_report.md` are written. **Acceptance:** agreement rate ≥ 90%. If it's lower, revise `KEYWORD_MAP` in `label_mapper.py` and re-run.
-
----
-
-## 4. Split by PR ID (Issue #4)
-
-```bash
-python apps/ml-worker/training/split.py
+```powershell
+python -m training.smoke_checkpoint --dataset-dir artifacts/datasets/review-gold-1.0.0 --checkpoint artifacts/checkpoint-tuned --output artifacts/smoke-report.json
+python -m training.promote --dataset-dir artifacts/datasets/review-gold-1.0.0 --checkpoint artifacts/checkpoint-tuned --evaluation-dir artifacts/evaluation --smoke-report artifacts/smoke-report.json --output-dir artifacts/checkpoint-approved
 ```
 
-Groups samples by **PR ID** (commit hash from the CodeReviewer file when available, else file basename). Shuffles with seed 42, splits 80/10/10 at the PR level. Outputs:
-
-```
-apps/ml-worker/training/data/
-├── train.json     (80% of PRs)
-├── val.json       (10% of PRs)
-└── test.json      (10% of PRs — held out, _warning field at top)
-```
-
-**Critical rule:** `test.json` is the held-out set. Do not open, sample, or evaluate against it until you are ready to ship. It is committed to the repo so the team can verify it exists, but the top-level `_warning` field is the contract: ignore it.
-
----
-
-## 5. Fine-tune CodeBERT (Issue #5) — Google Colab
-
-This step requires a GPU. Use Google Colab Pro (T4 instance, ~$10/month or included with Pro).
-
-### 5.1 Open a new Colab notebook
-
-Runtime → Change runtime type → **T4 GPU**.
-
-### 5.2 Clone the repo and install training deps
-
-```python
-!git clone https://github.com/tanmay-alpha/automated-code-review-tool.git
-%cd automated-code-review-tool
-!pip install -r apps/ml-worker/requirements-train.txt
-```
-
-### 5.3 (Optional) Mount Drive
-
-If you want to persist the trained model across Colab sessions:
-
-```python
-from google.colab import drive
-drive.mount('/content/drive')
-```
-
-### 5.4 Copy your data into the repo
-
-If you ran steps 1–4 locally, upload `apps/ml-worker/training/data/train.json` and `val.json` to Colab (the actual files — do NOT upload `test.json`). Place them under `automated-code-review-tool/apps/ml-worker/training/data/`.
-
-### 5.5 Set the HuggingFace token (for pushing the model)
-
-```python
-import os
-os.environ["HF_TOKEN"] = "<your-hf-token>"
-```
-
-Get a token from https://huggingface.co/settings/tokens. The token must have write access to the target repo (`tanmay-alpha/automated-code-review-tool-codebert`).
-
-### 5.6 Run training
-
-```python
-!python apps/ml-worker/training/train.py
-```
-
-This will:
-1. Load `train.json` and `val.json`.
-2. Tokenize with the CodeBERT tokenizer (`max_length=512`, `truncation=True`, `padding="max_length"`).
-3. Fine-tune `microsoft/codebert-base` for 5 epochs, batch size 16, lr 2e-5.
-4. Use `BCEWithLogitsLoss` (explicit in code) since this is multi-label classification.
-5. Evaluate at every epoch and keep the best checkpoint by **val macro-F1**.
-6. Push the best checkpoint to `tanmay-alpha/automated-code-review-tool-codebert` on the Hub.
-
-Total wall time on a T4: ~2–4 hours.
-
-### 5.7 Save the model locally (optional)
-
-```python
-!cp -r automated-code-review-tool-model /content/drive/MyDrive/automated-code-review-tool-model
-```
-
----
-
-## 6. Final evaluation (Issue #6)
-
-```bash
-python apps/ml-worker/training/evaluate.py
-```
-
-This runs ONCE, on the held-out `test.json`. It will:
-1. Load the fine-tuned model from `tanmay-alpha/automated-code-review-tool-codebert` (falls back to local `./automated-code-review-tool-model` if Hub load fails).
-2. Run inference on every test sample.
-3. Run the keyword baseline (from `label_mapper.py`) on the same samples.
-4. Compute per-label P/R/F1 and macro-F1 for both.
-5. Write `evaluation_results.json` + `evaluation_results.md` next to `test.json`.
-
-The markdown report has a placeholder row for the GPT-4o baseline — fill that in manually after running GPT-4o zero-shot on a 200-sample subset.
-
-**Acceptance per the plan:**
-- Fine-tuned model macro-F1 must beat the keyword baseline.
-- Fine-tuned model macro-F1 must also beat the GPT-4o zero-shot baseline.
-- If either fails, do NOT ship. Iterate on data/keywords or training config and re-run from step 5.
-
----
-
-## File map
-
-| File | Purpose |
-|---|---|
-| `download-dataset.sh` | Clones microsoft/CodeBERT, copies raw data |
-| `dataset.py` | Inspects raw data (counts + 5 random samples) |
-| `label_mapper.py` | Filters raw data + assigns 6-category multi-label vectors |
-| `verify_sample.py` | Interactive 500-sample human verification |
-| `split.py` | PR-level 80/10/10 train/val/test split |
-| `train.py` | Fine-tunes CodeBERT (Colab T4) |
-| `evaluate.py` | Held-out eval vs keyword + GPT-4o baselines |
-
----
-
-## Config knobs (all at the top of `train.py`)
-
-| Constant | Default | Why |
-|---|---|---|
-| `MODEL_NAME` | `microsoft/codebert-base` | Plan Section 7 — do not change without documenting |
-| `NUM_LABELS` | `6` | One per category |
-| `MAX_SEQ_LENGTH` | `512` | CodeBERT max; >512 needs sliding window (Issue #8) |
-| `LEARNING_RATE` | `2e-5` | Standard for BERT-family fine-tuning |
-| `BATCH_SIZE` | `16` | Fits T4 with seq=512 |
-| `NUM_EPOCHS` | `5` | Empirically good for ~50k samples |
-| `WEIGHT_DECAY` | `0.01` | Standard |
-| `WARMUP_RATIO` | `0.1` | 10% warmup |
-| `THRESHOLD` | `0.5` | Sigmoid threshold for converting logits → binary |
-| `HF_REPO` | `tanmay-alpha/automated-code-review-tool-codebert` | Private Hub repo |
+The smoke command performs a real local load, production compatibility check,
+and minimal windowed inference. Promotion requires a frozen zero-critical
+dataset, validation-tuned thresholds with per-label support, frozen-test
+metrics, both baselines, and the matching smoke report. It writes
+`promotion.json` and marks the new checkpoint `approved_not_deployed`; it does
+not change deployment configuration or apply an arbitrary F1 cutoff.

@@ -1,5 +1,5 @@
 """
-automated-code-review-tool — taxonomy consistency tests (Phase 0).
+Canonical taxonomy consistency tests.
 
 The canonical YAML taxonomy at ``taxonomy/anti_patterns.yaml`` is the
 single source of truth for anti-pattern IDs. Every other module in this
@@ -17,18 +17,12 @@ Run from the repo root:
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
-# Allow `from app.taxonomy import ...` regardless of where pytest is invoked from.
-_HERE = Path(__file__).resolve().parent
-_ML_WORKER = _HERE.parent
-sys.path.insert(0, str(_ML_WORKER))
-
-from app.fallback_scanner import _RULE_CONFIG  # noqa: E402
-from app.taxonomy import load_taxonomy  # noqa: E402
+from app.fallback_scanner import _CONFIDENCE
+from app.taxonomy import load_taxonomy
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -80,9 +74,9 @@ def test_yaml_taxonomy_has_version(taxonomy):
 # Fallback scanner ↔ taxonomy alignment
 # ----------------------------------------------------------------------
 def test_all_fallback_rule_ids_are_in_taxonomy(taxonomy_ids):
-    """Every ID in ``_RULE_CONFIG`` must be present in the canonical taxonomy."""
+    """Every fallback rule ID must be present in the canonical taxonomy."""
     taxonomy_set = set(taxonomy_ids)
-    fallback_ids = set(_RULE_CONFIG.keys())
+    fallback_ids = set(_CONFIDENCE)
 
     missing = fallback_ids - taxonomy_set
     assert not missing, (
@@ -94,7 +88,7 @@ def test_all_fallback_rule_ids_are_in_taxonomy(taxonomy_ids):
 def test_no_unknown_ids_in_fallback_scanner(taxonomy_ids):
     """Symmetric guard: no unknown IDs in the fallback scanner (alias of above)."""
     taxonomy_set = set(taxonomy_ids)
-    fallback_ids = set(_RULE_CONFIG.keys())
+    fallback_ids = set(_CONFIDENCE)
 
     unknown = sorted(fallback_ids - taxonomy_set)
     assert not unknown, (

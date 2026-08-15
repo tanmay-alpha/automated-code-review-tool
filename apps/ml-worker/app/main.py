@@ -1,18 +1,5 @@
-"""
-automated-code-review-tool — FastAPI ML worker (Issue #9).
+"""FastAPI boundary for model-or-fallback code review."""
 
-Routes:
-    POST /ml/review  — auth required, returns ReviewResponse
-    GET  /ml/health  — no auth, returns HealthResponse
-
-Auth: shared-secret via `X-ML-Worker-Secret` header. Verified by an ASGI
-middleware that runs before route dispatch so a bad secret never reaches
-the handler.
-
-Model is loaded once at startup via the `lifespan` context manager and
-stored on `app.state.model`. Tests can override `app.state.model` with
-a stub to avoid loading the real 500 MB checkpoint.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -27,31 +14,34 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.model import AutomatedCodeReviewToolModel, compute_quality_score
+from app.diff_parser import hunk_added_line_range, parse_diff
 from app.fallback_scanner import fallback_scan
-from app.schemas import HealthResponse, ReviewRequest, ReviewResponse
+from app.model import AutomatedCodeReviewToolModel, compute_quality_score
+from app.schemas import Finding, HealthResponse, ReviewRequest, ReviewResponse
+from app.taxonomy import load_taxonomy
 
 AUTH_HEADER = "x-ml-worker-secret"
 HEALTH_PATH = "/ml/health"
-INFERENCE_TIMEOUT_S = float(getattr(settings, "ML_INFERENCE_TIMEOUT_S", 30))
+INFERENCE_TIMEOUT_S = settings.ML_INFERENCE_TIMEOUT_S
+_SUPPORTED_MODEL_LANGUAGES = {"python", "javascript", "java", "unknown"}
 logger = logging.getLogger(__name__)
 
 
-# ----------------------------------------------------------------------
-# Lifespan — load model once, share via app.state
-# ----------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load the model on startup when a real model is configured."""
-    model_name = settings.MODEL_NAME
-    if not model_name or model_name.strip().lower() in {"test", "none"}:
-        app.state.model = None
-    else:
+    """Load only an explicitly configured and compatible checkpoint."""
+    app.state.model = None
+    app.state.model_load_error = None
+    model_name = settings.MODEL_NAME.strip()
+    if model_name.lower() not in {"", "none", "test"}:
         try:
-            app.state.model = AutomatedCodeReviewToolModel()
-        except Exception:
-            logger.warning("Failed to load model %s", model_name, exc_info=True)
-            app.state.model = None
+            model = AutomatedCodeReviewToolModel()
+            app.state.model = model
+            if not model.is_healthy:
+                app.state.model_load_error = model.compatibility.get("reason")
+        except Exception as exc:  # availability is provided by the fallback engine
+            app.state.model_load_error = type(exc).__name__
+            logger.warning("Model load failed; fallback remains available", exc_info=True)
     yield
 
 
@@ -61,65 +51,98 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — the dashboard preview may call /ml/health from the browser.
-# Defaults to localhost-only; tighten via ML_CORS_ORIGINS env (comma-separated).
-_cors_origins = getattr(settings, "ML_CORS_ORIGINS", None) or [
-    "http://localhost:3000",
-    "http://localhost:5173",
+cors_origins = [
+    origin.strip()
+    for origin in settings.ML_CORS_ORIGINS.split(",")
+    if origin.strip()
 ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins if isinstance(_cors_origins, list) else [o.strip() for o in _cors_origins.split(",")],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "X-ML-Worker-Secret"],
 )
 
 
-# ----------------------------------------------------------------------
-# Auth middleware (ASGI-level, runs before any route)
-# ----------------------------------------------------------------------
 @app.middleware("http")
 async def verify_secret(request: Request, call_next: Any):
-    """Reject any request missing or mismatching X-ML-Worker-Secret.
-
-    Only /ml/health is exempt so monitoring can poll it without holding
-    the secret. OpenAPI docs are protected.
-    """
+    """Require a configured shared secret for every non-health request."""
     if request.url.path == HEALTH_PATH:
         return await call_next(request)
-
-    # If the server is misconfigured (no secret set), refuse all writes
-    # loudly rather than silently letting them through.
     if not settings.ML_WORKER_SECRET:
         return JSONResponse(
             status_code=503,
             content={"detail": "ML_WORKER_SECRET is not configured on the server"},
         )
-
     provided = request.headers.get(AUTH_HEADER, "")
-    # Constant-time comparison to avoid timing side channels.
-    if not hmac.compare_digest(provided.encode(), settings.ML_WORKER_SECRET.encode()):
+    if not hmac.compare_digest(
+        provided.encode("utf-8"), settings.ML_WORKER_SECRET.encode("utf-8")
+    ):
         return JSONResponse(status_code=403, content={"detail": "Forbidden"})
     return await call_next(request)
 
 
-# ----------------------------------------------------------------------
-# Routes
-# ----------------------------------------------------------------------
 @app.get("/ml/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     model: AutomatedCodeReviewToolModel | None = getattr(app.state, "model", None)
-    is_healthy = model is not None and getattr(model, "is_healthy", False)
-    status_str = "healthy" if is_healthy else "degraded"
-    model_name = getattr(model, "model_name", settings.MODEL_NAME)
-    device = str(getattr(model, "device", "cpu"))
+    model_healthy = model is not None and model.is_healthy
+    if model is not None and model.is_healthy:
+        taxonomy_version = model.taxonomy_version
+        model_name = model.model_version
+        device = str(model.device)
+    else:
+        taxonomy_version = load_taxonomy().version
+        model_name = "none"
+        device = "cpu"
     return HealthResponse(
-        status=status_str,
-        modelLoaded=is_healthy,
+        status="healthy",
+        modelLoaded=model_healthy,
         modelName=model_name,
         device=device,
+        engine="model" if model_healthy else "fallback",
+        taxonomyVersion=taxonomy_version,
+        degradedReason=getattr(app.state, "model_load_error", None),
     )
+
+
+def _predict_hunks(
+    model: AutomatedCodeReviewToolModel,
+    request: ReviewRequest,
+) -> tuple[list[Finding], int]:
+    """Run the checkpoint independently for each parsed hunk."""
+    if request.mode == "file":
+        prediction = model.predict_hunk(
+            request.diff,
+            request.language,
+            mode="file",
+            file_path=request.filePath,
+            line_start=1,
+            line_end=max(1, len(request.diff.splitlines())),
+        )
+        return list(prediction.findings), prediction.windows_processed
+
+    findings: list[Finding] = []
+    windows_processed = 0
+    for hunk in parse_diff(request.diff):
+        line_start, line_end = hunk_added_line_range(hunk)
+        language = (
+            hunk.language
+            if hunk.language in _SUPPORTED_MODEL_LANGUAGES
+            else "unknown"
+        )
+        prediction = model.predict_hunk(
+            hunk.raw_hunk,
+            language,
+            mode="diff",
+            file_path=hunk.file_path,
+            hunk_hash=hunk.hunk_sha256,
+            line_start=line_start,
+            line_end=line_end,
+        )
+        findings.extend(prediction.findings)
+        windows_processed += prediction.windows_processed
+    return findings, max(1, windows_processed)
 
 
 @app.post("/ml/review", response_model=ReviewResponse)
@@ -127,56 +150,49 @@ async def review(req: ReviewRequest) -> ReviewResponse:
     start_time = time.perf_counter()
     model: AutomatedCodeReviewToolModel | None = getattr(app.state, "model", None)
 
-    if model is not None and getattr(model, "is_healthy", False):
+    if model is not None and model.is_healthy:
         try:
-            findings = await asyncio.wait_for(
-                asyncio.to_thread(model.predict, req.diff, req.language),
+            findings, windows_processed = await asyncio.wait_for(
+                asyncio.to_thread(_predict_hunks, model, req),
                 timeout=INFERENCE_TIMEOUT_S,
             )
-            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             return ReviewResponse(
                 findings=findings,
                 qualityScore=compute_quality_score(findings),
-                processingTimeMs=elapsed_ms,
-                windowsProcessed=getattr(model, "last_windows_processed", 1),
+                processingTimeMs=int((time.perf_counter() - start_time) * 1000),
+                windowsProcessed=windows_processed,
                 engine="model",
-                modelVersion=getattr(model, "model_name", settings.MODEL_NAME),
-                taxonomyVersion="1.0.0",
+                modelVersion=model.model_version,
+                taxonomyVersion=model.taxonomy_version,
             )
         except TimeoutError:
             logger.error(
-                "Inference timed out after %.1f s for %s-request (%d chars)",
-                INFERENCE_TIMEOUT_S, req.language, len(req.diff),
+                "Model inference timed out after %.1f seconds; using fallback",
+                INFERENCE_TIMEOUT_S,
             )
-            raise HTTPException(status_code=504, detail="inference timeout")
-        except Exception as ex:
-            logger.warning("Model inference failed safely (%s) — falling back", str(type(ex).__name__))
+        except Exception as exc:
+            logger.warning(
+                "Model inference failed with %s; using fallback",
+                type(exc).__name__,
+                exc_info=True,
+            )
 
-    # Fallback mode
-    resp = fallback_scan(req.diff, req.language)
-    elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-    resp.processingTimeMs = elapsed_ms
-    resp.engine = "fallback"
-    resp.modelVersion = "rule-baseline-v1"
-    resp.taxonomyVersion = "1.0.0"
-    return resp
-
-
-# ----------------------------------------------------------------------
-# Exception handlers — keep response shape consistent
-# ----------------------------------------------------------------------
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail},
+    response = fallback_scan(
+        req.diff,
+        req.language,
+        mode=req.mode,
+        file_path=req.filePath,
     )
+    response.processingTimeMs = int((time.perf_counter() - start_time) * 1000)
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_request: Request, exc: HTTPException):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception):
-    # Log internally; return a generic envelope.
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "internal server error"},
-    )
+async def unhandled_exception_handler(_request: Request, exc: Exception):
+    logger.exception("Unhandled ML worker error", exc_info=exc)
+    return JSONResponse(status_code=500, content={"detail": "internal server error"})

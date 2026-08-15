@@ -45,7 +45,7 @@
         { "severity": "major", "confidence": 0.6 },
         { "severity": "minor", "confidence": 0.4 }
       ],
-      "expectedScore": 72.80,
+      "expectedScore": 76.80,
       "notes": "20*0.8 + 10*0.6 + 3*0.4 = 16 + 6 + 1.2 = 23.2 penalty => 76.80"
     },
     {
@@ -81,7 +81,7 @@
     {
       "name": "rounding-to-two-dp",
       "findings": [
-        { "severity": "minor", "confidence": 1.0 / 3.0 }
+        { "severity": "minor", "confidence": 0.3333333333333333 }
       ],
       "expectedScore": 99.00,
       "notes": "3 * (1/3) = 1.0 penalty exactly, no rounding needed"

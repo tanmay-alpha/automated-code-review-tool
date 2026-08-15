@@ -1,283 +1,394 @@
-"""
-automated-code-review-tool — Model inference (Issue #9).
+"""Versioned multi-label model loading and hunk-level inference."""
 
-Wraps the fine-tuned CodeBERT model behind a `predict(text, language)`
-method that returns a list of `Finding` objects. Handles device
-selection, sliding-window tokenization, and max-pool aggregation.
-
-`LABEL_CONFIG` is the single source of truth mapping model output
-index → (antiPattern, category, severity, explanation_template). The
-order here MUST match the order of the canonical taxonomy at
-``taxonomy/anti_patterns.yaml`` (built at runtime by ``build_label_config``).
-"""
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+import re
+from dataclasses import dataclass
+from typing import Any
 
 import torch
 
 from app.config import settings
+from app.preprocessing import build_model_text
 from app.schemas import Finding
-from app.tokenizer_utils import aggregate_logits, sliding_window_tokenize
-from app.taxonomy import load_taxonomy
-
-if TYPE_CHECKING:
-    pass
+from app.taxonomy import Taxonomy, load_taxonomy
+from app.tokenizer_utils import windowed_model_logits
 
 logger = logging.getLogger(__name__)
 
-
-# ----------------------------------------------------------------------
-# Quality score contract (Phase 0)
-# ----------------------------------------------------------------------
-# Severity penalty weights. MUST match the contract tested in
-# ``tests/test_quality_score.py`` AND the Java implementation in
-# ``apps/api``. See README § "Quality scoring contract".
 SEVERITY_PENALTY: dict[str, float] = {
     "critical": 20.0,
     "major": 10.0,
     "minor": 3.0,
 }
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def compute_quality_score(findings: list[Finding]) -> float:
-    """Compute the 0–100 quality score for a list of findings.
-
-    Contract (see README):
-      * critical: 20-point penalty
-      * major: 10-point penalty
-      * minor: 3-point penalty
-      * each penalty is multiplied by the finding's confidence
-      * the result is `100 - sum(penalty * confidence)`,
-        clamped to [0, 100] and rounded to two decimals.
-
-    This MUST produce identical numbers to the Java implementation in
-    ``apps/api`` for the same inputs.
-    """
+    """Apply the shared confidence-weighted severity contract."""
     raw = 100.0
-    for f in findings:
-        raw -= SEVERITY_PENALTY.get(f.severity, 0.0) * float(f.confidence)
-    clamped = max(0.0, min(100.0, raw))
-    return round(clamped, 2)
+    for finding in findings:
+        raw -= SEVERITY_PENALTY.get(finding.severity, 0.0) * float(
+            finding.confidence
+        )
+    return round(max(0.0, min(100.0, raw)), 2)
 
 
-# ----------------------------------------------------------------------
-# Label configuration (index → finding metadata)
-# ----------------------------------------------------------------------
-def build_label_config() -> list[dict[str, str]]:
-    """Build LABEL_CONFIG from the canonical taxonomy YAML for trainable IDs only.
+@dataclass(frozen=True)
+class LabelMetadata:
+    anti_pattern_id: str
+    category: str
+    severity: str
+    explanation: str
 
-    Ensures that model output index ``i`` always maps to the same
-    anti-pattern ID the rest of the system uses.
+
+@dataclass(frozen=True)
+class ModelPrediction:
+    findings: tuple[Finding, ...]
+    windows_processed: int
+
+
+def build_label_config(taxonomy: Taxonomy | None = None) -> tuple[LabelMetadata, ...]:
+    """Build ordered model-label metadata from the canonical taxonomy."""
+    loaded = taxonomy or load_taxonomy()
+    return tuple(
+        LabelMetadata(
+            anti_pattern_id=entry.id,
+            category=entry.category,
+            severity=entry.default_severity,
+            explanation=(
+                entry.description.strip().splitlines()[0]
+                if entry.description
+                else f"{entry.display_name} detected."
+            ),
+        )
+        for entry in loaded.entries
+        if entry.trainable
+    )
+
+
+# Retained as a read-only compatibility export. Its values are derived from YAML.
+LABEL_CONFIG = build_label_config()
+
+
+def _degraded(reason: str, **details: Any) -> dict[str, Any]:
+    return {"status": "degraded", "reason": reason, **details}
+
+
+def _valid_sha256(value: Any) -> bool:
+    return isinstance(value, str) and bool(_SHA256_RE.fullmatch(value.lower()))
+
+
+def _promotion_error(config: Any, labels: list[str], manifest_sha: str) -> str | None:
+    """Return the first failed production-promotion invariant, if any."""
+    scalar_expectations = {
+        "promotion_status": "approved_not_deployed",
+        "promotion_gate_version": 1,
+        "promotion_dataset_manifest_sha256": manifest_sha,
+        "promotion_evaluated_split": "test",
+        "promotion_quality_critical_failures": 0,
+        "promotion_deployment_smoke_passed": True,
+        "promotion_auto_deploy": False,
+        "thresholds_source": "frozen_validation",
+        "threshold_tuning_dataset_manifest_sha256": manifest_sha,
+        "threshold_tuning_split": "validation",
+    }
+    for field, expected in scalar_expectations.items():
+        if getattr(config, field, None) != expected:
+            return f"{field} must equal {expected!r}"
+
+    for field in (
+        "promotion_evaluation_sha256",
+        "promotion_deployment_smoke_sha256",
+        "promotion_metadata_sha256",
+    ):
+        if not _valid_sha256(getattr(config, field, None)):
+            return f"{field} must be a 64-character SHA-256"
+
+    baselines = getattr(config, "promotion_baselines", None)
+    if not isinstance(baselines, list) or set(baselines) != {
+        "rule",
+        "tfidf_logistic",
+    }:
+        return "promotion_baselines must contain rule and tfidf_logistic"
+
+    test_support = getattr(config, "promotion_per_label_test_support", None)
+    if not isinstance(test_support, dict) or set(test_support) != set(labels):
+        return "promotion_per_label_test_support must contain every trainable label"
+    for label in labels:
+        row = test_support[label]
+        if not isinstance(row, dict):
+            return f"invalid test support for {label}"
+        known_value = row.get("known")
+        positive_value = row.get("positive")
+        negative_value = row.get("negative")
+        if (
+            isinstance(known_value, bool)
+            or not isinstance(known_value, int)
+            or known_value <= 0
+            or isinstance(positive_value, bool)
+            or not isinstance(positive_value, int)
+            or positive_value <= 0
+            or isinstance(negative_value, bool)
+            or not isinstance(negative_value, int)
+            or negative_value <= 0
+        ):
+            return f"test support for {label} must include known positives and negatives"
+        known = known_value
+        positive = positive_value
+        negative = negative_value
+        if known != positive + negative:
+            return f"test support totals are inconsistent for {label}"
+
+    tuning_support = getattr(config, "threshold_tuning_support", None)
+    if not isinstance(tuning_support, dict) or set(tuning_support) != set(labels):
+        return "threshold_tuning_support must contain every trainable label"
+    for label in labels:
+        row = tuning_support[label]
+        if not isinstance(row, dict) or row.get("sufficient_for_tuning") is not True:
+            return f"threshold tuning support is insufficient for {label}"
+        tuning_positive = row.get("positive")
+        tuning_negative = row.get("negative")
+        if (
+            isinstance(tuning_positive, bool)
+            or isinstance(tuning_negative, bool)
+            or not isinstance(tuning_positive, int)
+            or not isinstance(tuning_negative, int)
+            or tuning_positive <= 0
+            or tuning_negative <= 0
+        ):
+            return f"threshold tuning support is invalid for {label}"
+    return None
+
+
+def validate_checkpoint_compatibility(
+    model: Any,
+    taxonomy: Taxonomy | None = None,
+    *,
+    require_promotion: bool = False,
+) -> dict[str, Any]:
+    """Validate every label, threshold, and provenance field needed to serve.
+
+    A generic base model is intentionally incompatible. A promoted checkpoint
+    must carry the frozen dataset identity and validation-tuned thresholds in
+    its Hugging Face config.
     """
-    taxonomy = load_taxonomy()
-    trainable_entries = [ap for ap in taxonomy.entries if ap.trainable]
-    return [
-        {
-            "name": ap.id,
-            "category": ap.category,
-            "severity": ap.default_severity,
-            "explanation_template": (
-                ap.description.strip().splitlines()[0]
-                if ap.description
-                else f"{ap.display_name} detected."
-            ),
-        }
-        for ap in trainable_entries
-    ]
+    loaded = taxonomy or load_taxonomy()
+    labels = loaded.trainable_ids()
+    expected_id2label = {index: label for index, label in enumerate(labels)}
+    expected_label2id = {label: index for index, label in enumerate(labels)}
 
+    config = getattr(model, "config", None)
+    if config is None:
+        return _degraded("model has no config attribute")
 
-LABEL_CONFIG: list[dict[str, str]] = build_label_config()
+    if getattr(config, "num_labels", None) != len(labels):
+        return _degraded(
+            "num_labels does not match the canonical trainable label count",
+            expected_num_labels=len(labels),
+            actual_num_labels=getattr(config, "num_labels", None),
+        )
+    if getattr(config, "problem_type", None) != "multi_label_classification":
+        return _degraded("problem_type must be multi_label_classification")
+    if getattr(config, "task_type", None) != "code_review_multi_label":
+        return _degraded("task_type must be code_review_multi_label")
+    if getattr(config, "taxonomy_version", None) != loaded.version:
+        return _degraded("checkpoint taxonomy_version is missing or incompatible")
 
-
-# ----------------------------------------------------------------------
-# Checkpoint compatibility validation
-# ----------------------------------------------------------------------
-def validate_checkpoint_compatibility(model: Any, taxonomy: Any | None = None) -> dict[str, Any]:
-    """Validate that a loaded HF model is compatible with the taxonomy."""
-    if taxonomy is None:
-        taxonomy = load_taxonomy()
-
-    trainable_entries = [e for e in taxonomy.entries if e.trainable]
-    expected_num_labels = len(trainable_entries)
-    expected_id2label: dict[int, str] = {
-        i: ap.id for i, ap in enumerate(trainable_entries)
-    }
-    expected_label2id: dict[str, int] = {
-        ap.id: i for i, ap in enumerate(trainable_entries)
-    }
-    expected_taxonomy_version = taxonomy.version
-
-    cfg = getattr(model, "config", None)
-    if cfg is None:
-        return {
-            "status": "degraded",
-            "reason": "model has no config attribute",
-            "expected_num_labels": expected_num_labels,
-        }
-
-    actual_num_labels = getattr(cfg, "num_labels", None)
-    if actual_num_labels != expected_num_labels:
-        return {
-            "status": "degraded",
-            "reason": (
-                f"num_labels={actual_num_labels} != "
-                f"len(trainable)={expected_num_labels}"
-            ),
-            "expected_num_labels": expected_num_labels,
-            "actual_num_labels": actual_num_labels,
-        }
-
-    actual_id2label = getattr(cfg, "id2label", None)
-    actual_label2id = getattr(cfg, "label2id", None)
-    actual_problem_type = getattr(cfg, "problem_type", None)
-    actual_task_type = getattr(cfg, "task_type", None)
-    actual_version = getattr(cfg, "taxonomy_version", None)
-
-    if not isinstance(actual_id2label, dict) or not actual_id2label:
-        return {"status": "degraded", "reason": "id2label missing or empty"}
-    if not isinstance(actual_label2id, dict) or not actual_label2id:
-        return {"status": "degraded", "reason": "label2id missing or empty"}
-    if not actual_problem_type or actual_problem_type != "multi_label_classification":
-        return {"status": "degraded", "reason": "problem_type missing or not multi_label_classification"}
-    if not actual_version or actual_version != expected_taxonomy_version:
-        return {"status": "degraded", "reason": "taxonomy_version missing or mismatch"}
-    if not actual_task_type or actual_task_type != "code_review_multi_label":
-        return {"status": "degraded", "reason": "task_type missing or mismatch"}
-
+    raw_id2label = getattr(config, "id2label", None)
+    raw_label2id = getattr(config, "label2id", None)
+    if not isinstance(raw_id2label, dict) or not isinstance(raw_label2id, dict):
+        return _degraded("id2label and label2id must be mappings")
     try:
-        actual_id2label_norm = {int(k): v for k, v in actual_id2label.items()}
+        id2label = {int(key): str(value) for key, value in raw_id2label.items()}
+        label2id = {str(key): int(value) for key, value in raw_label2id.items()}
     except (TypeError, ValueError):
-        return {"status": "degraded", "reason": "id2label keys must be ints"}
+        return _degraded("checkpoint label mappings contain invalid keys or values")
+    if id2label != expected_id2label or label2id != expected_label2id:
+        return _degraded("checkpoint label order does not match the taxonomy")
 
-    for idx, expected_label in expected_id2label.items():
-        if actual_id2label_norm.get(idx) != expected_label:
-            return {
-                "status": "degraded",
-                "reason": f"id2label[{idx}]={actual_id2label_norm.get(idx)!r} != {expected_label!r}",
-            }
+    manifest_sha = getattr(config, "dataset_manifest_sha256", None)
+    if not _valid_sha256(manifest_sha):
+        return _degraded("dataset_manifest_sha256 must be a 64-character SHA-256")
 
-    for label_id, expected_idx in expected_label2id.items():
-        if actual_label2id.get(label_id) != expected_idx:
-            return {
-                "status": "degraded",
-                "reason": f"label2id[{label_id!r}]={actual_label2id.get(label_id)!r} != {expected_idx}",
-            }
+    thresholds = getattr(config, "thresholds", None)
+    if not isinstance(thresholds, dict) or set(thresholds) != set(labels):
+        return _degraded("thresholds must contain exactly every trainable label")
+    for label, threshold in thresholds.items():
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, (int, float))
+            or not 0.0 <= float(threshold) <= 1.0
+        ):
+            return _degraded(f"invalid threshold for {label}")
 
-    return {
+    for field in ("base_model_name", "training_git_sha"):
+        value = getattr(config, field, None)
+        if not isinstance(value, str) or not value.strip():
+            return _degraded(f"{field} is missing")
+
+    manifest_sha_normalized = str(manifest_sha).lower()
+    if require_promotion:
+        promotion_error = _promotion_error(
+            config, labels, manifest_sha_normalized
+        )
+        if promotion_error:
+            return _degraded(promotion_error)
+
+    result = {
         "status": "healthy",
-        "expected_num_labels": expected_num_labels,
-        "taxonomy_version": expected_taxonomy_version,
+        "taxonomy_version": loaded.version,
+        "dataset_manifest_sha256": manifest_sha_normalized,
+        "label_order": labels,
+        "thresholds": {label: float(thresholds[label]) for label in labels},
     }
+    if require_promotion:
+        result["promotion_status"] = config.promotion_status
+    return result
 
 
-# ----------------------------------------------------------------------
-# Model wrapper
-# ----------------------------------------------------------------------
 class AutomatedCodeReviewToolModel:
-    """Lazy-loaded fine-tuned CodeBERT wrapped in a clean predict() API."""
+    """Load an explicitly promoted checkpoint and classify one hunk at a time."""
 
     def __init__(
         self,
         model_name: str | None = None,
         threshold: float | None = None,
         max_seq_length: int | None = None,
+        stride: int | None = None,
         hf_token: str | None = None,
     ) -> None:
         self.model_name = model_name or settings.MODEL_NAME
-        self.threshold = threshold if threshold is not None else settings.THRESHOLD
-        self.max_seq_length = max_seq_length if max_seq_length is not None else settings.MAX_SEQ_LENGTH
+        self.threshold_override = (
+            threshold
+            if threshold is not None
+            else settings.MODEL_THRESHOLD_OVERRIDE
+        )
+        if self.threshold_override is not None and not 0.0 <= self.threshold_override <= 1.0:
+            raise ValueError("MODEL_THRESHOLD_OVERRIDE must be in [0, 1]")
+        self.max_seq_length = max_seq_length or settings.MAX_SEQ_LENGTH
+        self.stride = stride if stride is not None else settings.MODEL_STRIDE
         self.last_windows_processed = 0
-        token = hf_token if hf_token is not None else settings.HF_TOKEN
-        token_kw: dict[str, Any] = {"token": token} if token else {}
+        self.taxonomy = load_taxonomy()
+        self.label_config = build_label_config(self.taxonomy)
 
-        # Device selection: CUDA when available, else CPU.
+        token = hf_token if hf_token is not None else settings.HF_TOKEN
+        token_kwargs: dict[str, Any] = {"token": token} if token else {}
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        from transformers import AutoModelForSequenceClassification, AutoTokenizer  # noqa: E402
+        from transformers import (  # noqa: PLC0415
+            AutoModelForSequenceClassification,
+            AutoTokenizer,
+        )
 
-        self.tokenizer: Any = AutoTokenizer.from_pretrained(self.model_name, **token_kw)
+        self.tokenizer: Any = AutoTokenizer.from_pretrained(
+            self.model_name, **token_kwargs
+        )
         self.model: Any = AutoModelForSequenceClassification.from_pretrained(
-            self.model_name, **token_kw
+            self.model_name, **token_kwargs
         ).to(self.device)
         self.model.eval()
-
-        # Validate checkpoint compatibility against the canonical taxonomy.
-        # If incompatible, refuse to serve predictions: leave self.model
-        # attribute set (so healthcheck can report it) but mark the
-        # service degraded and route inference to the fallback scanner.
-        self.compatibility: dict[str, Any] = validate_checkpoint_compatibility(self.model)
-        if self.compatibility["status"] != "healthy":
+        self.compatibility = validate_checkpoint_compatibility(
+            self.model, self.taxonomy, require_promotion=True
+        )
+        if not self.is_healthy:
             logger.warning(
-                "Checkpoint %s is incompatible: %s — service will run in fallback mode.",
+                "Checkpoint %s is not eligible for serving: %s",
                 self.model_name,
                 self.compatibility.get("reason"),
             )
 
     @property
     def is_healthy(self) -> bool:
-        return bool(getattr(self, "compatibility", {}).get("status") == "healthy")
+        return self.compatibility.get("status") == "healthy"
 
-    # ------------------------------------------------------------------
-    # Inference
-    # ------------------------------------------------------------------
-    def predict(self, text: str, language: str) -> list[Finding]:
-        """Run inference on `text`, return findings above the threshold.
+    @property
+    def taxonomy_version(self) -> str:
+        if self.is_healthy:
+            return str(self.compatibility["taxonomy_version"])
+        return self.taxonomy.version
 
-        Returns an empty list if the checkpoint was incompatible at
-        construction time. Callers should use the fallback scanner
-        when ``is_healthy`` is False.
-        """
+    @property
+    def model_version(self) -> str:
+        config_version = getattr(self.model.config, "model_version", None)
+        return str(config_version or self.model_name)
+
+    def predict_hunk(
+        self,
+        text: str,
+        language: str,
+        *,
+        mode: str = "diff",
+        file_path: str | None = None,
+        hunk_hash: str | None = None,
+        line_start: int | None = None,
+        line_end: int | None = None,
+    ) -> ModelPrediction:
+        """Classify one hunk and return request-local inference metadata."""
         if not self.is_healthy:
-            return []
+            raise RuntimeError("checkpoint is not compatible with the runtime contract")
 
-        windows = sliding_window_tokenize(
-            text,
+        model_text = build_model_text(text, language, mode)
+        aggregated_logits, window_count = windowed_model_logits(
+            self.model,
             self.tokenizer,
+            model_text,
+            device=self.device,
             max_length=self.max_seq_length,
-            stride=50,
+            stride=self.stride,
         )
-        per_window_logits: list[torch.Tensor] = []
-        with torch.no_grad():
-            for w in windows:
-                input_ids = torch.tensor([w["input_ids"]], device=self.device)
-                attention_mask = torch.tensor([w["attention_mask"]], device=self.device)
-                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
-                # Shape: [1, num_labels] → squeeze to [num_labels].
-                per_window_logits.append(outputs.logits.squeeze(0).cpu())
-
-        # If every window produced 0 tokens (shouldn't happen because the
-        # tokenizer raises first), bail out cleanly.
-        if not per_window_logits:
-            return []
-
-        aggregated = aggregate_logits(per_window_logits)
-        probs = torch.sigmoid(aggregated)
-        # Cache on the instance so callers (e.g. main.py) can read
-        # `model.last_windows_processed` for the response envelope.
-        self.last_windows_processed = len(windows)
+        self.last_windows_processed = window_count
+        probabilities = torch.sigmoid(aggregated_logits)
+        configured_thresholds: dict[str, float] = self.compatibility["thresholds"]
 
         findings: list[Finding] = []
-        for idx, prob in enumerate(probs):
-            if idx >= len(LABEL_CONFIG):
+        for index, probability in enumerate(probabilities):
+            if index >= len(self.label_config):
                 break
-            score = float(prob)
-            if score < self.threshold:
+            metadata = self.label_config[index]
+            score = float(probability)
+            selected_threshold = (
+                self.threshold_override
+                if self.threshold_override is not None
+                else configured_thresholds[metadata.anti_pattern_id]
+            )
+            if score < selected_threshold:
                 continue
-            cfg = LABEL_CONFIG[idx]
             findings.append(
                 Finding(
-                    filePath=None,
-                    hunkHash=None,
-                    lineStart=None,
-                    lineEnd=None,
-                    antiPattern=cfg["name"],
-                    category=cfg["category"],
-                    severity=cfg["severity"],  # type: ignore[arg-type]
+                    filePath=file_path,
+                    hunkHash=hunk_hash,
+                    lineStart=line_start,
+                    lineEnd=line_end,
+                    antiPattern=metadata.anti_pattern_id,
+                    category=metadata.category,
+                    severity=metadata.severity,
                     confidence=round(score, 4),
-                    explanation=cfg["explanation_template"],
+                    explanation=metadata.explanation,
                 )
             )
-        return findings
+        return ModelPrediction(tuple(findings), window_count)
 
+    def predict(
+        self,
+        text: str,
+        language: str,
+        *,
+        mode: str = "diff",
+        file_path: str | None = None,
+        hunk_hash: str | None = None,
+        line_start: int | None = None,
+        line_end: int | None = None,
+    ) -> list[Finding]:
+        """Compatibility API returning only findings for one hunk."""
+        prediction = self.predict_hunk(
+            text,
+            language,
+            mode=mode,
+            file_path=file_path,
+            hunk_hash=hunk_hash,
+            line_start=line_start,
+            line_end=line_end,
+        )
+        return list(prediction.findings)
