@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, cast
 
 try:
     import yaml
@@ -54,6 +55,7 @@ _VALID_CATEGORIES = frozenset({
     "READABILITY",
     "MAINTAINABILITY",
 })
+Severity = Literal["critical", "major", "minor"]
 _VALID_SEVERITIES = frozenset({"critical", "major", "minor"})
 _REQUIRED_FIELDS = ("id", "display_name", "category", "default_severity", "trainable")
 _ID_PATTERN = re.compile(r"^[A-Z][A-Z0-9]+(_[A-Z0-9]+)+$")
@@ -70,7 +72,7 @@ class AntiPattern:
     id: str
     display_name: str
     category: str
-    default_severity: str
+    default_severity: Severity
     description: str
     trainable: bool = False
 
@@ -217,7 +219,7 @@ def load_taxonomy(path: Path | str | None = None) -> Taxonomy:
             id=ap_id,
             display_name=display_name,
             category=category,
-            default_severity=severity,
+            default_severity=cast(Severity, severity),
             description=description,
             trainable=trainable_raw,
         ))
