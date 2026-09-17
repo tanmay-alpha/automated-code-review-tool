@@ -1,8 +1,8 @@
 # Automated Code Review Tool — Java Spring Boot Backend with ML-assisted Code Analysis
 
-The **Automated Code Review Tool** is an enterprise-grade, multi-service code review platform designed to analyze pull requests, detect software anti-patterns, calculate code quality metrics, and automate developer feedback loops.
+The **Automated Code Review Tool** is a multi-service code review platform designed to analyze pull requests, detect software anti-patterns, calculate code quality metrics, and automate developer feedback loops.
 
-The central core of the system is a robust **Java 21 + Spring Boot** application acting as the primary control plane and API gateway, orchestrating data storage, security, GitHub webhooks, and asynchronous communication with a specialized Python/FastAPI Machine Learning inference worker.
+The central core of the system is a **Java 21 + Spring Boot** application acting as the primary control plane and API gateway, orchestrating data storage, security, GitHub webhooks, and asynchronous communication with a specialized Python/FastAPI Machine Learning inference worker.
 
 ---
 
@@ -12,7 +12,7 @@ The platform uses a decoupled microservice architecture where Java Spring Boot o
 
 - **Java 21 & Spring Boot (Central Control Plane & Backend)**:
   - Exposes secured REST APIs for dashboards, extensions, and CI pipelines.
-  - Implements authentication and security: JWT generation/validation, API key authentication, OAuth2 GitHub authorization flow, rate limiting, and RBAC.
+  - Implements Spring Security authentication, JWT/API-key authentication, endpoint authorization, rate limiting, and repository ownership checks.
   - Manages GitHub lifecycle integrations: webhook ingestion, HMAC signature verification, pull request diff parsing, status checks, and inline review comments.
   - Controls repository management, review scheduling, and data ingestion pipelines.
   - Manages relational persistence in **PostgreSQL** using Spring Data JPA with versioned schema migrations managed by **Flyway**.
@@ -21,7 +21,7 @@ The platform uses a decoupled microservice architecture where Java Spring Boot o
 - **Next.js Dashboard (Frontend)**:
   - React, TypeScript, and TailwindCSS interface for repository monitoring, PR quality trends, anti-pattern breakdowns, and API key management.
 - **Python ML Worker (Inference Engine & Model Pipeline)**:
-  - Dedicated FastAPI service used strictly for AST diff parsing, secret redaction, rule-based fallback detection, and transformer-based code classification (CodeBERT).
+  - Dedicated FastAPI service used for unified-diff and hunk parsing, secret redaction, rule-based pattern detection, and transformer-based code classification (CodeBERT).
 - **Client Integrations**:
   - **GitHub Action**: Automates CI PR reviews with quality-score gating.
   - **VS Code Extension**: Real-time in-editor anti-pattern diagnostics via the Spring Boot API.
@@ -75,8 +75,8 @@ The Java backend adheres to clear separation of concerns across its package hier
 | `config` | Spring configuration beans: WebClient timeouts, Redis caching, CORS policies, async executor pools, and Resilience4j circuit breakers. |
 | `controller` | REST controllers exposing versioned endpoints for scans (`/api/scan`), pull request reviews (`/api/reviews`), repositories (`/api/repos`), API keys (`/api/keys`), system metrics (`/api/metrics`), and webhooks (`/api/webhook`). |
 | `dto` | Strongly-typed request/response data transfer objects, validated with Jakarta Bean Validation (`@NotNull`, `@NotBlank`, `@Size`). |
-| `entity` | JPA domain models mapped to PostgreSQL tables: `RepositoryEntity`, `PullRequestEntity`, `Review`, `Finding`, `CodeSample`, `ApiKey`, `ProcessedWebhook`, and `IngestionOutbox`. |
-| `exception` | Domain-specific exception hierarchy (`ResourceNotFoundException`, `UnauthorizedException`, `MlWorkerException`) handled globally by `@RestControllerAdvice`. |
+| `entity` | JPA domain models mapped to PostgreSQL tables: `Repository`, `PullRequestEntity`, `SampleReview`, `Finding`, `CodeSample`, `ApiKey`, `ProcessedWebhook`, `IngestionOutbox`, `User`, `Annotation`, `AntiPattern`, `DatasetItem`, `DatasetVersion`, `PredictionEvent`, and `QualityMetric`. |
+| `exception` | Domain-specific exception hierarchy (`ConnectRepoException`, `InvalidDiffException`, `MlWorkerException`) and framework exceptions (`EntityNotFoundException`, `ResponseStatusException`) handled globally by `GlobalExceptionHandler` (`@RestControllerAdvice`). |
 | `repository` | Spring Data JPA repositories with custom transactional queries, row-level locking (`SELECT FOR UPDATE`), and pagination support. |
 | `security` | Authentication filter chains, JWT validation (`JwtAuthFilter`), API key authentication (`ApiKeyAuthFilter`), IP rate limiting (`AuthRateLimitFilter`), and cryptographic utilities (`EncryptionService`). |
 | `service` | Core business logic layer coordinating GitHub interactions (`GitHubService`), review workflows (`ReviewService`), ML worker HTTP client (`MlWorkerService`), and outbox publishing (`OutboxProcessor`). |
@@ -95,9 +95,9 @@ The Java backend adheres to clear separation of concerns across its package hier
 
 | Capability | Current State | Notes |
 | --- | --- | --- |
-| Primary Production Detector | Deterministic rule-based engine | Fast, deterministic AST/regex pattern detection. |
-| CodeBERT Checkpoint | Supported, not bundled in Git | Model checkpoint weights are maintained in artifact storage. |
-| Fallback Operation | Default (`MODEL_NAME=none`) | System operates fully on deterministic rules when no ML model is deployed. |
+| Primary Production Detector | Deterministic rule-based engine | Rule-based/regex detection over parsed diff hunks. |
+| CodeBERT Checkpoint | Supported, not bundled in Git | CodeBERT-compatible inference is supported, but a model checkpoint is not bundled in Git and the default deployment operates in fallback mode unless a compatible checkpoint is explicitly configured. |
+| Fallback Operation | Default (`MODEL_NAME=none`) | System operates fully on deterministic rule-based detection when no ML checkpoint is configured. |
 | Dataset Ingestion | Database outbox & contract validation | Hunks are normalized, redacted, and versioned before ingestion. |
 
 The repository contains transformer training and inference code, but does not claim unverified performance benchmarks. A model must satisfy explicit dataset contracts, baseline comparisons, and deployment smoke tests before promotion.

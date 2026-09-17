@@ -26,7 +26,7 @@ def rule_scores(
     for row_index, record in enumerate(records):
         findings, _, _ = fallback_findings(record.raw_hunk)
         for finding in findings:
-            position = index.get(finding.anti_pattern_id)
+            position = index.get(finding.antiPattern)
             if position is not None:
                 scores[row_index, position] = max(
                     scores[row_index, position], float(finding.confidence)

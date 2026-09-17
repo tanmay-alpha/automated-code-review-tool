@@ -12,7 +12,7 @@ import torch
 from app.config import settings
 from app.preprocessing import build_model_text
 from app.schemas import Finding
-from app.taxonomy import Taxonomy, load_taxonomy
+from app.taxonomy import Severity, Taxonomy, load_taxonomy
 from app.tokenizer_utils import windowed_model_logits
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ def compute_quality_score(findings: list[Finding]) -> float:
 class LabelMetadata:
     anti_pattern_id: str
     category: str
-    severity: str
+    severity: Severity
     explanation: str
 
 
