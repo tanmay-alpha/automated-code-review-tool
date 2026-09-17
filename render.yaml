@@ -39,7 +39,7 @@ services:
     plan: standard
     region: oregon
     dockerfilePath: apps/api/Dockerfile
-    dockerContext: apps/api
+    dockerContext: .
     healthCheckPath: /actuator/health
     autoDeployTrigger: checksPass
     envVars:

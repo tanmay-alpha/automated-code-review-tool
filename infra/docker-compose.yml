@@ -70,8 +70,8 @@ services:
 
   api:
     build:
-      context: ../apps/api
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: apps/api/Dockerfile
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-automated-code-review-tool}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-automated-code-review-tool}
