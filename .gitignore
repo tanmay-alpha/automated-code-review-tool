@@ -60,6 +60,13 @@ bun.lockb
 .vscode/
 spring-boot-devtools.properties
 
+# AI Assistants & IDE Agents
+.claude/
+.codex/
+.cursor/
+.gemini/
+.chat/
+
 # -----------------------------------------------------
 # Python & ML Worker
 # -----------------------------------------------------
@@ -99,6 +106,7 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+.benchmarks/
 .mypy_cache/
 .dmypy.json
 dmypy.json
@@ -180,3 +188,5 @@ $RECYCLE.BIN/
 *.tmp
 *.orig
 .local/
+scratch/
+*.scratch.*
