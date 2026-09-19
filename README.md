@@ -191,6 +191,11 @@ docker compose --env-file .env.example -f infra/docker-compose.yml config
 docker build -f apps/api/Dockerfile -t automated-code-review-tool-api:local .
 docker build -f apps/ml-worker/Dockerfile -t automated-code-review-tool-ml:local .
 docker build -f apps/web/Dockerfile -t automated-code-review-tool-web:local apps/web
+
+# 7. Repository Hygiene & Cache Cleanup (Windows PowerShell)
+Get-ChildItem -Path . -Recurse -Directory -Force |
+  Where-Object { $_.Name -in '__pycache__', '.pytest_cache', '.benchmarks', '.mypy_cache', '.ruff_cache' } |
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 ```
 
 ---
