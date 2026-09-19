@@ -44,6 +44,15 @@ _LANGUAGE_BY_EXT: dict[str, str] = {
     ".go": "go",
     ".rb": "ruby",
     ".php": "php",
+    ".c": "c_cpp",
+    ".cpp": "c_cpp",
+    ".cc": "c_cpp",
+    ".cxx": "c_cpp",
+    ".h": "c_cpp",
+    ".hpp": "c_cpp",
+    ".sql": "sql",
+    ".sh": "shell",
+    ".bash": "shell",
 }
 
 
@@ -100,7 +109,13 @@ def _hash_text(text: str) -> str:
 
 
 def detect_language(file_path: str) -> str:
-    ext = Path(file_path).suffix.lower()
+    path = Path(file_path)
+    name = path.name.lower()
+    if name in {"dockerfile", "containerfile"}:
+        return "dockerfile"
+    if name in {"makefile", "gnumakefile"}:
+        return "makefile"
+    ext = path.suffix.lower()
     return _LANGUAGE_BY_EXT.get(ext, "unknown")
 
 

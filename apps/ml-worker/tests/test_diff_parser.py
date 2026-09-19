@@ -152,6 +152,19 @@ def test_infers_javascript_language():
     assert parse_diff(ts_diff)[0].language == "javascript"
 
 
+def test_infers_extended_languages():
+    cpp_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "native/engine.cpp")
+    assert parse_diff(cpp_diff)[0].language == "c_cpp"
+    sql_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "db/migrations/V1__init.sql")
+    assert parse_diff(sql_diff)[0].language == "sql"
+    sh_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "scripts/deploy.sh")
+    assert parse_diff(sh_diff)[0].language == "shell"
+    docker_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "Dockerfile")
+    assert parse_diff(docker_diff)[0].language == "dockerfile"
+    make_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "Makefile")
+    assert parse_diff(make_diff)[0].language == "makefile"
+
+
 def test_added_and_removed_lines_separated():
     hunks = parse_diff(SINGLE_FILE_DIFF)
     h = hunks[0]
