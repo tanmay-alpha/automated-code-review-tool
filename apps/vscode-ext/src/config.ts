@@ -5,19 +5,81 @@
  * VS Code's `settings.json`. We re-read on every call (not cached)
  * so a user's edits take effect immediately on the next save.
  *
+ * The API key is the exception: it lives in VS Code SecretStorage. The
+ * deprecated plain-text `apiKey` setting is read only as a migration fallback.
+ *
  * See `package.json → contributes.configuration` for the schema.
  */
 import * as vscode from "vscode";
+import { API_KEY_SECRET, resolveApiKey, ResolvedApiKey } from "./apiKey";
 
 const NAMESPACE = "automated-code-review-tool";
+const LEGACY_API_KEY_SETTING = "apiKey";
+const MIGRATION_OFFERED_STATE = "automated-code-review-tool.apiKeyMigrationOffered";
 
 /**
- * Returns the user's API key, or an empty string if not set.
- * Callers should treat an empty string as "user not configured".
+ * Returns the API key from SecretStorage, falling back to the deprecated
+ * plain-text setting. An empty key means "user not configured".
  */
-export function getApiKey(): string {
-  const raw = readConfig().get<string>("apiKey") ?? "";
-  return raw.trim();
+export async function getApiKey(
+  secrets: vscode.SecretStorage,
+): Promise<ResolvedApiKey> {
+  return resolveApiKey(
+    await secrets.get(API_KEY_SECRET),
+    readConfig().get<string>(LEGACY_API_KEY_SETTING),
+  );
+}
+
+export async function storeApiKey(
+  secrets: vscode.SecretStorage,
+  key: string,
+): Promise<void> {
+  await secrets.store(API_KEY_SECRET, key.trim());
+}
+
+export async function deleteApiKey(secrets: vscode.SecretStorage): Promise<void> {
+  await secrets.delete(API_KEY_SECRET);
+}
+
+/**
+ * If the key still comes from the plain-text setting, offer once (tracked in
+ * globalState) to move it into SecretStorage and remove it from settings.
+ */
+export async function offerApiKeyMigration(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  if (context.globalState.get<boolean>(MIGRATION_OFFERED_STATE)) return;
+  const resolved = await getApiKey(context.secrets);
+  if (resolved.source !== "legacySetting") return;
+
+  await context.globalState.update(MIGRATION_OFFERED_STATE, true);
+  const move = "Move to secure storage";
+  const choice = await vscode.window.showWarningMessage(
+    "automated-code-review-tool: your API key is stored in plain text in settings.json. " +
+      "Move it to VS Code's secret storage?",
+    move,
+    "Not now",
+  );
+  if (choice !== move) return;
+
+  await storeApiKey(context.secrets, resolved.key);
+  await clearLegacyApiKeySetting();
+  void vscode.window.showInformationMessage(
+    "automated-code-review-tool: API key moved to secret storage and removed from settings.",
+  );
+}
+
+/** Removes the deprecated plain-text key from the user and workspace settings that set it. */
+export async function clearLegacyApiKeySetting(): Promise<void> {
+  const config = readConfig();
+  const inspected = config.inspect<string>(LEGACY_API_KEY_SETTING);
+  if (!inspected) return;
+  if (inspected.globalValue !== undefined) {
+    await config.update(LEGACY_API_KEY_SETTING, undefined, vscode.ConfigurationTarget.Global);
+  }
+  if (inspected.workspaceValue !== undefined) {
+    await config.update(LEGACY_API_KEY_SETTING, undefined, vscode.ConfigurationTarget.Workspace);
+  }
 }
 
 /**
@@ -31,8 +93,8 @@ export function getApiUrl(): string {
 }
 
 /**
- * Master switch. When false, onDidSaveTextDocument is a no-op
- * (the manual `automated-code-review-tool.scanFile` command still works).
+ * Master switch. When false, no scans run, neither on save nor via the
+ * scan commands.
  */
 export function isEnabled(): boolean {
   return readConfig().get<boolean>("enabled", true);

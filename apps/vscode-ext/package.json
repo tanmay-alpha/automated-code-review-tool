@@ -1,6 +1,6 @@
 {
   "name": "automated-code-review-tool-reviewer",
-  "displayName": "automated-code-review-tool — Semantic Code Review",
+  "displayName": "automated-code-review-tool",
   "description": "Displays automated-code-review-tool API findings as editor diagnostics",
   "version": "1.0.0",
   "publisher": "tanmay-alpha",
@@ -52,6 +52,16 @@
         "command": "automated-code-review-tool.clear",
         "title": "automated-code-review-tool: Clear Diagnostics",
         "category": "automated-code-review-tool"
+      },
+      {
+        "command": "automated-code-review-tool.setApiKey",
+        "title": "automated-code-review-tool: Set API Key",
+        "category": "automated-code-review-tool"
+      },
+      {
+        "command": "automated-code-review-tool.clearApiKey",
+        "title": "automated-code-review-tool: Clear API Key",
+        "category": "automated-code-review-tool"
       }
     ],
     "configuration": {
@@ -60,8 +70,8 @@
         "automated-code-review-tool.apiKey": {
           "type": "string",
           "default": "",
-          "description": "Your automated-code-review-tool API key from the dashboard (Settings → API Key)",
-          "markdownDescription": "Your automated-code-review-tool API key from the dashboard (**Settings → API Key**). Required for the extension to contact the automated-code-review-tool API."
+          "description": "Deprecated: plain-text API key. Use the 'automated-code-review-tool: Set API Key' command instead.",
+          "deprecationMessage": "Stored in plain text. Run 'automated-code-review-tool: Set API Key' to store the key in VS Code secret storage; this setting is only read as a fallback."
         },
         "automated-code-review-tool.apiUrl": {
           "type": "string",
@@ -71,7 +81,7 @@
         "automated-code-review-tool.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable/disable auto-scan on save"
+          "description": "Enable/disable all scans (on save and via commands)"
         },
         "automated-code-review-tool.scanOnSave": {
           "type": "boolean",

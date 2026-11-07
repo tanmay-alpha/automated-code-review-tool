@@ -1,4 +1,5 @@
-export const MAX_FILE_BYTES = 1_048_576;
+// Mirrors the @Size(max = 200_000) limit on ScanFileRequest.content in the API.
+export const MAX_CONTENT_CHARS = 200_000;
 export const DEFAULT_TIMEOUT_MS = 15_000;
 
 export interface ScanFileRequest {
@@ -7,24 +8,32 @@ export interface ScanFileRequest {
   filePath: string;
 }
 
+// Maps VS Code language ids to the ML worker's file-mode `language` field,
+// which accepts only python/javascript/java/unknown; TypeScript is sent as javascript.
+const API_LANGUAGE_BY_VSCODE_ID = new Map<string, string>([
+  ["python", "python"],
+  ["javascript", "javascript"],
+  ["javascriptreact", "javascript"],
+  ["typescript", "javascript"],
+  ["typescriptreact", "javascript"],
+  ["java", "java"],
+]);
+
 export interface FindingDTO {
-  id?: string;
-  antiPattern: string;
-  severity: "CRITICAL" | "MAJOR" | "MINOR" | string;
-  confidence: number;
-  filePath?: string;
+  filePath?: string | null;
   lineStart: number | null;
   lineEnd: number | null;
+  antiPattern: string;
+  category?: string | null;
+  severity: string;
+  confidence: number;
   explanation: string;
-  codeSnippet?: string;
-  suggestion?: string;
 }
 
 export interface ScanFileResponse {
-  filePath: string;
-  language: string;
   findings: FindingDTO[];
-  qualityScore?: number;
+  qualityScore: number | null;
+  language: string;
 }
 
 export interface DiagnosticData {
@@ -52,26 +61,25 @@ interface PostScanOptions {
   fetchImpl?: typeof fetch;
 }
 
-export function utf8ByteLength(content: string): number {
-  return new TextEncoder().encode(content).byteLength;
+/** Returns the API language for a VS Code language id, or undefined if unsupported. */
+export function apiLanguage(languageId: string): string | undefined {
+  return API_LANGUAGE_BY_VSCODE_ID.get(languageId);
 }
 
-export function exceedsFileSizeLimit(content: string): boolean {
-  return utf8ByteLength(content) > MAX_FILE_BYTES;
+export function exceedsContentLimit(content: string): boolean {
+  return content.length > MAX_CONTENT_CHARS;
 }
 
 export function dedupeFindings(findings: FindingDTO[]): FindingDTO[] {
   const seen = new Set<string>();
   return findings.filter((finding) => {
-    const key = finding.id
-      ? `id:${finding.id}`
-      : [
-          finding.antiPattern,
-          finding.filePath ?? "",
-          finding.lineStart ?? "",
-          finding.lineEnd ?? "",
-          finding.explanation ?? "",
-        ].join("\u0000");
+    const key = [
+      finding.antiPattern,
+      finding.filePath ?? "",
+      finding.lineStart ?? "",
+      finding.lineEnd ?? "",
+      finding.explanation ?? "",
+    ].join("\u0000");
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -97,7 +105,7 @@ export function mapFindingToDiagnosticData(finding: FindingDTO): DiagnosticData 
     endLine,
     severity: mapSeverity(finding.severity),
     message: `${prettify(finding.antiPattern)}${confidenceText}: ${explanation}`,
-    code: finding.id ?? finding.antiPattern,
+    code: finding.antiPattern,
   };
 }
 

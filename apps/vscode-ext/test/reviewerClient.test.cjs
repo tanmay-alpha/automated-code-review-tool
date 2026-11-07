@@ -2,18 +2,18 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
-  MAX_FILE_BYTES,
+  MAX_CONTENT_CHARS,
   ReviewerClientError,
+  apiLanguage,
   dedupeFindings,
-  exceedsFileSizeLimit,
+  exceedsContentLimit,
   mapFindingToDiagnosticData,
   postScan,
-  utf8ByteLength,
 } = require("../out/reviewerClient.js");
 
 const payload = {
   content: "const answer = 42;",
-  language: "typescript",
+  language: "javascript",
   filePath: "src/example.ts",
 };
 
@@ -31,7 +31,7 @@ test("sends the scan request and bearer API key", async () => {
     apiKey: "secret-test-key",
     fetchImpl: async (url, init) => {
       captured = { url, init };
-      return jsonResponse({ filePath: payload.filePath, language: payload.language, findings: [] });
+      return jsonResponse({ findings: [], qualityScore: 100, language: payload.language });
     },
   });
 
@@ -86,7 +86,6 @@ test("reports both 4xx and 5xx responses with bounded response text", async (t) 
 
 test("maps API findings to zero-based diagnostic data", () => {
   const mapped = mapFindingToDiagnosticData({
-    id: "finding-1",
     antiPattern: "SECURITY_HARDCODED_SECRET",
     severity: "critical",
     confidence: 1.4,
@@ -100,14 +99,14 @@ test("maps API findings to zero-based diagnostic data", () => {
     endLine: 8,
     severity: "error",
     message: "Security Hardcoded Secret (100% confidence): Credential-like value detected.",
-    code: "finding-1",
+    code: "SECURITY_HARDCODED_SECRET",
   });
 });
 
 test("deduplicates repeated findings while preserving distinct locations", () => {
   const base = {
     antiPattern: "RELIABILITY_BROAD_EXCEPTION",
-    severity: "MAJOR",
+    severity: "major",
     confidence: 0.8,
     lineStart: 3,
     lineEnd: 3,
@@ -117,17 +116,19 @@ test("deduplicates repeated findings while preserving distinct locations", () =>
     { ...base },
     { ...base },
     { ...base, lineStart: 10, lineEnd: 10 },
-    { ...base, id: "same-id" },
-    { ...base, id: "same-id", lineStart: 20 },
   ]);
 
-  assert.equal(deduped.length, 3);
-  assert.deepEqual(deduped.map((finding) => finding.lineStart), [3, 10, 3]);
+  assert.deepEqual(deduped.map((finding) => finding.lineStart), [3, 10]);
 });
 
-test("enforces the 1 MB guard using UTF-8 bytes", () => {
-  assert.equal(utf8ByteLength("é"), 2);
-  assert.equal(exceedsFileSizeLimit("a".repeat(MAX_FILE_BYTES)), false);
-  assert.equal(exceedsFileSizeLimit("a".repeat(MAX_FILE_BYTES + 1)), true);
-  assert.equal(exceedsFileSizeLimit("é".repeat(MAX_FILE_BYTES / 2 + 1)), true);
+test("maps VS Code language ids to the languages the API accepts", () => {
+  assert.equal(apiLanguage("python"), "python");
+  assert.equal(apiLanguage("typescriptreact"), "javascript");
+  assert.equal(apiLanguage("java"), "java");
+  assert.equal(apiLanguage("markdown"), undefined);
+});
+
+test("enforces the API's 200,000-character content limit", () => {
+  assert.equal(exceedsContentLimit("a".repeat(MAX_CONTENT_CHARS)), false);
+  assert.equal(exceedsContentLimit("a".repeat(MAX_CONTENT_CHARS + 1)), true);
 });

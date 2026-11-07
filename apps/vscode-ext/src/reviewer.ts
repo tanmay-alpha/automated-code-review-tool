@@ -1,28 +1,49 @@
 import {
+  commands,
   Diagnostic,
   DiagnosticCollection,
   DiagnosticSeverity,
+  Disposable,
   Range,
+  SecretStorage,
+  StatusBarAlignment,
+  StatusBarItem,
   TextDocument,
   Uri,
-  languages,
   window,
 } from "vscode";
 import { getApiKey, getApiUrl, isEnabled } from "./config";
 import {
-  exceedsFileSizeLimit,
+  apiLanguage,
+  exceedsContentLimit,
   mapFindingToDiagnosticData,
   postScan,
   ScanFileResponse,
 } from "./reviewerClient";
 
-let statusBarItem = null as ReturnType<typeof window.createStatusBarItem> | null;
+let statusBarItem: StatusBarItem | null = null;
 
-function statusBar(): NonNullable<typeof statusBarItem> {
+/**
+ * Creates the status bar item. The returned disposable must be registered in
+ * `context.subscriptions` so the item is removed when the extension deactivates.
+ */
+export function createStatusBar(): Disposable {
+  const item = window.createStatusBarItem(
+    "automated-code-review-tool.status",
+    StatusBarAlignment.Left,
+  );
+  item.name = "automated-code-review-tool";
+  item.command = "automated-code-review-tool.scanFile";
+  statusBarItem = item;
+  return new Disposable(() => {
+    item.dispose();
+    if (statusBarItem === item) statusBarItem = null;
+  });
+}
+
+function statusBar(): StatusBarItem {
   if (!statusBarItem) {
-    statusBarItem = window.createStatusBarItem("automated-code-review-tool.status", 1);
-    statusBarItem.name = "automated-code-review-tool";
-    statusBarItem.command = "automated-code-review-tool.scanFile";
+    throw new Error("automated-code-review-tool status bar used before activation.");
   }
   return statusBarItem;
 }
@@ -30,6 +51,7 @@ function statusBar(): NonNullable<typeof statusBarItem> {
 export async function scanFile(
   doc: TextDocument,
   collection: DiagnosticCollection,
+  secrets: SecretStorage,
 ): Promise<void> {
   if (!isEnabled()) {
     statusBar().text = "automated-code-review-tool: disabled";
@@ -37,22 +59,35 @@ export async function scanFile(
     return;
   }
 
-  const apiKey = getApiKey();
+  const { key: apiKey } = await getApiKey(secrets);
   if (!apiKey) {
     const message =
-      "automated-code-review-tool: set automated-code-review-tool.apiKey in Settings.";
+      "automated-code-review-tool: no API key. Run 'automated-code-review-tool: Set API Key'.";
     statusBar().text = "$(error) automated-code-review-tool: no API key";
     statusBar().tooltip = message;
     statusBar().show();
-    void window.showErrorMessage(message);
     collection.set(doc.uri, []);
+    const setKey = "Set API Key";
+    void window.showErrorMessage(message, setKey).then((choice) => {
+      if (choice === setKey) {
+        void commands.executeCommand("automated-code-review-tool.setApiKey");
+      }
+    });
+    return;
+  }
+
+  const language = apiLanguage(doc.languageId);
+  if (!language) {
+    statusBar().text = `automated-code-review-tool: ${doc.languageId} not supported`;
+    statusBar().tooltip = "Supported: Python, JavaScript, TypeScript, Java.";
+    statusBar().show();
     return;
   }
 
   const content = doc.getText();
-  if (exceedsFileSizeLimit(content)) {
-    statusBar().text = "$(warning) automated-code-review-tool: file too large (>1 MB)";
-    statusBar().tooltip = "The UTF-8 file size exceeds the 1 MB scan limit.";
+  if (exceedsContentLimit(content)) {
+    statusBar().text = "$(warning) automated-code-review-tool: file too large";
+    statusBar().tooltip = "The file exceeds the API's 200,000-character scan limit.";
     statusBar().show();
     collection.set(doc.uri, []);
     return;
@@ -67,7 +102,7 @@ export async function scanFile(
     const response = await postScan(
       {
         content,
-        language: doc.languageId,
+        language,
         filePath: doc.fileName,
       },
       { apiUrl, apiKey },
@@ -148,5 +183,3 @@ function warnForInsecureRemoteUrl(apiUrl: string): void {
 function shortError(message: string): string {
   return message.length <= 60 ? message : `${message.slice(0, 57)}…`;
 }
-
-export { languages };

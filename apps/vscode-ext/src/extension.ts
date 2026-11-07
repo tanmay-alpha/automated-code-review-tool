@@ -8,40 +8,41 @@
  *   - Create the `automated-code-review-tool` DiagnosticCollection so findings can
  *     be displayed as inline squigglies in the editor.
  *   - Auto-scan any saved file whose language is supported.
- *   - Provide a manual "Scan Current File" command.
- *   - Clean up subscriptions and the status bar on deactivation.
+ *   - Provide scan-file, scan-workspace and clear commands.
+ *   - Store the API key in SecretStorage (set/clear commands, one-time
+ *     migration offer for the deprecated plain-text setting).
  */
 import * as vscode from "vscode";
-import { clearAll, scanFile } from "./reviewer";
-import { scanOnSave } from "./config";
-
-/** Languages the automated-code-review-tool backend currently understands. */
-const SUPPORTED_LANGUAGES = new Set<string>([
-  "python",
-  "javascript",
-  "javascriptreact",
-  "typescript",
-  "typescriptreact",
-  "java",
-]);
+import { clearAll, createStatusBar, scanFile } from "./reviewer";
+import {
+  clearLegacyApiKeySetting,
+  deleteApiKey,
+  offerApiKeyMigration,
+  scanOnSave,
+  storeApiKey,
+} from "./config";
+import { apiLanguage } from "./reviewerClient";
 
 /**
  * Called by VS Code when the extension activates. The context
  * holds the disposables so they can be cleaned up on deactivation.
  */
 export function activate(context: vscode.ExtensionContext): void {
+  const secrets = context.secrets;
+
   // Single shared collection — squigglies across the editor surface.
   const diagnosticCollection = vscode.languages.createDiagnosticCollection(
     "automated-code-review-tool",
   );
   context.subscriptions.push(diagnosticCollection);
+  context.subscriptions.push(createStatusBar());
 
   // Auto-scan on save (only supported languages).
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(async (doc) => {
-      if (!SUPPORTED_LANGUAGES.has(doc.languageId)) return;
+      if (!apiLanguage(doc.languageId)) return;
       if (!scanOnSave()) return;
-      await scanFile(doc, diagnosticCollection);
+      await scanFile(doc, diagnosticCollection, secrets);
     }),
   );
 
@@ -55,7 +56,7 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         return;
       }
-      await scanFile(editor.document, diagnosticCollection);
+      await scanFile(editor.document, diagnosticCollection, secrets);
     }),
   );
 
@@ -68,8 +69,8 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       for (const uri of files) {
         const doc = await vscode.workspace.openTextDocument(uri);
-        if (SUPPORTED_LANGUAGES.has(doc.languageId)) {
-          await scanFile(doc, diagnosticCollection);
+        if (apiLanguage(doc.languageId)) {
+          await scanFile(doc, diagnosticCollection, secrets);
         }
       }
       void vscode.window.showInformationMessage(
@@ -85,17 +86,38 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Status bar message on first activation.
-  void vscode.window.showInformationMessage(
-    "automated-code-review-tool is active. Save any supported file to scan it.",
+  // Store the API key in SecretStorage; also drop any plain-text copy.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("automated-code-review-tool.setApiKey", async () => {
+      const key = await vscode.window.showInputBox({
+        title: "automated-code-review-tool API key",
+        prompt: "Paste the API key from the dashboard (Settings → API Key).",
+        password: true,
+        ignoreFocusOut: true,
+        validateInput: (value) => (value.trim() ? undefined : "API key cannot be empty."),
+      });
+      if (key === undefined) return;
+      await storeApiKey(secrets, key);
+      await clearLegacyApiKeySetting();
+      void vscode.window.showInformationMessage(
+        "automated-code-review-tool: API key saved to secret storage.",
+      );
+    }),
   );
+
+  // Remove the API key from SecretStorage and the deprecated setting.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("automated-code-review-tool.clearApiKey", async () => {
+      await deleteApiKey(secrets);
+      await clearLegacyApiKeySetting();
+      void vscode.window.showInformationMessage(
+        "automated-code-review-tool: API key cleared.",
+      );
+    }),
+  );
+
+  void offerApiKeyMigration(context);
 }
 
-/**
- * Called by VS Code on extension uninstall / window reload. The
- * context disposes its own subscriptions; we just need to make
- * sure the diagnostic collection is cleared.
- */
-export function deactivate(): void {
-  // Disposables are cleaned up by VS Code. Nothing to do here.
-}
+/** Subscriptions registered on the context are disposed by VS Code. */
+export function deactivate(): void {}
