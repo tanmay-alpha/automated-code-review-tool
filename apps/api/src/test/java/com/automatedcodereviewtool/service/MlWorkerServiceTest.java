@@ -14,7 +14,6 @@ import org.springframework.http.MediaType;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -56,22 +55,28 @@ class MlWorkerServiceTest {
 
     @Test
     void review_returnsParsedResponse_on2xx() throws Exception {
+        // Same shape as apps/ml-worker/app/schemas.py ReviewResponse.
         String json = """
                 {
                   "findings": [
                     {
-                      "file": "src/Foo.java",
-                      "startLine": 12,
-                      "endLine": 14,
-                      "antiPattern": "GodClass",
-                      "category": "structural",
-                      "severity": "high",
+                      "filePath": "src/Foo.java",
+                      "hunkHash": "abc",
+                      "lineStart": 12,
+                      "lineEnd": 14,
+                      "antiPattern": "SECURITY_HARDCODED_SECRET",
+                      "category": "SECURITY",
+                      "severity": "critical",
                       "confidence": 0.92,
-                      "explanation": "too many responsibilities",
-                      "codeSnippet": "public class Foo { ... }"
+                      "explanation": "hard-coded credential"
                     }
                   ],
-                  "qualityScore": 0.74
+                  "qualityScore": 81.6,
+                  "processingTimeMs": 12,
+                  "windowsProcessed": 1,
+                  "engine": "fallback",
+                  "modelVersion": "rules-v1",
+                  "taxonomyVersion": "1.0.0"
                 }
                 """;
         server.enqueue(new MockResponse()
@@ -83,8 +88,11 @@ class MlWorkerServiceTest {
 
         assertThat(out).isNotNull();
         assertThat(out.findings()).hasSize(1);
-        assertThat(out.findings().get(0).antiPattern()).isEqualTo("GodClass");
-        assertThat(out.qualityScore()).isEqualByComparingTo("0.74");
+        assertThat(out.findings().get(0).antiPattern()).isEqualTo("SECURITY_HARDCODED_SECRET");
+        assertThat(out.findings().get(0).filePath()).isEqualTo("src/Foo.java");
+        assertThat(out.findings().get(0).lineStart()).isEqualTo(12);
+        assertThat(out.qualityScore()).isEqualByComparingTo("81.6");
+        assertThat(out.engine()).isEqualTo("fallback");
 
         RecordedRequest req = server.takeRequest(2, TimeUnit.SECONDS);
         assertThat(req).as("server should have received the request").isNotNull();
@@ -106,13 +114,15 @@ class MlWorkerServiceTest {
     }
 
     @Test
-    void review_throwsInvalidDiff_on422() {
+    void review_throwsInvalidDiff_on422_withoutEchoingTheWorkerBody() {
+        // FastAPI's default 422 echoes the request, i.e. the whole diff.
         server.enqueue(new MockResponse()
                 .setResponseCode(422)
-                .setBody("unprocessable"));
+                .setBody("{\"detail\":[{\"input\":\"SECRET_SOURCE_LINE\"}]}"));
 
-        assertThatThrownBy(() -> service.review("garbage", "java"))
-                .isInstanceOf(InvalidDiffException.class);
+        assertThatThrownBy(() -> service.review("SECRET_SOURCE_LINE", "java"))
+                .isInstanceOf(InvalidDiffException.class)
+                .hasMessage("ML worker rejected diff: HTTP 422");
     }
 
     @Test
@@ -162,42 +172,6 @@ class MlWorkerServiceTest {
     }
 
     @Test
-    void isHealthy_returnsTrue_whenWorkerReportsOk() {
-        server.enqueue(new MockResponse()
-                .setHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .setResponseCode(200)
-                .setBody("{\"status\":\"ok\",\"modelLoaded\":true}"));
-
-        assertThat(service.isHealthy()).isTrue();
-    }
-
-    @Test
-    void isHealthy_returnsTrue_whenFallbackEngineIsOperational() {
-        server.enqueue(new MockResponse()
-                .setHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .setResponseCode(200)
-                .setBody("{\"status\":\"healthy\",\"engine\":\"fallback\",\"modelLoaded\":false}"));
-
-        assertThat(service.isHealthy()).isTrue();
-    }
-
-    @Test
-    void isHealthy_returnsFalse_onServerDown() throws IOException {
-        // Shut the server down to simulate a connection refusal.
-        server.shutdown();
-        // Restart on a different port so the URL is still reachable but the
-        // original is gone — actually, simpler: just use a port that is closed.
-        // We point the service at a definitely-closed port and assert isHealthy()==false.
-        WebClient.Builder b = WebClient.builder();
-        MlWorkerService dead = new MlWorkerService(
-                b,
-                "http://127.0.0.1:1",
-                "test-secret");
-
-        assertThat(dead.isHealthy()).isFalse();
-    }
-
-    @Test
     void reviewFile_callsSameEndpoint_asReview() throws Exception {
         server.enqueue(new MockResponse()
                 .setHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
@@ -214,17 +188,5 @@ class MlWorkerServiceTest {
         assertThat(req).isNotNull();
         assertThat(req.getPath()).isEqualTo("/ml/review");
         assertThat(req.getBody().readUtf8()).contains("\"filePath\":\"src/A.java\"");
-    }
-
-    @Test
-    void reviewFindings_returnsEmpty_whenResponseIsEmpty() {
-        server.enqueue(new MockResponse()
-                .setHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .setResponseCode(200)
-                .setBody("{\"findings\":null,\"qualityScore\":0.5}"));
-
-        List<com.automatedcodereviewtool.dto.MlFinding> findings = service.reviewFindings("diff", "java");
-
-        assertThat(findings).isEmpty();
     }
 }

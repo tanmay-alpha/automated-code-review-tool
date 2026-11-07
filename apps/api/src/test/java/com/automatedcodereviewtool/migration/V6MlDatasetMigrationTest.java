@@ -7,7 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class V6MlDatasetMigrationTest {
 
     @Container
-    static final PostgreSQLContainer<?> PG = new PostgreSQLContainer<>("postgres:16-alpine")
+    static final PostgreSQLContainer PG = new PostgreSQLContainer("postgres:16-alpine")
             .withDatabaseName("acrt_test_v6")
             .withUsername("test")
             .withPassword("test");
@@ -92,7 +92,8 @@ class V6MlDatasetMigrationTest {
                         + "WHERE table_schema = 'ml' AND table_name = 'annotations' "
                         + "AND constraint_type = 'FOREIGN KEY'",
                 Integer.class);
-        // At least code_sample_id -> code_samples(id) and anti_pattern_id -> anti_patterns(id)
+        // code_sample_id -> code_samples(id) from V6, plus finding_id -> findings(id)
+        // and supersedes_annotation_id -> annotations(id) from V9. anti_pattern_id has no FK.
         assertThat(count).isGreaterThanOrEqualTo(2);
     }
 

@@ -65,13 +65,11 @@ class JwtServiceTest {
     }
 
     @Test
-    void testExtractUserIdFromToken() {
+    void testSubjectIsUserId() {
         UUID userId = UUID.randomUUID();
         String token = jwtService.generateAccessToken(userId, "u");
 
-        UUID extracted = jwtService.extractUserId(token);
-
-        assertThat(extracted).isEqualTo(userId);
+        assertThat(jwtService.validateToken(token).getSubject()).isEqualTo(userId.toString());
     }
 
     @Test

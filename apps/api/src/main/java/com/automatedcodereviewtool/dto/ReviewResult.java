@@ -9,23 +9,31 @@ import java.util.List;
 /**
  * Internal carrier returned by {@link com.automatedcodereviewtool.service.ReviewService}.
  *
- * <p>Contains the persisted {@link PullRequestEntity} and its
- * {@link Finding} list so the orchestrating caller (the webhook
- * flow) can build a GitHub comment without re-querying.</p>
+ * <p>Contains the persisted {@link PullRequestEntity}, its {@link Finding}
+ * list and the detector that produced them ({@code "model"} or
+ * {@code "fallback"}) so the webhook flow can build a GitHub comment
+ * without re-querying.</p>
  */
 public record ReviewResult(
         PullRequestEntity pullRequest,
         List<Finding> findings,
         BigDecimal qualityScore,
+        String engine,
         boolean success,
+        boolean retryable,
         String errorMessage
 ) {
 
-    public static ReviewResult empty(String errorMessage) {
-        return new ReviewResult(null, List.of(), BigDecimal.ZERO, false, errorMessage);
+    /**
+     * @param retryable false when retrying cannot help (the ML worker
+     *                  rejected the input with a 4xx)
+     */
+    public static ReviewResult failed(String errorMessage, boolean retryable) {
+        return new ReviewResult(null, List.of(), BigDecimal.ZERO, null, false, retryable, errorMessage);
     }
 
-    public static ReviewResult of(PullRequestEntity pr, List<Finding> findings, BigDecimal qualityScore) {
-        return new ReviewResult(pr, findings, qualityScore, true, null);
+    public static ReviewResult of(PullRequestEntity pr, List<Finding> findings,
+                                  BigDecimal qualityScore, String engine) {
+        return new ReviewResult(pr, findings, qualityScore, engine, true, false, null);
     }
 }

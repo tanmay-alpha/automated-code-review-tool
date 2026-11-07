@@ -23,47 +23,39 @@ import reactor.core.publisher.Mono;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
-import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 
 /**
- * Thin client for the internal ML worker (FastAPI, port 8000).
+ * Client for the internal ML worker (FastAPI, {@code POST /ml/review}).
  *
- * <p>The worker is internal-only; we authenticate every request with
- * the {@code X-ML-Worker-Secret} header. We never call it from outside
- * the API's service mesh.</p>
+ * <p>Every request carries the shared {@code X-ML-Worker-Secret} header.</p>
  *
  * <p>Error mapping:</p>
  * <ul>
- *   <li>4xx → {@link InvalidDiffException} (worker rejected the diff)</li>
- *   <li>5xx → {@link MlWorkerException} ("ML worker unavailable")</li>
- *   <li>timeout / connect-fail → {@link MlWorkerException}
- *       ("ML worker timed out" / "ML worker unavailable")</li>
+ *   <li>4xx → {@link InvalidDiffException} (worker rejected the input; not retried)</li>
+ *   <li>502/503/504, connect failures → {@link MlWorkerException}, retried up to 3 attempts</li>
+ *   <li>other 5xx, timeout, open circuit breaker → {@link MlWorkerException}</li>
  * </ul>
  *
- * <p>{@code block()} is intentional: callers (e.g. {@code WebhookService})
- * are already on a {@code @Async} thread, so the blocking call doesn't
- * tie up a Tomcat request thread.</p>
+ * <p>Calls block: the PR flow runs on the async webhook executor, and the
+ * file-scan endpoint is a synchronous request/response.</p>
  */
 @Service
 public class MlWorkerService {
 
     private static final Logger log = LoggerFactory.getLogger(MlWorkerService.class);
 
-    /** Worker-side timeout for the model inference itself. */
+    /** Netty response timeout per HTTP attempt. */
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
-    /** Total time we'll wait across one connect + one retry before giving up. */
+    /** Reactor-level upper bound per attempt (connect + response). */
     private static final Duration OVERALL_DEADLINE = Duration.ofSeconds(45);
-    /** Connection-level timeout. */
+    /** TCP connect timeout. */
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
 
     private final WebClient client;
-    private final String mlWorkerSecret;
-    private final String mlWorkerUrl;
     private final CircuitBreaker circuitBreaker;
 
     @Autowired
@@ -71,8 +63,6 @@ public class MlWorkerService {
                            @Value("${app.ml-worker.url}") String mlWorkerUrl,
                            @Value("${app.ml-worker.secret}") String mlWorkerSecret,
                            @Qualifier("mlWorkerCircuitBreaker") CircuitBreaker circuitBreaker) {
-        this.mlWorkerUrl = mlWorkerUrl;
-        this.mlWorkerSecret = mlWorkerSecret;
         this.circuitBreaker = circuitBreaker;
         // Build a per-instance WebClient with connection + read timeouts
         // applied at the Reactor Netty HttpClient layer.
@@ -94,80 +84,27 @@ public class MlWorkerService {
                 CircuitBreaker.ofDefaults("mlWorker-test-" + UUID.randomUUID()));
     }
 
-    /**
-     * Call {@code POST /ml/review} and return the parsed response.
-     *
-     * <p>Error mapping:</p>
-     * <ul>
-     *   <li>4xx → {@link InvalidDiffException}</li>
-     *   <li>5xx → {@link MlWorkerException}</li>
-     *   <li>overall timeout → {@link MlWorkerException} ("timed out")</li>
-     *   <li>connection refused / DNS / IO → {@link MlWorkerException} ("unavailable")</li>
-     * </ul>
-     */
+    /** Review a unified diff (PR flow). */
     public MlReviewResponse review(String diff, String language) {
-        return executeWithResilience(() -> reviewOnce(diff, language));
+        return executeWithResilience(() -> post(MlReviewRequest.diff(diff, language), "diff"));
     }
 
-    private MlReviewResponse reviewOnce(String diff, String language) {
-        MlReviewRequest body = MlReviewRequest.diff(diff, language);
-        return client.post()
-                .uri("/ml/review")
-                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .bodyValue(body)
-                .retrieve()
-                .onStatus(org.springframework.http.HttpStatusCode::is4xxClientError, resp ->
-                        resp.bodyToMono(String.class).defaultIfEmpty("")
-                                .flatMap(body2 -> Mono.error(new InvalidDiffException(
-                                        resp.statusCode().value(),
-                                        "ML worker rejected diff: " + (body2.isBlank() ? resp.statusCode().toString() : body2)))))
-                .onStatus(org.springframework.http.HttpStatusCode::is5xxServerError, resp ->
-                        Mono.error(upstreamFailure(resp.statusCode().value())))
-                .bodyToMono(MlReviewResponse.class)
-                .timeout(OVERALL_DEADLINE)
-                .onErrorMap(java.util.concurrent.TimeoutException.class,
-                        ex -> new MlWorkerException("ML worker timed out", ex))
-                .onErrorMap(WebClientResponseException.class,
-                        ex -> ex.getStatusCode().is4xxClientError()
-                                ? new InvalidDiffException(ex.getStatusCode().value(),
-                                        "ML worker rejected diff: " + ex.getStatusCode())
-                                : upstreamFailure(ex.getStatusCode().value()))
-                .onErrorMap(java.net.ConnectException.class,
-                        ex -> new MlWorkerException("ML worker unavailable", ex))
-                .onErrorMap(java.nio.channels.UnresolvedAddressException.class,
-                        ex -> new MlWorkerException("ML worker unavailable", ex))
-                .onErrorMap(java.io.IOException.class,
-                        ex -> new MlWorkerException("ML worker unavailable", ex))
-                .onErrorMap(WebClientRequestException.class,
-                        ex -> new MlWorkerException("ML worker unavailable", ex, true))
-                .doOnError(ex -> log.warn("ML worker call failed: {} ({})",
-                        ex.getMessage(), ex.getClass().getSimpleName()))
-                .block();
-    }
-
-    /**
-     * Convenience for the file-scan path.
-     */
-    public MlReviewResponse reviewFile(String content, String language) {
-        return reviewFile(content, language, null);
-    }
-
+    /** Review a single file's contents (VS Code extension / GitHub Action flow). */
     public MlReviewResponse reviewFile(String content, String language, String filePath) {
-        return executeWithResilience(() -> reviewFileOnce(content, language, filePath));
+        return executeWithResilience(() -> post(MlReviewRequest.file(content, language, filePath), "file"));
     }
 
-    private MlReviewResponse reviewFileOnce(String content, String language, String filePath) {
-        MlReviewRequest body = MlReviewRequest.file(content, language, filePath);
+    private MlReviewResponse post(MlReviewRequest body, String inputKind) {
         return client.post()
                 .uri("/ml/review")
                 .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .bodyValue(body)
                 .retrieve()
+                // The worker's error body is never surfaced: FastAPI's 422 echoes the
+                // request ("input": <whole diff>), which would leak source code into
+                // logs, pull_requests.error_message, and API responses.
                 .onStatus(org.springframework.http.HttpStatusCode::is4xxClientError, resp ->
-                        resp.bodyToMono(String.class).defaultIfEmpty("")
-                                .flatMap(body2 -> Mono.error(new InvalidDiffException(
-                                        resp.statusCode().value(),
-                                        "ML worker rejected file: " + (body2.isBlank() ? resp.statusCode().toString() : body2)))))
+                        resp.releaseBody().then(Mono.error(rejected(inputKind, resp.statusCode().value()))))
                 .onStatus(org.springframework.http.HttpStatusCode::is5xxServerError, resp ->
                         Mono.error(upstreamFailure(resp.statusCode().value())))
                 .bodyToMono(MlReviewResponse.class)
@@ -176,8 +113,7 @@ public class MlWorkerService {
                         ex -> new MlWorkerException("ML worker timed out", ex))
                 .onErrorMap(WebClientResponseException.class,
                         ex -> ex.getStatusCode().is4xxClientError()
-                                ? new InvalidDiffException(ex.getStatusCode().value(),
-                                        "ML worker rejected file: " + ex.getStatusCode())
+                                ? rejected(inputKind, ex.getStatusCode().value())
                                 : upstreamFailure(ex.getStatusCode().value()))
                 .onErrorMap(java.net.ConnectException.class,
                         ex -> new MlWorkerException("ML worker unavailable", ex))
@@ -187,8 +123,8 @@ public class MlWorkerService {
                         ex -> new MlWorkerException("ML worker unavailable", ex))
                 .onErrorMap(WebClientRequestException.class,
                         ex -> new MlWorkerException("ML worker unavailable", ex, true))
-                .doOnError(ex -> log.warn("ML worker file scan failed: {} ({})",
-                        ex.getMessage(), ex.getClass().getSimpleName()))
+                .doOnError(ex -> log.warn("ML worker {} review failed: {} ({})",
+                        inputKind, ex.getMessage(), ex.getClass().getSimpleName()))
                 .block();
     }
 
@@ -216,6 +152,11 @@ public class MlWorkerService {
         return new MlWorkerException("ML worker unavailable: " + status, status, retryable);
     }
 
+    /** Status code and a fixed reason only — see {@link #post}. */
+    private static InvalidDiffException rejected(String inputKind, int status) {
+        return new InvalidDiffException(status, "ML worker rejected " + inputKind + ": HTTP " + status);
+    }
+
     private static void sleepBeforeRetry(int attempt) {
         long baseMillis = 100L << Math.min(attempt - 1, 4);
         long jitterMillis = ThreadLocalRandom.current().nextLong(50L, 151L);
@@ -228,48 +169,12 @@ public class MlWorkerService {
     }
 
     /**
-     * Lightweight health check. A fallback engine is healthy even when no
-     * learned model is loaded, so model availability is not a liveness gate.
-     */
-    @SuppressWarnings("unchecked")
-    public boolean isHealthy() {
-        try {
-            Map<String, Object> body = client.get()
-                    .uri("/ml/health")
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .onErrorResume(ex -> Mono.empty())
-                    .block(Duration.ofSeconds(3));
-            if (body == null) return false;
-            Object status = body.get("status");
-            return "healthy".equals(status) || "ok".equals(status);
-        } catch (Exception ex) {
-            log.debug("ML worker health check failed: {}", ex.getMessage());
-            return false;
-        }
-    }
-
-    public List<com.automatedcodereviewtool.dto.MlFinding> reviewFindings(String diff, String language) {
-        MlReviewResponse resp = review(diff, language);
-        return resp == null || resp.findings() == null ? List.of() : resp.findings();
-    }
-
-    // -- Test helpers (package-private) ----------------------------------
-
-    String getMlWorkerUrl() { return mlWorkerUrl; }
-
-    String getMlWorkerSecret() { return mlWorkerSecret; }
-
-    // -- Fallback scoring (used when worker omits the score field) -----
-
-    /**
-     * Compute a quality score from a finding list when the ML worker
-     * omitted one. Penalty weights match the canonical Python
-     * implementation (apps/ml-worker/app/scoring.py):
-     *   critical=20, major=10, minor=3, weighted by confidence.
-     * Formula: 100 - sum(weight * confidence), clamped to [0, 100],
-     * rounded to 2dp. See contracts/quality_score_cases.json for the
-     * shared fixture consumed by Python and Java tests.
+     * Quality score for a worker response: the worker's {@code qualityScore}
+     * clamped to [0, 100], or — if it was omitted — the same formula the
+     * worker uses ({@code compute_quality_score} in apps/ml-worker/app/model.py): 100 minus the sum of
+     * severity weight (critical=20, major=10, minor=3) × confidence,
+     * clamped to [0, 100] and rounded half-up to 2 dp. Both sides are
+     * checked against contracts/quality_score_cases.json.
      */
     public static BigDecimal computeQualityScore(MlReviewResponse response) {
         if (response == null) return BigDecimal.ZERO;

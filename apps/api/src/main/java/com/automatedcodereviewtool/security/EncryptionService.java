@@ -11,8 +11,6 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Base64;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * AES-256-GCM symmetric encryption for sensitive at-rest fields
@@ -33,17 +31,10 @@ public class EncryptionService {
     private static final String TRANSFORM = "AES/GCM/NoPadding";
     private static final int IV_LEN = 12;
     private static final int TAG_BITS = 128;
-    private static final Logger logger = LoggerFactory.getLogger(EncryptionService.class);
 
     private final String configuredKey;
     private SecretKey key;
     private final SecureRandom random = new SecureRandom();
-
-    @Value("${app.cookie-secure:true}")
-    private boolean cookieSecure;
-
-    @Value("${spring.profiles.active:}")
-    private String activeProfiles;
 
     public EncryptionService(@Value("${app.encryption.key}") String configuredKey) {
         this.configuredKey = configuredKey;
@@ -65,24 +56,6 @@ public class EncryptionService {
                     "app.encryption.key must decode to exactly 32 bytes for AES-256");
         }
         this.key = new SecretKeySpec(raw, "AES");
-    }
-
-    @PostConstruct
-    void validateCookieSecure() {
-        if (!cookieSecure) {
-            String profiles = activeProfiles;
-            if (profiles != null) {
-                for (String profile : profiles.split(",")) {
-                    String trimmed = profile.trim().toLowerCase();
-                    if (trimmed.equals("dev") || trimmed.equals("test")) {
-                        return;
-                    }
-                }
-            }
-            logger.warn(
-                    "COOKIE_SECURE is disabled in a non-dev profile. "
-                            + "Auth cookies will be sent over unencrypted HTTP.");
-        }
     }
 
     public String encrypt(String plaintext) {

@@ -12,7 +12,6 @@ import com.automatedcodereviewtool.security.AuthRateLimitFilter;
 import com.automatedcodereviewtool.security.JwtAuthFilter;
 import com.automatedcodereviewtool.security.JwtService;
 import com.automatedcodereviewtool.logging.SecurityEventLogger;
-import com.automatedcodereviewtool.monitoring.SecurityMonitor;
 import com.automatedcodereviewtool.service.ApiKeyService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
@@ -98,7 +97,6 @@ class ReviewControllerTest {
     // it as a pass-through alongside ApiKeyAuthFilter.
     @MockBean AuthRateLimitFilter authRateLimitFilter;
     @MockBean SecurityEventLogger securityEventLogger;
-    @MockBean SecurityMonitor securityMonitor;
 
     @org.junit.jupiter.api.BeforeEach
     void stubApiKeyFilter() throws Exception {
@@ -155,9 +153,9 @@ class ReviewControllerTest {
         Finding f2 = Finding.builder().id(findingId2).pullRequest(pr)
                 .antiPattern("MagicNumber").category("readability")
                 .severity("low").confidence(new BigDecimal("0.80"))
-                .explanation("42 is magic").build();
+                .explanation("42 is magic").status("dismissed").build();
 
-        when(pullRequestRepository.findById(prId)).thenReturn(Optional.of(pr));
+        when(pullRequestRepository.findWithRepoAndOwnerById(prId)).thenReturn(Optional.of(pr));
         when(findingRepository.findAllByPullRequestId(prId)).thenReturn(List.of(f1, f2));
 
         mockMvc.perform(get("/api/reviews/{prId}", prId)
@@ -170,13 +168,15 @@ class ReviewControllerTest {
                 .andExpect(jsonPath("$.findings").isArray())
                 .andExpect(jsonPath("$.findings.length()").value(2))
                 .andExpect(jsonPath("$.findings[0].antiPattern").value("GodClass"))
+                .andExpect(jsonPath("$.findings[0].status").value("open"))
+                .andExpect(jsonPath("$.findings[1].status").value("dismissed"))
                 .andExpect(jsonPath("$.repoFullName").value("o/r"))
                 .andExpect(jsonPath("$.repoOwnerLogin").value("test-user"));
     }
 
     @Test
     void getReview_returns404_whenPrNotFound() throws Exception {
-        when(pullRequestRepository.findById(any())).thenReturn(Optional.empty());
+        when(pullRequestRepository.findWithRepoAndOwnerById(any())).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/reviews/{prId}", UUID.randomUUID())
                         .accept(MediaType.APPLICATION_JSON))
@@ -196,7 +196,7 @@ class ReviewControllerTest {
                 .githubPrNumber(1).title("t").status("reviewed")
                 .build();
 
-        when(pullRequestRepository.findById(prId)).thenReturn(Optional.of(pr));
+        when(pullRequestRepository.findWithRepoAndOwnerById(prId)).thenReturn(Optional.of(pr));
         when(findingRepository.findAllByPullRequestId(prId)).thenReturn(List.of());
 
         mockMvc.perform(get("/api/reviews/{prId}", prId)

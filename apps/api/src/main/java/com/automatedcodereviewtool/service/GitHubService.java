@@ -43,9 +43,20 @@ public class GitHubService {
     private final WebClient apiClient;
     private final GitHubConfig config;
 
+    /** TCP connect timeout. */
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
+    /** Netty response timeout: maximum wait for response data after the request is sent. */
+    private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * Upper bound per call (connect + headers + full body). The Netty response
+     * timeout is a read-idle timer, so a slowly trickling body could otherwise
+     * hold a webhook or request thread indefinitely.
+     */
+    private static final Duration CALL_DEADLINE = Duration.ofSeconds(45);
+
     private static final HttpClient HTTP_CLIENT = HttpClient.create()
-            .responseTimeout(Duration.ofSeconds(30))
-            .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000);
+            .responseTimeout(RESPONSE_TIMEOUT)
+            .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) CONNECT_TIMEOUT.toMillis());
 
     public GitHubService(WebClient.Builder builder, GitHubConfig config) {
         WebClient.Builder timeoutBuilder = builder.clientConnector(new ReactorClientHttpConnector(HTTP_CLIENT));
@@ -84,7 +95,7 @@ public class GitHubService {
                         "redirect_uri", config.getOauthRedirectUri()))
                 .retrieve()
                 .bodyToMono(GitHubTokenResponse.class)
-                .block();
+                .block(CALL_DEADLINE);
     }
 
     public GitHubUserInfo getCurrentUser(String accessToken) {
@@ -93,7 +104,7 @@ public class GitHubService {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
                 .retrieve()
                 .bodyToMono(GitHubUserInfo.class)
-                .block();
+                .block(CALL_DEADLINE);
     }
 
     /**
@@ -114,7 +125,7 @@ public class GitHubService {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
                     .retrieve()
                     .bodyToMono(Map.class)
-                    .block();
+                    .block(CALL_DEADLINE);
         } catch (Exception ex) {
             // 404 / 401 / 403 — all manifest as a thrown exception from WebClient
             log.debug("getRepository failed for {}/{}: {}", owner, name, ex.getMessage());
@@ -133,7 +144,7 @@ public class GitHubService {
                 .header(HttpHeaders.ACCEPT, "application/vnd.github.v3.diff")
                 .retrieve()
                 .bodyToMono(String.class)
-                .block();
+                .block(CALL_DEADLINE);
     }
 
     /**
@@ -157,7 +168,7 @@ public class GitHubService {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(Map.class)
-                .block();
+                .block(CALL_DEADLINE);
         Object id = response == null ? null : response.get("id");
         return id instanceof Number n ? n.longValue() : null;
     }
@@ -169,7 +180,7 @@ public class GitHubService {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
                 .retrieve()
                 .toBodilessEntity()
-                .block();
+                .block(CALL_DEADLINE);
     }
 
     public void postPrComment(String accessToken, String repoFullName,
@@ -181,6 +192,6 @@ public class GitHubService {
                 .bodyValue(Map.of("body", body))
                 .retrieve()
                 .toBodilessEntity()
-                .block();
+                .block(CALL_DEADLINE);
     }
 }

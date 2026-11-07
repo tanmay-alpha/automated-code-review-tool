@@ -62,6 +62,8 @@ public class OutboxProcessor {
     }
 
     boolean processClaimedEvent(IngestionOutbox outbox) {
+        // The claim returned the incremented attempt_count: it is this lease's fencing token.
+        int attempt = outbox.getAttemptCount();
         try {
             JsonNode payload = objectMapper.readTree(outbox.getPayload());
             UUID prId = requiredUuid(payload, "pullRequestId");
@@ -76,47 +78,53 @@ public class OutboxProcessor {
             linkFindings(payload.get("findingIds"), samples);
             linkPredictionEvents(payload.get("predictionEventIds"), samples);
 
-            if (!claimService.complete(outbox.getId(), workerId)) {
-                log.warn("Lost outbox lease before completing event {}", outbox.getId());
+            if (!claimService.complete(outbox.getId(), workerId, attempt)) {
+                log.warn("Lost outbox lease before completing event {} attempt {}", outbox.getId(), attempt);
                 return false;
             }
             return true;
         } catch (Exception ex) {
             String safeError = safeError(ex);
-            int attempt = outbox.getAttemptCount() == null ? 1 : outbox.getAttemptCount();
             long baseSeconds = Math.min(600L, 10L << Math.min(attempt, 5));
             long jitter = ThreadLocalRandom.current().nextLong(Math.max(1L, baseSeconds / 4L));
             OffsetDateTime retryAt = OffsetDateTime.now().plusSeconds(baseSeconds + jitter);
-            claimService.fail(outbox.getId(), workerId, safeError, retryAt);
+            if (!claimService.fail(outbox.getId(), workerId, attempt, safeError, retryAt)) {
+                log.warn("Lost outbox lease before failing event {} attempt {}", outbox.getId(), attempt);
+            }
             log.error("Outbox event {} failed on attempt {}: {}", outbox.getId(), attempt, safeError);
             return false;
         }
     }
 
+    // A missing row means the PR was re-reviewed after this payload was read:
+    // ReviewService rewrites and re-queues the event with the new ids, so the
+    // stale reference is skipped here rather than failing the event.
     private void linkFindings(JsonNode ids, List<CodeSample> samples) {
         if (ids == null || !ids.isArray()) return;
         for (JsonNode node : ids) {
-            findingRepository.findById(UUID.fromString(node.asText())).ifPresent(finding -> {
+            UUID id = UUID.fromString(node.asText());
+            findingRepository.findById(id).ifPresentOrElse(finding -> {
                 CodeSample sample = matchingSample(samples, finding.getFilePath(), finding.getLineStart(), finding.getLineEnd());
                 if (sample != null) {
                     finding.setCodeSampleId(sample.getId());
                     findingRepository.save(finding);
                 }
-            });
+            }, () -> log.warn("Outbox references finding {} which no longer exists (superseded by a re-review)", id));
         }
     }
 
     private void linkPredictionEvents(JsonNode ids, List<CodeSample> samples) {
         if (ids == null || !ids.isArray()) return;
         for (JsonNode node : ids) {
-            predictionEventRepository.findById(UUID.fromString(node.asText())).ifPresent(event -> {
+            UUID id = UUID.fromString(node.asText());
+            predictionEventRepository.findById(id).ifPresentOrElse(event -> {
                 CodeSample sample = matchingSample(
                         samples, event.getFilePath(), event.getReportedLineStart(), event.getReportedLineEnd());
                 if (sample != null) {
                     event.setCodeSampleId(sample.getId());
                     predictionEventRepository.save(event);
                 }
-            });
+            }, () -> log.warn("Outbox references prediction event {} which no longer exists", id));
         }
     }
 

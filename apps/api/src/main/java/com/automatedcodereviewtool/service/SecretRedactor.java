@@ -62,14 +62,4 @@ public class SecretRedactor {
     public String version() {
         return CURRENT_VERSION;
     }
-
-    /**
-     * Test seam: exposes whether a string contains anything that would
-     * be flagged as a secret — used by the quality report to ensure
-     * no live credential escaped redaction.
-     */
-    public boolean containsLikelySecret(String text) {
-        if (text == null || text.isEmpty()) return false;
-        return ASSIGNMENT_PATTERN.matcher(text).find() || HIGH_ENTROPY.matcher(text).find();
-    }
 }

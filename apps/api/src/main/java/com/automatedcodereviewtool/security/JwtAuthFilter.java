@@ -1,7 +1,5 @@
 package com.automatedcodereviewtool.security;
 
-import com.automatedcodereviewtool.logging.SecurityEventLogger;
-import com.automatedcodereviewtool.security.JwtBlacklistService;
 import com.automatedcodereviewtool.entity.User;
 import com.automatedcodereviewtool.repository.UserRepository;
 import io.jsonwebtoken.Claims;
@@ -11,29 +9,38 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Authenticates dashboard requests from the {@code accessToken} cookie
+ * (or an {@code Authorization: Bearer <jwt>} header). Only access tokens
+ * that are not blacklisted (logged out) and whose user still exists are
+ * accepted; anything else leaves the request anonymous. If the blacklist
+ * cannot be checked (Redis down) the request gets 503.
+ */
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     public static final String ACCESS_TOKEN_COOKIE = "accessToken";
 
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
+
     private final JwtService jwtService;
     private final JwtBlacklistService jwtBlacklistService;
     private final UserRepository userRepository;
-
-    @Autowired
-    private SecurityEventLogger securityEventLogger;
 
     public JwtAuthFilter(JwtService jwtService,
                          JwtBlacklistService jwtBlacklistService,
@@ -48,13 +55,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                                     @NonNull HttpServletResponse response,
                                     @NonNull FilterChain chain)
             throws ServletException, IOException {
-
-        if ("POST".equals(request.getMethod()) && "/api/auth/logout".equals(request.getRequestURI())) {
-            String csrfHeader = request.getHeader("X-CSRF-Token");
-            if (csrfHeader == null || csrfHeader.isBlank()) {
-                securityEventLogger.logSecurityViolation("CSRF_PROTECTION", "Missing CSRF token", "unknown");
-            }
-        }
 
         String token = readAccessTokenCookie(request);
         if (token == null) {
@@ -72,10 +72,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     return;
                 }
 
-                // Check if token is blacklisted
+                // A token we cannot check against the logout blacklist is not
+                // trusted (see JwtBlacklistService for the Redis-outage policy).
                 String jti = claims.get(JwtService.CLAIM_JTI, String.class);
-                if (jwtBlacklistService.isBlacklisted(jti)) {
-                    // Token is blacklisted - clear context and reject
+                boolean revoked;
+                try {
+                    revoked = jwtBlacklistService.isBlacklisted(jti);
+                } catch (DataAccessException redisDown) {
+                    log.warn("Token revocation check unavailable: {}", redisDown.getMessage());
+                    writeServiceUnavailable(response);
+                    return;
+                }
+                if (revoked) {
                     SecurityContextHolder.clearContext();
                     chain.doFilter(request, response);
                     return;
@@ -109,6 +117,15 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         }
 
         chain.doFilter(request, response);
+    }
+
+    /** Same JSON shape as {@code GlobalExceptionHandler}. */
+    private static void writeServiceUnavailable(HttpServletResponse response) throws IOException {
+        response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+        response.setContentType("application/json");
+        response.getWriter().write("{\"error\":\"AUTH_UNAVAILABLE\","
+                + "\"message\":\"Session store unavailable; try again shortly\","
+                + "\"status\":503,\"timestamp\":\"" + Instant.now() + "\"}");
     }
 
     private static String readAccessTokenCookie(HttpServletRequest request) {

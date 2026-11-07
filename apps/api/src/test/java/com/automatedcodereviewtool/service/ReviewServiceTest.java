@@ -6,9 +6,11 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 import static com.automatedcodereviewtool.service.MlWorkerService.computeQualityScore;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -162,5 +164,67 @@ class ReviewServiceTest {
         );
         MlReviewResponse resp = new MlReviewResponse(findings, null, 0, 0, "fallback", "v1", "1.0.0");
         assertEquals(0, new BigDecimal("88.60").compareTo(computeQualityScore(resp)));
+    }
+
+    // ---- diff → (file, line) mapping ----
+
+    private static final String TWO_FILE_DIFF = """
+            diff --git a/src/a.py b/src/a.py
+            --- a/src/a.py
+            +++ b/src/a.py
+            @@ -8,3 +8,4 @@ def f():
+             context_a8 = 1
+            -removed = 2
+            +added_a9 = 3
+            +added_a10 = 4
+             context_a11 = 5
+            diff --git a/src/b.py b/src/b.py
+            --- a/src/b.py
+            +++ b/src/b.py
+            @@ -10,2 +10,2 @@ def g():
+            -old = 1
+            +added_b10 = 1
+             context_b11 = 2
+            """;
+
+    private static MlFinding finding(String file, Integer line) {
+        return new MlFinding(file, null, line, line, "SECURITY_HARDCODED_SECRET", "SECURITY",
+                "critical", new BigDecimal("0.9"), "x");
+    }
+
+    @Test
+    void newSideLines_areKeyedByFileAndNewLineNumber() {
+        Map<String, Map<Integer, String>> lines = ReviewService.newSideLinesByFile(TWO_FILE_DIFF);
+
+        assertEquals(Map.of(8, "context_a8 = 1", 9, "added_a9 = 3", 10, "added_a10 = 4",
+                11, "context_a11 = 5"), lines.get("src/a.py"));
+        assertEquals(Map.of(10, "added_b10 = 1", 11, "context_b11 = 2"), lines.get("src/b.py"));
+    }
+
+    @Test
+    void resolveFilePath_usesWorkerFilePath_whenSameLineExistsInSeveralFiles() {
+        Map<String, Map<Integer, String>> lines = ReviewService.newSideLinesByFile(TWO_FILE_DIFF);
+
+        // Line 10 exists in both files; the worker's filePath decides.
+        assertEquals("src/a.py", ReviewService.resolveFilePath(finding("src/a.py", 10), lines));
+        assertEquals("src/b.py", ReviewService.resolveFilePath(finding("src/b.py", 10), lines));
+    }
+
+    @Test
+    void resolveFilePath_acceptsContextLines_andRejectsLinesOutsideTheDiff() {
+        Map<String, Map<Integer, String>> lines = ReviewService.newSideLinesByFile(TWO_FILE_DIFF);
+
+        assertEquals("src/a.py", ReviewService.resolveFilePath(finding("src/a.py", 8), lines));
+        assertNull(ReviewService.resolveFilePath(finding("src/a.py", 50), lines));
+        assertNull(ReviewService.resolveFilePath(finding("src/missing.py", 9), lines));
+        assertNull(ReviewService.resolveFilePath(finding("src/a.py", null), lines));
+    }
+
+    @Test
+    void resolveFilePath_withoutWorkerPath_requiresAnUnambiguousLine() {
+        Map<String, Map<Integer, String>> lines = ReviewService.newSideLinesByFile(TWO_FILE_DIFF);
+
+        assertEquals("src/a.py", ReviewService.resolveFilePath(finding(null, 9), lines));
+        assertNull(ReviewService.resolveFilePath(finding(null, 10), lines));
     }
 }

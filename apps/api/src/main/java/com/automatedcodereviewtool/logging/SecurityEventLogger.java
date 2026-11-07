@@ -13,81 +13,21 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Logger for security-related events and authentication failures.
- *
- * <p>This component logs security events to a dedicated audit log file
- * for monitoring and compliance purposes.</p>
- *
- * <p>Log levels:</p>
- * <ul>
- *   <li>INFO - Successful authentication events</li>
- *   <li>WARN - Suspicious activities (multiple failed attempts)</li>
- *   <li>ERROR - Authentication failures and security violations</li>
- * </ul>
+ * Writes security events (rate limiting, rejected webhooks, oversized
+ * requests, logout token revocation) to the {@code SECURITY} logger,
+ * which logback-spring.xml routes to {@code logs/security-audit.log}.
  */
 @Component
 public class SecurityEventLogger {
 
     private static final Logger SECURITY_LOGGER = LoggerFactory.getLogger("SECURITY");
-    private static final Logger log = LoggerFactory.getLogger(SecurityEventLogger.class);
 
     /**
-     * Logs a successful authentication event.
+     * Logs access-token revocation on logout.
      *
-     * @param userId The authenticated user ID
-     * @param username The username/GitHub login
-     * @param method The authentication method (jwt, api-key, github)
-     */
-    public void logAuthenticationSuccess(UUID userId, String username, String method) {
-        Map<String, Object> event = createEvent("AUTH_SUCCESS");
-        event.put("userId", userId);
-        event.put("username", username);
-        event.put("method", method);
-        event.put("timestamp", Instant.now());
-
-        SECURITY_LOGGER.info("Authentication successful: {}", formatEvent(event));
-    }
-
-    /**
-     * Logs a JWT authentication failure.
-     *
-     * @param reason The failure reason (expired, invalid, missing)
-     * @param userAgent The user agent string
-     * @param ip The client IP address
-     */
-    public void logAuthFailure(String reason, String userAgent, String ip) {
-        Map<String, Object> event = createEvent("AUTH_FAILURE");
-        event.put("reason", reason);
-        event.put("userAgent", userAgent);
-        event.put("ip", ip);
-        event.put("timestamp", Instant.now());
-
-        SECURITY_LOGGER.warn("Authentication failed - {}: {}", reason, formatEvent(event));
-    }
-
-    /**
-     * Logs multiple failed authentication attempts from the same IP.
-     *
-     * @param ip The source IP address
-     * @param count The number of failed attempts
-     * @param timeframe The timeframe of the attempts (seconds)
-     */
-    public void logBruteForceAttempt(String ip, int count, int timeframe) {
-        Map<String, Object> event = createEvent("BRUTE_FORCE_ATTEMPT");
-        event.put("ip", ip);
-        event.put("attemptCount", count);
-        event.put("timeframe", timeframe);
-        event.put("timestamp", Instant.now());
-
-        SECURITY_LOGGER.warn("Potential brute force attack detected: {}", formatEvent(event));
-    }
-
-    /**
-     * Logs JWT blacklisting events.
-     *
-     * @param jti The JWT ID being blacklisted
-     * @param userId The user ID
-     * @param reason The reason for blacklisting (logout, token revoke)
+     * @param jti    the JWT ID being blacklisted
+     * @param userId the user ID
+     * @param reason why the token was revoked
      */
     public void logTokenBlacklisting(String jti, UUID userId, String reason) {
         Map<String, Object> event = createEvent("TOKEN_BLACKLIST");
@@ -102,10 +42,10 @@ public class SecurityEventLogger {
     /**
      * Logs API rate limiting events.
      *
-     * @param userId The user ID (or API key)
-     * @param ip The client IP
-     * @param endpoint The endpoint being accessed
-     * @param reason The rate limit reason (too many requests, circuit breaker open)
+     * @param userId   the user ID, or {@code null} for per-IP limits
+     * @param ip       the client IP
+     * @param endpoint the endpoint being accessed
+     * @param reason   the rate limit reason
      */
     public void logRateLimitEvent(Object userId, String ip, String endpoint, String reason) {
         Map<String, Object> event = createEvent("RATE_LIMIT");
@@ -119,12 +59,12 @@ public class SecurityEventLogger {
     }
 
     /**
-     * Logs webhook security events.
+     * Logs webhook signature verification results.
      *
-     * @param repoId The repository ID
-     * @param signatureStatus Whether the HMAC signature was valid
-     * @param ip The source IP
-     * @param action The GitHub webhook action
+     * @param repoId         the GitHub repository ID
+     * @param signatureValid whether the HMAC signature matched
+     * @param ip             the source IP
+     * @param action         the GitHub webhook action
      */
     public void logWebhookSecurityEvent(String repoId, boolean signatureValid, String ip, String action) {
         Map<String, Object> event = createEvent("WEBHOOK_SECURITY");
@@ -142,11 +82,11 @@ public class SecurityEventLogger {
     }
 
     /**
-     * Logs security policy violations.
+     * Logs a rejected request (e.g. oversized query/header/body).
      *
-     * @param violationType The type of violation (CSP, CORS, etc.)
-     * @param details Details about the violation
-     * @param ip The source IP
+     * @param violationType short machine-readable type
+     * @param details       human-readable details
+     * @param ip            the source IP
      */
     public void logSecurityViolation(String violationType, String details, String ip) {
         Map<String, Object> event = createEvent("SECURITY_VIOLATION");

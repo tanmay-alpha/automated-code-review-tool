@@ -6,8 +6,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import java.math.BigDecimal;
 
 /**
- * One finding returned by the ML worker. Mirrors the Pydantic model in
- * the worker's {@code ReviewResponse.findings} list.
+ * One finding returned by the ML worker. Mirrors {@code Finding} in
+ * apps/ml-worker/app/schemas.py. {@code lineStart}/{@code lineEnd} are
+ * new-file line numbers in {@code filePath}.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record MlFinding(

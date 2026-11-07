@@ -24,44 +24,22 @@ public interface FindingRepository extends JpaRepository<Finding, UUID> {
     int deleteAllByPullRequestId(@Param("prId") UUID pullRequestId);
 
     /**
-     * Returns the most-frequent anti-pattern across a repo's reviewed
-     * PRs. JPQL has no native "group by" with limit, so we return the
-     * top-K and let the service take the first row.
+     * Anti-pattern frequency across a repo's findings created since
+     * {@code since}, most frequent first. The caller takes the first row.
      */
     @Query("""
             SELECT f.antiPattern AS pattern, COUNT(f) AS cnt
             FROM Finding f
             WHERE f.pullRequest.repo = :repo
+              AND f.createdAt >= :since
             GROUP BY f.antiPattern
             ORDER BY COUNT(f) DESC
             """)
-    List<AntiPatternCount> findTopAntiPatterns(@Param("repo") Repository repo);
+    List<AntiPatternCount> findTopAntiPatterns(@Param("repo") Repository repo,
+                                               @Param("since") java.time.Instant since);
 
     interface AntiPatternCount {
         String getPattern();
         long getCnt();
     }
-
-    @Query("""
-            SELECT new com.automatedcodereviewtool.dto.FindingStats(
-                f.antiPattern, f.severity, COUNT(f)
-            )
-            FROM Finding f
-            WHERE f.pullRequest.repo.id = :repoId
-            GROUP BY f.antiPattern, f.severity
-            """)
-    List<com.automatedcodereviewtool.dto.FindingStats> aggregateByAntiPatternAndSeverity(@Param("repoId") UUID repoId);
-
-    @Query("""
-            SELECT new com.automatedcodereviewtool.dto.FindingTrendRow(
-                FUNCTION('DATE', f.pullRequest.createdAt), COUNT(f), f.severity
-            )
-            FROM Finding f
-            WHERE f.pullRequest.repo.id = :repoId
-              AND f.pullRequest.createdAt >= :since
-            GROUP BY FUNCTION('DATE', f.pullRequest.createdAt), f.severity
-            ORDER BY FUNCTION('DATE', f.pullRequest.createdAt) ASC
-            """)
-    List<com.automatedcodereviewtool.dto.FindingTrendRow> trendByDay(@Param("repoId") UUID repoId,
-                                                       @Param("since") java.time.Instant since);
 }

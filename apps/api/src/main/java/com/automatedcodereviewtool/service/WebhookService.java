@@ -64,8 +64,8 @@ public class WebhookService {
 
     /**
      * Persist delivery identity and the PR state in one short transaction.
-     * A false result means either the exact delivery or logical repo/PR/head
-     * review already exists.
+     * A false result means the repo is disconnected, or the exact delivery
+     * or logical repo/PR/head review already exists.
      */
     @Transactional
     public boolean receiveDelivery(String deliveryId, GitHubWebhookEvent event, long repoGithubId) {
@@ -76,6 +76,9 @@ public class WebhookService {
 
         Repository repo = repositoryRepository.findByGithubId(repoGithubId)
                 .orElseThrow(() -> new IllegalArgumentException("unknown repository"));
+        if (!repo.isActive()) {
+            return false;
+        }
         int inserted = processedWebhookRepository.insertReceived(
                 deliveryId,
                 repo.getId(),
@@ -113,37 +116,45 @@ public class WebhookService {
     /** Recovers work after process restarts or abandoned async tasks. */
     @Scheduled(fixedDelayString = "${app.webhook.recovery-delay-ms:15000}")
     public void processDurableBacklog() {
-        processedWebhookRepository.recoverStale(Instant.now().minus(PROCESSING_LEASE));
-        processedWebhookRepository.deadLetterExhausted();
+        Instant staleBefore = Instant.now().minus(PROCESSING_LEASE);
+        processedWebhookRepository.recoverStale(staleBefore);
+        processedWebhookRepository.deadLetterExhausted(staleBefore);
         for (String deliveryId : processedWebhookRepository.findEligibleDeliveryIds(10)) {
             processDelivery(deliveryId);
         }
     }
 
     void processDelivery(String deliveryId) {
-        if (processedWebhookRepository.claim(deliveryId) != 1) {
+        ProcessedWebhook delivery = processedWebhookRepository.findById(deliveryId).orElse(null);
+        if (delivery == null) {
             return;
         }
+        int observedAttempt = delivery.getAttemptCount();
+        if (processedWebhookRepository.claim(deliveryId, observedAttempt) != 1) {
+            return;
+        }
+        // Fencing token: every completion write matches only this attempt, so a
+        // worker whose lease expired can't overwrite a newer claim.
+        int attempt = observedAttempt + 1;
 
         try {
-            ProcessedWebhook delivery = processedWebhookRepository.findById(deliveryId)
-                    .orElseThrow(() -> new IllegalStateException("claimed delivery disappeared"));
             Repository repo = repositoryRepository.findWithOwnerById(delivery.getRepoId())
                     .orElseThrow(() -> new IllegalStateException("repository no longer exists"));
             PullRequestEntity pr = pullRequestRepository
                     .findByRepoAndGithubPrNumber(repo, delivery.getGithubPrNumber())
                     .orElseThrow(() -> new IllegalStateException("pull request state is missing"));
+            // The PR row was loaded in its own (now closed) session; point it at
+            // the fully loaded repo so the review can update it without a lazy proxy.
+            pr.setRepo(repo);
 
             if (!delivery.getHeadSha().equals(pr.getHeadSha())) {
-                processedWebhookRepository.markTerminal(
-                        deliveryId, "superseded", "A newer PR head is already scheduled");
+                finish(deliveryId, attempt, "superseded", "A newer PR head is already scheduled");
                 return;
             }
 
             User owner = repo.getOwner();
             if (owner == null || owner.getAccessToken() == null) {
-                processedWebhookRepository.markTerminal(
-                        deliveryId, "dead_letter", "Repository owner token is unavailable");
+                finish(deliveryId, attempt, "dead_letter", "Repository owner token is unavailable");
                 return;
             }
 
@@ -151,14 +162,18 @@ public class WebhookService {
             String diff = githubService.getFileDiff(token, repo.getFullName(), pr.getGithubPrNumber());
             ReviewResult result = reviewService.orchestrateReview(pr, diff);
             if (!result.success()) {
-                failDelivery(delivery, result.errorMessage());
+                if (result.retryable()) {
+                    failDelivery(deliveryId, attempt, result.errorMessage());
+                } else {
+                    finish(deliveryId, attempt, "dead_letter", secretRedactor.redact(result.errorMessage()));
+                }
                 return;
             }
 
             String warning = null;
             try {
                 String markdown = reviewService.formatGithubComment(
-                        result.findings(), result.qualityScore());
+                        result.findings(), result.qualityScore(), result.engine());
                 githubService.postPrComment(
                         token, repo.getFullName(), pr.getGithubPrNumber(), markdown);
             } catch (Exception ex) {
@@ -168,24 +183,32 @@ public class WebhookService {
                 warning = "Review persisted but GitHub comment failed: " + safeError(ex);
                 log.warn("{}", warning);
             }
-            processedWebhookRepository.markTerminal(deliveryId, "completed", warning);
+            finish(deliveryId, attempt, "completed", warning);
         } catch (Exception ex) {
-            ProcessedWebhook delivery = processedWebhookRepository.findById(deliveryId).orElse(null);
-            if (delivery != null) {
-                failDelivery(delivery, safeError(ex));
-            }
+            failDelivery(deliveryId, attempt, safeError(ex));
             log.error("Webhook delivery {} failed: {}", deliveryId, safeError(ex));
         }
     }
 
-    private void failDelivery(ProcessedWebhook delivery, String error) {
-        int attempt = Math.max(1, delivery.getAttemptCount());
+    private void finish(String deliveryId, int attempt, String status, String message) {
+        if (processedWebhookRepository.markTerminal(deliveryId, attempt, status, message) != 1) {
+            log.warn("Webhook delivery {} attempt {} lost its lease; '{}' result discarded",
+                    deliveryId, attempt, status);
+        }
+    }
+
+    private void failDelivery(String deliveryId, int attempt, String error) {
         long baseSeconds = Math.min(600L, 10L << Math.min(attempt, 5));
         long jitter = ThreadLocalRandom.current().nextLong(Math.max(1L, baseSeconds / 4L));
-        processedWebhookRepository.markFailed(
-                delivery.getDeliveryId(),
+        int updated = processedWebhookRepository.markFailed(
+                deliveryId,
+                attempt,
                 Instant.now().plusSeconds(baseSeconds + jitter),
                 secretRedactor.redact(error == null ? "review processing failed" : error));
+        if (updated != 1) {
+            log.warn("Webhook delivery {} attempt {} lost its lease; failure not recorded",
+                    deliveryId, attempt);
+        }
     }
 
     private String safeError(Exception ex) {
@@ -195,7 +218,7 @@ public class WebhookService {
     }
 
     static String buildComment(List<MlFinding> findings, BigDecimal quality,
-                               int critical, int major, int minor) {
+                               int critical, int major, int minor, String engine) {
         StringBuilder sb = new StringBuilder();
         sb.append("## 🔍 automated-code-review-tool Review\n\n");
         String emoji = quality == null ? "❓"
@@ -206,7 +229,7 @@ public class WebhookService {
                 .append("/100** ").append(emoji).append("\n\n");
 
         if (findings == null || findings.isEmpty()) {
-            sb.append("✅ No anti-patterns detected. Clean code!\n");
+            sb.append("✅ No anti-patterns detected.\n");
         } else {
             sb.append("### Findings (")
                     .append(critical).append(" critical · ")
@@ -236,7 +259,11 @@ public class WebhookService {
             }
         }
         sb.append("\n---\n");
-        sb.append("*Powered by [automated-code-review-tool](https://github.com/tanmay-alpha/automated-code-review-tool) — Semantic code review engine*\n");
+        sb.append("*Posted by [automated-code-review-tool](https://github.com/tanmay-alpha/automated-code-review-tool)");
+        if (engine != null && !engine.isBlank()) {
+            sb.append(" · detector: ").append("fallback".equals(engine) ? "rule-based" : engine);
+        }
+        sb.append("*\n");
         return sb.toString();
     }
 

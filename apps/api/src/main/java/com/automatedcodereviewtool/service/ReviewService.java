@@ -1,8 +1,10 @@
 package com.automatedcodereviewtool.service;
 
+import com.automatedcodereviewtool.diff.HunkParser;
 import com.automatedcodereviewtool.dto.MlFinding;
 import com.automatedcodereviewtool.dto.MlReviewResponse;
 import com.automatedcodereviewtool.dto.ReviewResult;
+import com.automatedcodereviewtool.entity.AntiPattern;
 import com.automatedcodereviewtool.entity.CodeSample;
 import com.automatedcodereviewtool.entity.Finding;
 import com.automatedcodereviewtool.entity.IngestionOutbox;
@@ -10,6 +12,7 @@ import com.automatedcodereviewtool.entity.PredictionEvent;
 import com.automatedcodereviewtool.entity.PullRequestEntity;
 import com.automatedcodereviewtool.entity.QualityMetric;
 import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.exception.InvalidDiffException;
 import com.automatedcodereviewtool.exception.MlWorkerException;
 import com.automatedcodereviewtool.repository.FindingRepository;
 import com.automatedcodereviewtool.repository.IngestionOutboxRepository;
@@ -21,6 +24,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -31,9 +35,13 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * Orchestrates a single review: call ML worker → persist findings →
@@ -48,11 +56,16 @@ public class ReviewService {
 
     private static final Logger log = LoggerFactory.getLogger(ReviewService.class);
 
-    private static final Pattern HUNK_HEADER_RE = Pattern.compile(
-            "^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@");
-    private static final Pattern GIT_HEADER_RE = Pattern.compile(
-            "^diff --git a/.+? b/(.+)$");
     private static final String OUTBOX_EVENT_TYPE = "DATASET_CAPTURE_REQUESTED";
+
+    /**
+     * Largest diff (in chars) sent to the ML worker. Bigger diffs fail the
+     * PR up front with a clear message instead of a worker 4xx.
+     */
+    static final int MAX_DIFF_CHARS = 200_000;
+    /** Upper bound for an error message stored on the PR row. */
+    private static final int MAX_ERROR_CHARS = 2000;
+    private static final java.util.Set<String> SEVERITIES = java.util.Set.of("critical", "major", "minor");
 
     private final MlWorkerService mlWorkerService;
     private final FindingRepository findingRepository;
@@ -64,6 +77,7 @@ public class ReviewService {
     private final PredictionEventRepository predictionEventRepository;
     private final ObjectMapper objectMapper;
     private final SecretRedactor secretRedactor;
+    private final TaxonomyService taxonomyService;
     private final TransactionTemplate transactionTemplate;
 
     public ReviewService(MlWorkerService mlWorkerService,
@@ -76,6 +90,7 @@ public class ReviewService {
                          PredictionEventRepository predictionEventRepository,
                          ObjectMapper objectMapper,
                          SecretRedactor secretRedactor,
+                         TaxonomyService taxonomyService,
                          PlatformTransactionManager transactionManager) {
         this.mlWorkerService = mlWorkerService;
         this.findingRepository = findingRepository;
@@ -87,15 +102,16 @@ public class ReviewService {
         this.predictionEventRepository = predictionEventRepository;
         this.objectMapper = objectMapper;
         this.secretRedactor = secretRedactor;
+        this.taxonomyService = taxonomyService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     /**
      * Full review pipeline for a PR.
      *
-     * <p>All detector output is recorded — persisted findings AND rejected
-     * predictions. Unlocalized predictions become rejected events, not
-     * silently dropped findings.</p>
+     * <p>Every worker prediction is recorded as a prediction event. Those
+     * that can be located on a new-side line of the diff become findings;
+     * the rest are stored as rejected events instead of being dropped.</p>
      *
      * <p>The worker call runs without a database transaction. Persistence of
      * findings, redacted samples, and their outbox references is atomic.</p>
@@ -105,74 +121,112 @@ public class ReviewService {
             diff = "";
         }
 
+        if (diff.length() > MAX_DIFF_CHARS) {
+            String message = "Diff too large to review (" + diff.length()
+                    + " characters; limit " + MAX_DIFF_CHARS + ")";
+            log.warn("PR #{}: {}", pr.getGithubPrNumber(), message);
+            return failReview(pr, message, false);
+        }
+
         String language = MlWorkerService.detectLanguage(diff);
         log.info("Reviewing PR #{} — detected language: {}", pr.getGithubPrNumber(), language);
 
         MlReviewResponse mlResponse;
         try {
             mlResponse = mlWorkerService.review(diff, language);
-        } catch (MlWorkerException ex) {
-            log.error("ML worker failed for PR #{}: {}", pr.getGithubPrNumber(), ex.getMessage());
-            pr.setStatus(WebhookService.STATUS_FAILED);
-            pr.setErrorMessage(ex.getMessage());
-            pullRequestRepository.save(pr);
-            return ReviewResult.empty(ex.getMessage());
+        } catch (MlWorkerException | InvalidDiffException ex) {
+            // InvalidDiffException: the worker rejected the input with a 4xx —
+            // retrying the same diff cannot help.
+            String safeError = safeError(ex.getMessage(), "ML worker call failed");
+            log.error("ML worker failed for PR #{}: {}", pr.getGithubPrNumber(), safeError);
+            return failReview(pr, safeError, !(ex instanceof InvalidDiffException));
         }
 
-        // Parse the diff to extract file paths and code snippets for findings.
-        DiffParseResult parsed = parseDiff(diff);
+        Map<String, Map<Integer, String>> newLines = newSideLinesByFile(diff);
         String reviewDiff = diff;
 
         try {
-            ReviewResult persisted = transactionTemplate.execute(ignored -> {
+            ReviewResult persisted = transactionTemplate.execute(ignored ->
+                    persistReview(pr, reviewDiff, mlResponse, newLines));
+            return Objects.requireNonNull(persisted, "review transaction returned no result");
+        } catch (RuntimeException ex) {
+            String safeError = safeError(ex.getMessage(), "review persistence failed");
+            // A constraint violation is deterministic for this worker response;
+            // retrying would only fail the same way.
+            boolean retryable = !isConstraintViolation(ex);
+            log.error("Review persistence failed for PR #{} (retryable={}): {}",
+                    pr.getGithubPrNumber(), retryable, safeError);
+            return failReview(pr, safeError, retryable);
+        }
+    }
 
-        // Build a set of known files for unmapped-file detection.
-        Set<String> knownFiles = new HashSet<>(parsed.fileOrder());
+    private ReviewResult failReview(PullRequestEntity pr, String safeError, boolean retryable) {
+        pr.setStatus(WebhookService.STATUS_FAILED);
+        pr.setErrorMessage(safeError);
+        pullRequestRepository.save(pr);
+        return ReviewResult.failed(safeError, retryable);
+    }
 
-        // -- persist findings (batch delete + save) ------------------------
+    /** Redacted and bounded: this text is stored on the PR row, logged, and returned by the API. */
+    private String safeError(String message, String fallback) {
+        String safe = secretRedactor.redact(message == null || message.isBlank() ? fallback : message);
+        return safe.length() <= MAX_ERROR_CHARS ? safe : safe.substring(0, MAX_ERROR_CHARS);
+    }
+
+    private static boolean isConstraintViolation(Throwable ex) {
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof DataIntegrityViolationException
+                    || t instanceof org.hibernate.exception.ConstraintViolationException
+                    || t instanceof java.sql.SQLIntegrityConstraintViolationException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    private ReviewResult persistReview(PullRequestEntity pr,
+                                       String diff,
+                                       MlReviewResponse mlResponse,
+                                       Map<String, Map<Integer, String>> newLines) {
+        // A re-review (new head SHA) replaces the previous findings.
         findingRepository.deleteAllByPullRequestId(pr.getId());
 
         List<Finding> saved = new ArrayList<>();
-        List<PredictionEvent> rejectedEvents = new ArrayList<>();
         List<PredictionEvent> predictionEvents = new ArrayList<>();
+        int rejected = 0;
         BigDecimal score = MlWorkerService.computeQualityScore(mlResponse);
 
         if (mlResponse.findings() != null) {
             for (MlFinding ml : mlResponse.findings()) {
-                // Record every prediction as an event (preserved for ML debugging).
-                PredictionEvent event = buildPredictionEvent(pr, ml, mlResponse);
-                String rejection = classifyRejection(ml, knownFiles, parsed);
+                AntiPattern taxonomy = taxonomyService.find(ml.antiPattern()).orElse(null);
+                PredictionEvent event = buildPredictionEvent(pr, ml, taxonomy, mlResponse);
+                String resolvedPath = resolveFilePath(ml, newLines);
+                String rejection = classifyRejection(ml, taxonomy, resolvedPath);
                 if (rejection != null) {
                     event.setStatus(rejection);
                     event.setRejectionReason(rejection.replace("rejected_", ""));
-                    rejectedEvents.add(event);
-                    log.warn("Rejected prediction: antiPattern={} reason={}", ml.antiPattern(), rejection);
+                    rejected++;
+                    log.warn("Rejected prediction: antiPattern={} file={} line={} reason={}",
+                            ml.antiPattern(), ml.filePath(), ml.lineStart(), rejection);
                 } else {
-                    String resolvedPath = resolveFilePath(ml, parsed);
-                    if (resolvedPath == null) {
-                        event.setStatus("rejected_unmapped_file");
-                        event.setRejectionReason("unmapped_file");
-                        rejectedEvents.add(event);
-                        log.warn("Dropping ML finding {} — line {} does not match any file in the diff",
-                                ml.antiPattern(), ml.lineStart());
-                        predictionEvents.add(predictionEventRepository.save(event));
-                        continue;
-                    }
                     event.setStatus("persisted");
-                    BigDecimal rawConfidence = ml.confidence();
-                    BigDecimal clampedConfidence = (rawConfidence == null ? BigDecimal.ZERO
-                            : rawConfidence.max(BigDecimal.ZERO).min(BigDecimal.ONE));
+                    // Category and severity come from the canonical taxonomy row, so a
+                    // worker value outside the findings CHECK constraints cannot fail
+                    // (and roll back) the whole review.
                     Finding f = Finding.builder()
                             .pullRequest(pr)
                             .filePath(resolvedPath)
                             .lineStart(ml.lineStart())
                             .lineEnd(ml.lineEnd())
-                            .antiPattern(ml.antiPattern() == null ? "UNKNOWN" : ml.antiPattern())
-                            .category(ml.category() == null ? "unknown" : ml.category())
-                            .severity(ml.severity() == null ? "minor" : ml.severity())
-                            .confidence(clampedConfidence)
+                            .antiPattern(taxonomy.getId())
+                            .category(taxonomy.getCategory())
+                            .severity(taxonomy.getDefaultSeverity())
+                            .confidence(clampConfidence(ml.confidence()))
                             .explanation(ml.explanation())
-                            .codeSnippet(extractCodeSnippet(ml, parsed))
+                            .codeSnippet(extractCodeSnippet(ml, newLines.get(resolvedPath)))
                             .engine(mlResponse.engine())
                             .modelVersion(mlResponse.modelVersion())
                             .taxonomyVersion(mlResponse.taxonomyVersion())
@@ -186,112 +240,120 @@ public class ReviewService {
         // Persist redacted samples before the outbox. The event contains only
         // safe row references, never source text or a full diff.
         List<CodeSample> samples = reviewSampleBridge.persistHunksForReview(
-                pr.getRepo().getId(), pr.getId(), pr.getHeadSha(), reviewDiff);
+                pr.getRepo().getId(), pr.getId(), pr.getHeadSha(), diff);
 
-        // -- outbox: decouple downstream association -----------------------
-        IngestionOutbox outbox = new IngestionOutbox();
-        outbox.setEventType(OUTBOX_EVENT_TYPE);
-        outbox.setAggregateType("pull_request");
-        outbox.setAggregateId(pr.getId());
-        outbox.setDeduplicationKey(OUTBOX_EVENT_TYPE + ":" + pr.getId() + ":" + pr.getHeadSha());
+        // One outbox row per (PR, head). A re-review of the same head deleted the
+        // findings the old payload referenced, so the row is rewritten with the
+        // new references and re-queued; a worker still holding the old lease
+        // loses it (locked_by is cleared) and its completion is discarded.
+        String deduplicationKey = OUTBOX_EVENT_TYPE + ":" + pr.getId() + ":" + pr.getHeadSha();
+        OffsetDateTime now = OffsetDateTime.now();
+        IngestionOutbox outbox = outboxRepository.findByDeduplicationKey(deduplicationKey)
+                .orElseGet(() -> {
+                    IngestionOutbox created = new IngestionOutbox();
+                    created.setEventType(OUTBOX_EVENT_TYPE);
+                    created.setAggregateType("pull_request");
+                    created.setAggregateId(pr.getId());
+                    created.setDeduplicationKey(deduplicationKey);
+                    created.setMaxAttempts(5);
+                    created.setCreatedAt(now);
+                    return created;
+                });
         outbox.setPayload(buildOutboxPayload(pr, saved, predictionEvents, samples));
         outbox.setStatus("pending");
         outbox.setAttemptCount(0);
-        outbox.setMaxAttempts(5);
-        outbox.setAvailableAt(OffsetDateTime.now());
-        outbox.setCreatedAt(OffsetDateTime.now());
-        outbox.setUpdatedAt(OffsetDateTime.now());
-        IngestionOutbox durableEvent = outboxRepository
-                .findByDeduplicationKey(outbox.getDeduplicationKey())
-                .orElseGet(() -> outboxRepository.save(outbox));
-        log.info("Ensured outbox event {} for PR #{}", durableEvent.getId(), pr.getGithubPrNumber());
+        outbox.setAvailableAt(now);
+        outbox.setLockedAt(null);
+        outbox.setLockedBy(null);
+        outbox.setProcessedAt(null);
+        outbox.setDeadLetteredAt(null);
+        outbox.setLastError(null);
+        outbox.setUpdatedAt(now);
+        IngestionOutbox durableEvent = outboxRepository.save(outbox);
+        log.info("Queued outbox event {} for PR #{}", durableEvent.getId(), pr.getGithubPrNumber());
 
-        // -- update PR ----------------------------------------------------
         pr.setQualityScore(score);
         pr.setStatus(WebhookService.STATUS_REVIEWED);
         pr.setErrorMessage(null);
         pr.setReviewedAt(Instant.now());
         pullRequestRepository.save(pr);
 
-        // -- update repository rolling quality score -----------------------
         updateRepositoryQualityScore(pr.getRepo(), score);
-
-        // -- quality metric ------------------------------------------------
         updateQualityMetric(pr.getRepo(), score, saved);
 
         log.info("PR #{} reviewed — score={}, findings={}, rejected={}",
-                pr.getGithubPrNumber(), score, saved.size(), rejectedEvents.size());
-                return ReviewResult.of(pr, saved, score);
-            });
-            return Objects.requireNonNull(persisted, "review transaction returned no result");
-        } catch (RuntimeException ex) {
-            String message = ex.getMessage() == null ? "review persistence failed" : ex.getMessage();
-            String safeError = secretRedactor.redact(message);
-            log.error("Review persistence failed for PR #{}: {}", pr.getGithubPrNumber(), safeError);
-            pr.setStatus(WebhookService.STATUS_FAILED);
-            pr.setErrorMessage(safeError);
-            pullRequestRepository.save(pr);
-            return ReviewResult.empty(safeError);
-        }
+                pr.getGithubPrNumber(), score, saved.size(), rejected);
+        return ReviewResult.of(pr, saved, score, mlResponse.engine());
     }
 
     // -----------------------------------------------------------------
     // Rejected prediction classification
     // -----------------------------------------------------------------
 
-    private String classifyRejection(MlFinding ml, Set<String> knownFiles, DiffParseResult parsed) {
-        if (ml == null) return "rejected_invalid_line";
-
-        String antiPattern = ml.antiPattern();
-        if (antiPattern == null || antiPattern.isBlank() || "UNKNOWN".equals(antiPattern.toUpperCase())) {
+    private static String classifyRejection(MlFinding ml, AntiPattern taxonomy, String resolvedPath) {
+        if (taxonomy == null) {
             return "rejected_unknown_taxonomy";
         }
-
         BigDecimal conf = ml.confidence();
         if (conf != null && (conf.compareTo(BigDecimal.ZERO) < 0 || conf.compareTo(BigDecimal.ONE) > 0)) {
             return "rejected_invalid_confidence";
         }
-
-        if (ml.lineStart() != null && !knownFiles.isEmpty()) {
-            String resolved = resolveFilePath(ml, parsed);
-            if (resolved == null) {
-                return "rejected_unmapped_file";
-            }
+        if (resolvedPath == null) {
+            return "rejected_unmapped_file";
         }
+        return null;
+    }
 
-        return null; // No rejection — this prediction is valid.
+    private static String truncate(String value, int max) {
+        return value.length() <= max ? value : value.substring(0, max);
+    }
+
+    private static BigDecimal clampConfidence(BigDecimal confidence) {
+        return confidence == null ? BigDecimal.ZERO
+                : confidence.max(BigDecimal.ZERO).min(BigDecimal.ONE);
     }
 
     // -----------------------------------------------------------------
     // Prediction event builder
     // -----------------------------------------------------------------
 
-    private PredictionEvent buildPredictionEvent(PullRequestEntity pr, MlFinding ml, MlReviewResponse response) {
+    /**
+     * Known patterns take category/severity from the taxonomy row. Unknown
+     * ones keep the worker's values, bounded to the column sizes and the
+     * severity CHECK constraint, so the rejected event itself always persists.
+     */
+    private PredictionEvent buildPredictionEvent(PullRequestEntity pr, MlFinding ml,
+                                                 AntiPattern taxonomy, MlReviewResponse response) {
         PredictionEvent event = new PredictionEvent();
         event.setPullRequestId(pr.getId());
         event.setFilePath(ml.filePath());
         event.setReportedLineStart(ml.lineStart());
         event.setReportedLineEnd(ml.lineEnd());
-        event.setAntiPatternId(ml.antiPattern() == null ? "UNKNOWN" : ml.antiPattern());
-        event.setCategory(ml.category() == null ? "unknown" : ml.category());
-        event.setSeverity(ml.severity() == null ? "minor" : ml.severity());
-        BigDecimal conf = ml.confidence() == null ? BigDecimal.ZERO
-                : ml.confidence().max(BigDecimal.ZERO).min(BigDecimal.ONE);
-        event.setConfidence(conf);
+        if (taxonomy != null) {
+            event.setAntiPatternId(taxonomy.getId());
+            event.setCategory(taxonomy.getCategory());
+            event.setSeverity(taxonomy.getDefaultSeverity());
+        } else {
+            event.setAntiPatternId(truncate(ml.antiPattern() == null || ml.antiPattern().isBlank()
+                    ? "UNKNOWN" : ml.antiPattern(), 80));
+            event.setCategory(truncate(ml.category() == null ? "unknown" : ml.category(), 30));
+            String severity = ml.severity() == null ? "minor" : ml.severity().toLowerCase(Locale.ROOT);
+            event.setSeverity(SEVERITIES.contains(severity) ? severity : "minor");
+        }
+        event.setConfidence(clampConfidence(ml.confidence()));
         event.setEngine(response.engine());
         event.setModelVersion(response.modelVersion());
         event.setTaxonomyVersion(response.taxonomyVersion());
-        event.setStatus("persisted"); // Default; may be overwritten.
-        event.setRawMetadata(buildSafeMetadata(ml, response));
+        event.setRawMetadata(buildSafeMetadata(response));
         event.setCreatedAt(OffsetDateTime.now());
         return event;
     }
 
     /**
-     * Build metadata JSON with no raw source content — only structural
-     * information for ML debugging (e.g., window indices, scanner flags).
+     * Metadata JSON with no source content — only which detector produced
+     * the prediction and how long the worker took.
      */
-    private String buildSafeMetadata(MlFinding ml, MlReviewResponse response) {
+    private String buildSafeMetadata(MlReviewResponse response) {
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("engine", response.engine());
         meta.put("model_version", response.modelVersion());
@@ -329,72 +391,69 @@ public class ReviewService {
     }
 
     // -----------------------------------------------------------------
-    // Diff parsing — maps line numbers to file paths and extracts snippets
+    // Diff mapping — locate findings on new-side lines of the diff
     // -----------------------------------------------------------------
 
-    record DiffParseResult(
-            Map<Integer, String> lineToFile,
-            Map<Integer, String> lineToText,
-            List<String> fileOrder
-    ) {}
-
-    private DiffParseResult parseDiff(String diff) {
-        Map<Integer, String> lineToFile = new HashMap<>();
-        Map<Integer, String> lineToText = new HashMap<>();
-        List<String> fileOrder = new ArrayList<>();
-        Set<String> seenFiles = new LinkedHashSet<>();
-
-        String currentFile = "unknown";
-        int currentLine = 0;
-
-        for (String rawLine : diff.split("\n")) {
-            String line = rawLine;
-
-            Matcher gitMatcher = GIT_HEADER_RE.matcher(line);
-            if (gitMatcher.find()) {
-                currentFile = gitMatcher.group(1);
-                seenFiles.add(currentFile);
-                continue;
-            }
-
-            Matcher hunkMatcher = HUNK_HEADER_RE.matcher(line);
-            if (hunkMatcher.find()) {
-                currentLine = Integer.parseInt(hunkMatcher.group(2));
-                continue;
-            }
-
-            if (line.startsWith("+") && !line.startsWith("+++")) {
-                lineToFile.put(currentLine, currentFile);
-                lineToText.put(currentLine, line.substring(1));
-                currentLine++;
-            } else if (line.startsWith("-") && !line.startsWith("---")) {
-                // Removed lines don't advance the new file line number
-            } else if (!line.startsWith("@@") && !line.startsWith("diff ")) {
-                currentLine++;
+    /**
+     * New-file line number → line text, per file path, for every added or
+     * context line in the diff. The ML worker reports findings as
+     * ({@code filePath}, new-file {@code lineStart}), so both keys are
+     * needed: the same line number usually exists in several files.
+     */
+    static Map<String, Map<Integer, String>> newSideLinesByFile(String diff) {
+        Map<String, Map<Integer, String>> byFile = new LinkedHashMap<>();
+        for (HunkParser.FileDiff file : HunkParser.parse(diff).files()) {
+            Map<Integer, String> lines = byFile.computeIfAbsent(file.newPath(), k -> new HashMap<>());
+            for (HunkParser.FileHunk hunk : file.hunks()) {
+                String[] raw = hunk.rawHunk().split("\n", -1);
+                int lineNo = hunk.newStart();
+                // raw[0] is the "@@ ... @@" header; the rest are body lines.
+                for (int i = 1; i < raw.length; i++) {
+                    String line = raw[i];
+                    if (line.startsWith("-") || line.startsWith("\\")) {
+                        continue; // removed line or "\ No newline at end of file"
+                    }
+                    boolean prefixed = line.startsWith("+") || line.startsWith(" ");
+                    lines.put(lineNo++, prefixed ? line.substring(1) : line);
+                }
             }
         }
-
-        fileOrder.addAll(seenFiles);
-        return new DiffParseResult(lineToFile, lineToText, fileOrder);
+        return byFile;
     }
 
-    private String resolveFilePath(MlFinding ml, DiffParseResult parsed) {
+    /**
+     * The file a prediction belongs to, or {@code null} when it cannot be
+     * placed on a new-side line of the diff. Without a worker-supplied path
+     * the line must match exactly one file.
+     */
+    static String resolveFilePath(MlFinding ml, Map<String, Map<Integer, String>> newLines) {
         if (ml.lineStart() == null) {
             return null;
         }
-        return parsed.lineToFile().get(ml.lineStart());
+        if (ml.filePath() != null) {
+            Map<Integer, String> lines = newLines.get(ml.filePath());
+            return lines != null && lines.containsKey(ml.lineStart()) ? ml.filePath() : null;
+        }
+        String match = null;
+        for (Map.Entry<String, Map<Integer, String>> file : newLines.entrySet()) {
+            if (file.getValue().containsKey(ml.lineStart())) {
+                if (match != null) {
+                    return null;
+                }
+                match = file.getKey();
+            }
+        }
+        return match;
     }
 
-    private String extractCodeSnippet(MlFinding ml, DiffParseResult parsed) {
-        if (ml.lineStart() == null) {
-            return null;
-        }
+    /** The finding's lines plus up to two lines of surrounding context. */
+    private static String extractCodeSnippet(MlFinding ml, Map<Integer, String> fileLines) {
         int start = ml.lineStart();
         int end = ml.lineEnd() != null ? ml.lineEnd() : start;
 
         StringBuilder sb = new StringBuilder();
         for (int line = Math.max(1, start - 2); line <= end + 2; line++) {
-            String text = parsed.lineToText().get(line);
+            String text = fileLines.get(line);
             if (text != null) {
                 sb.append(text).append("\n");
             }
@@ -407,7 +466,7 @@ public class ReviewService {
     // GitHub comment markdown
     // -----------------------------------------------------------------
 
-    String formatGithubComment(List<Finding> findings, BigDecimal score) {
+    String formatGithubComment(List<Finding> findings, BigDecimal score, String engine) {
         int critical = 0, major = 0, minor = 0;
         for (Finding f : findings) {
             String sev = f.getSeverity() == null ? "minor" : f.getSeverity().toLowerCase(Locale.ROOT);
@@ -416,7 +475,7 @@ public class ReviewService {
             else minor++;
         }
         return WebhookService.buildComment(findings.stream()
-                        .map(f -> new com.automatedcodereviewtool.dto.MlFinding(
+                        .map(f -> new MlFinding(
                                 f.getFilePath(),
                                 null,
                                 f.getLineStart(),
@@ -427,7 +486,7 @@ public class ReviewService {
                                 f.getConfidence(),
                                 f.getExplanation()))
                         .toList(),
-                score, critical, major, minor);
+                score, critical, major, minor, engine);
     }
 
     // -----------------------------------------------------------------

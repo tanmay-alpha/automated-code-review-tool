@@ -7,6 +7,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -73,6 +75,8 @@ public class PredictionEvent {
     @Column(name = "rejection_reason", length = 100)
     private String rejectionReason;
 
+    // Bound as JSON so Postgres accepts it for the jsonb column (a varchar bind is rejected).
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "raw_metadata", columnDefinition = "JSONB")
     private String rawMetadata;
 

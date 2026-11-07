@@ -11,9 +11,9 @@ RUN --mount=type=cache,target=/root/.m2 \
 # Copy shared contracts and API source code
 COPY contracts /workspace/contracts
 COPY apps/api/src ./src
+# Tests run in CI (ci-api.yml) before the image is built.
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -B -ntp -Dmaven.wagon.http.retryHandler.count=5 \
-    -DskipTests=false -DexcludedGroups=postgres package
+    mvn -B -ntp -Dmaven.wagon.http.retryHandler.count=5 -DskipTests package
 
 # Runtime stage — minimal JRE image
 FROM eclipse-temurin:21-jre-alpine
@@ -37,7 +37,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=5 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/actuator/health || exit 1
 
-# Production-ready JVM settings
+# JVM settings: G1 GC, heap sized from the container memory limit
 ENV JAVA_OPTS="-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
 
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]

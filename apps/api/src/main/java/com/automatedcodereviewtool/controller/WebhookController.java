@@ -1,30 +1,31 @@
 package com.automatedcodereviewtool.controller;
 
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
+import com.automatedcodereviewtool.security.RequestSizeLimitFilter;
 import com.automatedcodereviewtool.service.WebhookService;
 import com.automatedcodereviewtool.webhook.GitHubWebhookEvent;
 import com.automatedcodereviewtool.webhook.HmacVerificationException;
-import com.automatedcodereviewtool.logging.SecurityEventLogger;
 import com.automatedcodereviewtool.webhook.HmacVerifier;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
 import java.util.Set;
 
 /**
  * Endpoint that receives GitHub {@code pull_request} webhooks.
  *
- * <p>Forged signatures are rejected and durability failures return 503 so
- * GitHub can redeliver. Pings and uninteresting actions return 200.</p>
+ * <p>Forged signatures get 400, durability failures 503 so GitHub can
+ * redeliver. Pings, other events, other actions and repos we don't know
+ * (or that were disconnected) get 200 and are ignored.</p>
  */
 @RestController
 @RequestMapping("/api/webhook")
@@ -32,6 +33,7 @@ public class WebhookController {
 
     private static final Logger log = LoggerFactory.getLogger(WebhookController.class);
     private static final String EVENT_PULL_REQUEST = "pull_request";
+    private static final int MAX_PAYLOAD_BYTES = 1_048_576;
 
     private static final Set<String> PROCESSED_ACTIONS =
             Set.of("opened", "synchronize", "reopened");
@@ -39,16 +41,16 @@ public class WebhookController {
     private final HmacVerifier hmacVerifier;
     private final WebhookService webhookService;
     private final ObjectMapper objectMapper;
-
-    @Autowired
-    private SecurityEventLogger securityEventLogger;
+    private final SecurityEventLogger securityEventLogger;
 
     public WebhookController(HmacVerifier hmacVerifier,
                              WebhookService webhookService,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             SecurityEventLogger securityEventLogger) {
         this.hmacVerifier = hmacVerifier;
         this.webhookService = webhookService;
         this.objectMapper = objectMapper;
+        this.securityEventLogger = securityEventLogger;
     }
 
     @PostMapping("/github")
@@ -56,12 +58,29 @@ public class WebhookController {
             HttpServletRequest request,
             @RequestHeader(value = "X-Hub-Signature-256", required = false) String signature,
             @RequestHeader(value = "X-GitHub-Event", required = false) String event,
-            @RequestHeader(value = "X-GitHub-Delivery", required = false) String deliveryId,
-            @RequestBody String payload) {
+            @RequestHeader(value = "X-GitHub-Delivery", required = false) String deliveryId) {
 
-        if (payload != null && payload.length() > 1_048_576) {
-            log.warn("Payload size exceeds maximum allowed 1MB limit; length={}", payload.length());
+        // Read at most one byte past the limit, so a chunked body (no
+        // Content-Length for RequestSizeLimitFilter to reject) is never
+        // buffered in full. The signature is computed by GitHub over these
+        // exact bytes, so they are verified and parsed as-is — never decoded
+        // and re-encoded.
+        byte[] payload;
+        try {
+            payload = request.getInputStream().readNBytes(MAX_PAYLOAD_BYTES + 1);
+        } catch (RequestSizeLimitFilter.BodyTooLargeException ex) {
+            log.warn("Webhook payload rejected: {}", ex.getMessage());
             return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).build();
+        } catch (IOException ex) {
+            log.warn("Failed to read webhook payload: {}", ex.getMessage());
+            return ResponseEntity.badRequest().build();
+        }
+        if (payload.length > MAX_PAYLOAD_BYTES) {
+            log.warn("Webhook payload exceeds {} bytes", MAX_PAYLOAD_BYTES);
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).build();
+        }
+        if (payload.length == 0) {
+            return ResponseEntity.badRequest().build();
         }
 
         if (deliveryId == null || deliveryId.isBlank()) {
@@ -94,25 +113,12 @@ public class WebhookController {
 
         // 3. HMAC: must match the secret we stored when installing the hook.
         //    An "unknown repo" (no secret on file) is a 200 — not our hook.
+        String repoId = body.repository().id().toString();
         try {
-            if (!hmacVerifier.verify(payload, signature, body.repository().id().toString())) {
-                if (securityEventLogger != null) {
-                    securityEventLogger.logWebhookSecurityEvent(
-                        body.repository().id().toString(),
-                        false,
-                        ip,
-                        body.action()
-                    );
-                }
+            boolean valid = hmacVerifier.verify(payload, signature, repoId);
+            securityEventLogger.logWebhookSecurityEvent(repoId, valid, ip, body.action());
+            if (!valid) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
-            }
-            if (securityEventLogger != null) {
-                securityEventLogger.logWebhookSecurityEvent(
-                    body.repository().id().toString(),
-                    true,
-                    ip,
-                    body.action()
-                );
             }
         } catch (HmacVerificationException ex) {
             log.debug("Ignoring webhook for unknown repo: {}", ex.getMessage());

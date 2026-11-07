@@ -2,11 +2,6 @@ package com.automatedcodereviewtool.service;
 
 import com.automatedcodereviewtool.diff.HunkParser;
 import com.automatedcodereviewtool.entity.CodeSample;
-import com.automatedcodereviewtool.entity.Finding;
-import com.automatedcodereviewtool.dto.MlFinding;
-import com.automatedcodereviewtool.dto.MlReviewResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -18,12 +13,11 @@ import java.util.UUID;
  *
  * <p>After inference succeeds, every hunk is persisted in redacted form as
  * a {@code ml.code_samples} row in the same short persistence transaction as
- * the review's findings and outbox reference.</p>
+ * the review's findings and outbox reference. Findings are linked to these
+ * samples later by {@link OutboxProcessor}.</p>
  */
 @Service
 public class ReviewSampleBridge {
-
-    private static final Logger log = LoggerFactory.getLogger(ReviewSampleBridge.class);
 
     private final CodeSampleService codeSampleService;
 
@@ -66,42 +60,5 @@ public class ReviewSampleBridge {
             }
         }
         return samples;
-    }
-
-    /**
-     * Tag each finding with the corresponding code sample id.
-     * The mapping is best-effort: a finding that does not match a
-     * known hunk (line range) is left without a sample id.
-     */
-    public void stampFindings(List<Finding> findings,
-                              List<CodeSample> samples,
-                              MlReviewResponse response) {
-        if (response == null || response.findings() == null) return;
-        List<MlFinding> mlFindings = response.findings();
-        for (int i = 0; i < findings.size() && i < mlFindings.size(); i++) {
-            Finding f = findings.get(i);
-            MlFinding mf = mlFindings.get(i);
-            CodeSample match = findMatch(samples, mf);
-            if (match != null) {
-                f.setCodeSampleId(match.getId());
-            }
-        }
-    }
-
-    private CodeSample findMatch(List<CodeSample> samples, MlFinding mf) {
-        if (samples.isEmpty()) return null;
-        if (mf == null || mf.lineStart() == null) {
-            return null;
-        }
-        for (CodeSample s : samples) {
-            if (mf.filePath() != null
-                    && mf.filePath().equals(s.getFilePath())
-                    && s.getNewStart() <= mf.lineStart()
-                    && mf.lineEnd() != null
-                    && mf.lineEnd() <= s.getNewStart() + Math.max(s.getNewCount(), 1) - 1) {
-                return s;
-            }
-        }
-        return null;
     }
 }

@@ -8,21 +8,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.List;
 
 /**
- * Filter that adds security headers to HTTP responses.
- *
- * <p>This filter implements security best practices by adding headers like:</p>
- * <ul>
- *   <li>Content Security Policy (CSP)</li>
- *   <li>Strict Transport Security (HSTS)</li>
- *   <li>X-Content-Type-Options</li>
- *   <li>X-Frame-Options</li>
- *   <li>Referrer Policy</li>
- *   <li>Permissions Policy</li>
- * </ul>
+ * Adds security headers to every response and suppresses the
+ * {@code Server} header. The API only serves JSON, so the CSP simply
+ * forbids framing and plugin content.
  */
 @Component
 public class SecurityHeadersFilter extends OncePerRequestFilter {
@@ -57,22 +47,8 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
     }
 
     private void addSecurityHeaders(HttpServletResponse response) {
-        // Content Security Policy
         response.setHeader("Content-Security-Policy",
-            "default-src 'self'; " +
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net/npm/chart.js; " +
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-            "img-src 'self' data: https:; " +
-            "font-src 'self' https://fonts.gstatic.com; " +
-            "connect-src 'self' https://api.github.com ws://localhost:*; " +
-            "frame-ancestors 'none'; " +
-            "object-src 'none'; " +
-            "base-uri 'self'; " +
-            "form-action 'self'; " +
-            "frame-src 'none'; " +
-            "worker-src 'self'; " +
-            "manifest-src 'self'; " +
-            "upgrade-insecure-requests;");
+            "default-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
 
         // Strict Transport Security
         response.setHeader("Strict-Transport-Security",
@@ -85,9 +61,6 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
 
         // Prevent clickjacking
         response.setHeader("X-Frame-Options", "DENY");
-
-        // Cross-site scripting protection
-        response.setHeader("X-XSS-Protection", "1; mode=block");
 
         // Referrer control
         response.setHeader("Referrer-Policy",
@@ -129,16 +102,6 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
             "window-management=(), " +
             "xr-spatial-tracking=()");
 
-        // Remove server header
         response.setHeader("Server", "");
-
-        // Cache control for sensitive responses
-        if (response.getContentType() != null &&
-            (response.getContentType().contains("json") ||
-             response.getContentType().contains("text"))) {
-            response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
-            response.setHeader("Pragma", "no-cache");
-            response.setDateHeader("Expires", 0);
-        }
     }
 }

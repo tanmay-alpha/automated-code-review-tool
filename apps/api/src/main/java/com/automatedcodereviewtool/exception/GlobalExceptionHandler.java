@@ -110,6 +110,7 @@ public class GlobalExceptionHandler {
             case 404 -> "NOT_FOUND";
             case 429 -> "RATE_LIMIT_EXCEEDED";
             case 500 -> "INTERNAL_ERROR";
+            case 503 -> "SERVICE_UNAVAILABLE";
             default -> "ERROR";
         };
     }

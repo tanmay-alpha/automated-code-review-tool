@@ -23,7 +23,7 @@ import java.util.UUID;
  *   <li>{@code sub} = {@code userId} (UUID, stringified)</li>
  *   <li>{@code type} = {@code "access"} or {@code "refresh"}</li>
  *   <li>{@code username} = GitHub login (access tokens only)</li>
-     *   <li>{@code jti} = Unique JWT ID for blacklisting</li>
+ *   <li>{@code jti} = unique token ID, used to blacklist access tokens on logout</li>
  * </ul>
  *
  * <p>Throws {@link JwtException} on any parse/verify failure (bad signature,
@@ -106,16 +106,6 @@ public class JwtService {
                 .build()
                 .parseSignedClaims(token);
         return jws.getPayload();
-    }
-
-    /**
-     * Convenience: extract the {@code sub} claim as a UUID.
-     *
-     * <p>Caller should already have validated the token via {@link #validateToken(String)}.</p>
-     */
-    public UUID extractUserId(String token) {
-        Claims claims = validateToken(token);
-        return UUID.fromString(claims.getSubject());
     }
 
     /**

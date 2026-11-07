@@ -13,7 +13,6 @@ import com.automatedcodereviewtool.security.AuthRateLimitFilter;
 import com.automatedcodereviewtool.security.JwtAuthFilter;
 import com.automatedcodereviewtool.security.JwtService;
 import com.automatedcodereviewtool.logging.SecurityEventLogger;
-import com.automatedcodereviewtool.monitoring.SecurityMonitor;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -112,7 +111,6 @@ class ScanControllerTest {
     // it as a pass-through alongside ApiKeyAuthFilter.
     @MockBean AuthRateLimitFilter authRateLimitFilter;
     @MockBean SecurityEventLogger securityEventLogger;
-    @MockBean SecurityMonitor securityMonitor;
 
     @org.junit.jupiter.api.BeforeEach
     void stubApiKeyFilter() throws Exception {
@@ -189,6 +187,22 @@ class ScanControllerTest {
     }
 
     @Test
+    void scanFile_returns400_onUnsupportedLanguage() throws Exception {
+        String body = """
+                {"content":"const a: number = 1;","language":"typescript"}
+                """;
+
+        mockMvc.perform(post("/api/scan/file")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"));
+
+        org.mockito.Mockito.verifyNoInteractions(mlWorkerService);
+    }
+
+    @Test
     void scanFile_returns400_whenMlWorkerRejects() throws Exception {
         when(mlWorkerService.reviewFile(
                 org.mockito.ArgumentMatchers.anyString(),
@@ -238,7 +252,7 @@ class ScanControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.action").value("dismiss"))
                 .andExpect(jsonPath("$.findingId").value(findingId.toString()))
-                .andExpect(jsonPath("$.status").value("dismiss"));
+                .andExpect(jsonPath("$.status").value("dismissed"));
     }
 
     @Test

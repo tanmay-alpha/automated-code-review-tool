@@ -17,7 +17,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -48,7 +48,7 @@ class ReliabilityPostgresTest {
     private static final AtomicLong GITHUB_ID = new AtomicLong(8_000_000L);
 
     @Container
-    static final PostgreSQLContainer<?> PG = new PostgreSQLContainer<>("postgres:16-alpine")
+    static final PostgreSQLContainer PG = new PostgreSQLContainer("postgres:16-alpine")
             .withDatabaseName("acrt_reliability_test")
             .withUsername("test")
             .withPassword("test");
@@ -197,15 +197,16 @@ class ReliabilityPostgresTest {
         assertThat(processedWebhookRepository.insertReceived(
                 "delivery-3", fixture.repositoryId(), 42, "2".repeat(40), "synchronize")).isEqualTo(1);
 
-        assertThat(processedWebhookRepository.claim("delivery-1")).isEqualTo(1);
-        assertThat(processedWebhookRepository.claim("delivery-1")).isZero();
+        assertThat(processedWebhookRepository.claim("delivery-1", 0)).isEqualTo(1);
+        assertThat(processedWebhookRepository.claim("delivery-1", 0)).isZero();
+        assertThat(processedWebhookRepository.claim("delivery-1", 1)).isZero();
         assertThat(processedWebhookRepository.markFailed(
-                "delivery-1", Instant.now().plusSeconds(60), "retryable failure")).isEqualTo(1);
-        assertThat(processedWebhookRepository.claim("delivery-1")).isZero();
+                "delivery-1", 1, Instant.now().plusSeconds(60), "retryable failure")).isEqualTo(1);
+        assertThat(processedWebhookRepository.claim("delivery-1", 1)).isZero();
 
         jdbc.update("UPDATE processed_webhooks SET available_at = NOW() - INTERVAL '1 second' "
                 + "WHERE delivery_id = 'delivery-1'");
-        assertThat(processedWebhookRepository.claim("delivery-1")).isEqualTo(1);
+        assertThat(processedWebhookRepository.claim("delivery-1", 1)).isEqualTo(1);
         assertThat(jdbc.queryForObject(
                 "SELECT attempt_count FROM processed_webhooks WHERE delivery_id = 'delivery-1'",
                 Integer.class)).isEqualTo(2);

@@ -1,5 +1,6 @@
 package com.automatedcodereviewtool.security;
 
+import com.automatedcodereviewtool.logging.SecurityEventLogger;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.springframework.data.redis.RedisConnectionFailureException;
@@ -28,17 +30,14 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit test for {@link AuthRateLimitFilter}.
- *
- * <p>Drives the filter directly (no Spring context) with a mocked
- * {@link StringRedisTemplate}. Verifies the three contracts called out
- * in the spec:</p>
+ * Unit test for {@link AuthRateLimitFilter}, driven directly (no Spring
+ * context) with a mocked {@link StringRedisTemplate}:
  * <ul>
  *   <li>Under-limit traffic flows through and the bucket TTL is set
  *       on the first hit.</li>
- *   <li>Over-limit traffic is shed with a 429 and the spec'd JSON body.</li>
- *   <li>Different IPs land on different Redis keys (no cross-tenant
- *       contamination).</li>
+ *   <li>Over-limit traffic is shed with a 429 JSON body.</li>
+ *   <li>Different IPs land on different Redis keys.</li>
+ *   <li>Forwarded client IPs are only trusted from explicitly configured proxies.</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
@@ -47,13 +46,90 @@ class AuthRateLimitFilterTest {
 
     @Mock private StringRedisTemplate redis;
     @Mock private ValueOperations<String, String> valueOps;
+    @Mock private SecurityEventLogger securityEventLogger;
     private AuthRateLimitFilter filter;
 
     @BeforeEach
     void setUp() {
         when(redis.opsForValue()).thenReturn(valueOps);
 
-        filter = new AuthRateLimitFilter(redis, 10);
+        filter = new AuthRateLimitFilter(redis, 10, List.of(), "", securityEventLogger);
+    }
+
+    // ---- client IP resolution ---------------------------------------------
+
+    @Test
+    void clientIp_behindConfiguredProxy_usesHopAppendedByProxy() {
+        AuthRateLimitFilter behindProxy = new AuthRateLimitFilter(
+                redis, 10, List.of("10.0.0.5", "192.168.1.0/24"), "", securityEventLogger);
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/auth/github");
+        req.setRemoteAddr("10.0.0.5");
+        // The first entry is whatever the client sent; the proxy appends the real peer.
+        req.addHeader(AuthRateLimitFilter.X_FORWARDED_FOR, "6.6.6.6, 1.2.3.4");
+
+        assertThat(behindProxy.resolveClientIp(req)).isEqualTo("1.2.3.4");
+
+        req.setRemoteAddr("192.168.1.77");
+        assertThat(behindProxy.resolveClientIp(req)).isEqualTo("1.2.3.4");
+    }
+
+    @Test
+    void clientIp_ignoresForwardedHeaderFromPublicPeer() {
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/auth/github");
+        req.setRemoteAddr("8.8.8.8");
+        req.addHeader(AuthRateLimitFilter.X_FORWARDED_FOR, "6.6.6.6");
+
+        assertThat(filter.resolveClientIp(req)).isEqualTo("8.8.8.8");
+    }
+
+    @Test
+    void clientIp_ignoresForwardedHeaderFromUnlistedPrivatePeer() {
+        // A container on the Docker bridge must not be able to pick its own bucket.
+        AuthRateLimitFilter behindProxy = new AuthRateLimitFilter(
+                redis, 10, List.of("10.0.0.5"), "", securityEventLogger);
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/auth/github");
+        req.setRemoteAddr("172.18.0.9");
+        req.addHeader(AuthRateLimitFilter.X_FORWARDED_FOR, "6.6.6.6");
+
+        assertThat(behindProxy.resolveClientIp(req)).isEqualTo("172.18.0.9");
+        assertThat(filter.resolveClientIp(req)).isEqualTo("172.18.0.9");
+    }
+
+    // Render: Client -> Cloudflare -> Render proxy (10.x) -> app. The last XFF
+    // hop is a Cloudflare edge, so the client IP comes from True-Client-IP.
+    private AuthRateLimitFilter behindCdn() {
+        return new AuthRateLimitFilter(redis, 10, List.of("10.0.0.0/8"), "True-Client-IP", securityEventLogger);
+    }
+
+    private static MockHttpServletRequest cdnRequest(String peer, String trueClientIp) {
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/auth/github");
+        req.setRemoteAddr(peer);
+        req.addHeader(AuthRateLimitFilter.X_FORWARDED_FOR, "203.0.113.7, 104.16.0.1");
+        req.addHeader("True-Client-IP", trueClientIp);
+        return req;
+    }
+
+    @Test
+    void clientIpHeader_isHonouredFromTrustedPeer() {
+        assertThat(behindCdn().resolveClientIp(cdnRequest("10.1.2.3", "203.0.113.7")))
+                .isEqualTo("203.0.113.7");
+        assertThat(behindCdn().resolveClientIp(cdnRequest("10.1.2.3", " 2001:db8::1 ")))
+                .isEqualTo("2001:db8:0:0:0:0:0:1");
+    }
+
+    @Test
+    void clientIpHeader_isIgnoredFromUntrustedPeer() {
+        assertThat(behindCdn().resolveClientIp(cdnRequest("8.8.8.8", "203.0.113.7")))
+                .isEqualTo("8.8.8.8");
+    }
+
+    @Test
+    void clientIpHeader_invalidValueFallsBackToForwardedFor() {
+        for (String invalid : new String[] {"not-an-ip", "evil.example.com", "999.1.1.1", "", "1.2.3.4, 5.6.7.8"}) {
+            assertThat(behindCdn().resolveClientIp(cdnRequest("10.1.2.3", invalid)))
+                    .as("True-Client-IP=%s", invalid)
+                    .isEqualTo("104.16.0.1");
+        }
     }
 
     // ---- testUnderLimitPasses --------------------------------------------

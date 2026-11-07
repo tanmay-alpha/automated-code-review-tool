@@ -8,6 +8,10 @@ import java.util.Locale;
  * Parses unified-diff text into {@link FileHunk} objects (one per
  * unified-diff hunk, not one per file). Multi-file, multi-hunk,
  * rename-aware, and skips binary files.
+ *
+ * <p>Hunk bodies are delimited by the line counts in the {@code @@}
+ * header, so an added line whose text starts with {@code ++ } (raw
+ * {@code +++ …}) is still read as content, not as a file header.</p>
  */
 public final class HunkParser {
 
@@ -47,11 +51,37 @@ public final class HunkParser {
         String[] lines = normalizedDiff.split("\n", -1);
         FileDiff currentFile = null;
         HunkBuilder currentHunk = null;
-        int newLineNo = 0;
-        int oldLineNo = 0;
+        int oldRemaining = 0;
+        int newRemaining = 0;
 
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
+            boolean inHunkBody = currentHunk != null && (oldRemaining > 0 || newRemaining > 0);
+
+            if (inHunkBody && !line.startsWith("diff --git ")) {
+                currentHunk.appendRaw(line);
+                if (line.startsWith("+")) {
+                    currentHunk.addAdded(line.substring(1));
+                    newRemaining--;
+                } else if (line.startsWith("-")) {
+                    currentHunk.addRemoved(line.substring(1));
+                    oldRemaining--;
+                } else if (line.startsWith("\\")) {
+                    // "\ No newline at end of file": part of hunk identity, not a source line.
+                } else {
+                    // " text", or an empty line some tools emit for a blank context line.
+                    currentHunk.addContext(line.startsWith(" ") ? line.substring(1) : line);
+                    oldRemaining--;
+                    newRemaining--;
+                }
+                continue;
+            }
+
+            if (currentHunk != null && line.startsWith("\\")) {
+                // Metadata line that follows the final body line of a hunk.
+                currentHunk.appendRaw(line);
+                continue;
+            }
 
             if (line.startsWith("diff --git ")) {
                 if (currentFile != null) {
@@ -114,8 +144,10 @@ public final class HunkParser {
             if (line.startsWith("+++ ")) {
                 String path = stripDiffPrefix(line.substring(4));
                 if (currentFile != null) {
-                    currentFile = new FileDiff(currentFile.oldPath(), path,
-                            currentFile.created(), currentFile.deleted(),
+                    // "+++ /dev/null" means the file was deleted: there is no new path.
+                    String newPath = "/dev/null".equals(path) ? null : path;
+                    currentFile = new FileDiff(currentFile.oldPath(), newPath,
+                            currentFile.created(), currentFile.deleted() || newPath == null,
                             currentFile.renamed(), currentFile.binary(), currentFile.hunks());
                 }
                 continue;
@@ -132,35 +164,11 @@ public final class HunkParser {
                 String newPath = currentFile.newPath() == null ? currentFile.oldPath() : currentFile.newPath();
                 currentHunk = new HunkBuilder(
                         newPath, h.oldStart(), h.oldCount(), h.newStart(), h.newCount(), line);
-                oldLineNo = h.oldStart();
-                newLineNo = h.newStart();
-                continue;
+                oldRemaining = h.oldCount();
+                newRemaining = h.newCount();
             }
-
-            if (currentHunk == null) continue;
-
-            currentHunk.appendRaw(line);
-
-            if (line.startsWith("+") && !line.startsWith("+++")) {
-                currentHunk.addAdded(line.substring(1), newLineNo);
-                newLineNo++;
-            } else if (line.startsWith("-") && !line.startsWith("---")) {
-                currentHunk.addRemoved(line.substring(1), oldLineNo);
-                oldLineNo++;
-            } else if (line.startsWith(" ") || line.isEmpty()) {
-                String ctx = line.startsWith(" ") ? line.substring(1) : line;
-                currentHunk.addContext(ctx, oldLineNo, newLineNo);
-                oldLineNo++;
-                newLineNo++;
-            } else if (line.startsWith("\\")) {
-                // Unified-diff metadata (for example, no newline at EOF).
-                // It is part of hunk identity but not a source line.
-            } else {
-                // Treat anything else as context to keep parser tolerant
-                currentHunk.addContext(line, oldLineNo, newLineNo);
-                oldLineNo++;
-                newLineNo++;
-            }
+            // Anything else outside a hunk body (index lines, mode lines,
+            // a trailing empty line) carries no content.
         }
         if (currentFile != null) {
             if (currentHunk != null) currentFile.hunks().add(currentHunk.build());
@@ -251,11 +259,9 @@ public final class HunkParser {
         }
 
         void appendRaw(String line) { raw.append(line).append('\n'); }
-        void addAdded(String text, int newLine) { added.add(text); }
-        void addRemoved(String text, int oldLine) { removed.add(text); }
-        void addContext(String text, int oldLine, int newLine) {
-            context.add(text);
-        }
+        void addAdded(String text) { added.add(text); }
+        void addRemoved(String text) { removed.add(text); }
+        void addContext(String text) { context.add(text); }
         FileHunk build() {
             return new FileHunk(filePath, detectLanguage(filePath),
                     oldStart, oldCount, newStart, newCount,

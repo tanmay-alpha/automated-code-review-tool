@@ -4,6 +4,7 @@ import com.automatedcodereviewtool.entity.PullRequestEntity;
 import com.automatedcodereviewtool.entity.Repository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;
@@ -11,6 +12,10 @@ import java.util.UUID;
 
 public interface PullRequestRepository extends JpaRepository<PullRequestEntity, UUID> {
     Optional<PullRequestEntity> findByRepoAndGithubPrNumber(Repository repo, int githubPrNumber);
+
+    /** PR with its repository and owner loaded in one query (no open-in-view needed). */
+    @EntityGraph(attributePaths = {"repo", "repo.owner"})
+    Optional<PullRequestEntity> findWithRepoAndOwnerById(UUID id);
 
     /**
      * Page of PRs for a repo, paginated + sorted by the caller.

@@ -7,11 +7,9 @@ import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * Response from {@code POST /ml/review} on the ML worker.
- *
- * <p>Extended in Part 6 with {@code engine}, {@code modelVersion} and
- * {@code taxonomyVersion} so the API layer can surface the model
- * identity without coupling to internal paths.</p>
+ * Response from {@code POST /ml/review} on the ML worker. Mirrors
+ * {@code ReviewResponse} in apps/ml-worker/app/schemas.py; {@code engine}
+ * is {@code "model"} or {@code "fallback"} (rule-based).
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record MlReviewResponse(

@@ -22,27 +22,25 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
+import java.util.Map;
 import java.util.UUID;
 
 /**
  * Ad-hoc / on-demand review endpoints — distinct from the PR-driven webhook flow.
  *
  * <ul>
- *   <li>{@code POST /api/scan/file} — paste-source or path-style scan,
- *       returns a list of findings + a quality score. <b>No PR/Repo
- *       persistence.</b></li>
+ *   <li>{@code POST /api/scan/file} — scan one file's contents and return
+ *       findings + a quality score. <b>Nothing is persisted.</b> Accepts a
+ *       JWT or an API key.</li>
  *   <li>{@code POST /api/scan/action} — record a developer's disposition
- *       (accept / dismiss / fix) on an existing finding.</li>
+ *       (accept / dismiss / fix) on an existing PR finding. JWT only.</li>
  * </ul>
- *
- * <p>Both endpoints require a valid GitHub access token (handled by
- * the {@code JwtAuthFilter}); they are <b>not</b> publicly callable.</p>
  */
 @RestController
 @RequestMapping("/api/scan")
@@ -50,7 +48,11 @@ public class ScanController {
 
     private static final Logger log = LoggerFactory.getLogger(ScanController.class);
 
-    private static final Set<String> VALID_ACTIONS = Set.of("accept", "dismiss", "fix");
+    /** Request verb → value allowed by the {@code findings.status} CHECK constraint. */
+    private static final Map<String, String> STATUS_BY_ACTION = Map.of(
+            "accept", "accepted",
+            "dismiss", "dismissed",
+            "fix", "fixed");
 
     private final MlWorkerService mlWorkerService;
     private final FindingRepository findingRepository;
@@ -71,20 +73,12 @@ public class ScanController {
     public ResponseEntity<ScanFileResponse> scanFile(
             @Valid @RequestBody ScanFileRequest req) {
 
-        String language = (req.language() == null || req.language().isBlank())
-                ? MlWorkerService.detectLanguage(req.content())
-                : req.language();
-
-        MlReviewResponse ml = mlWorkerService.reviewFile(
-                req.content(),
-                language,
-                req.filePath()
-        );
+        // language is required by ScanFileRequest validation.
+        String language = req.language();
+        MlReviewResponse ml = mlWorkerService.reviewFile(req.content(), language, req.filePath());
 
         List<MlFinding> findings = ml.findings() == null ? List.of() : ml.findings();
-        BigDecimal quality = ml.qualityScore() != null
-                ? ml.qualityScore()
-                : MlWorkerService.computeQualityScore(ml);
+        BigDecimal quality = MlWorkerService.computeQualityScore(ml);
 
         return ResponseEntity.ok(new ScanFileResponse(findings, quality, language));
     }
@@ -92,8 +86,9 @@ public class ScanController {
     /**
      * POST /api/scan/action
      *
-     * <p>Records a developer disposition on a finding. Updates
-     * {@code status} + {@code disposition_at} on the Finding row.</p>
+     * <p>Records a developer disposition on a finding: sets {@code status}
+     * ({@code accepted} / {@code dismissed} / {@code fixed}) and
+     * {@code disposition_at}.</p>
      *
      * <p><b>Authorization:</b> the finding must belong to a repository
      * owned by the authenticated user. If the user does not own the
@@ -104,15 +99,20 @@ public class ScanController {
      * @return 200 with the applied action; 404 if finding not found or
      *         not owned by caller; 400 if action verb is unrecognized.
      */
+    // The ownership check walks lazy finding -> PR -> repo -> owner
+    // associations, so the load, check, and update share one transaction
+    // instead of relying on open-in-view.
     @PostMapping("/action")
+    @Transactional
     public ResponseEntity<FindingActionResponse> recordAction(
             @Valid @RequestBody FindingActionRequest req,
             @AuthenticationPrincipal User caller) {
 
         String action = req.action().toLowerCase(Locale.ROOT);
-        if (!VALID_ACTIONS.contains(action)) {
+        String status = STATUS_BY_ACTION.get(action);
+        if (status == null) {
             throw new IllegalArgumentException(
-                    "Invalid action '" + req.action() + "' — expected one of " + VALID_ACTIONS);
+                    "Invalid action '" + req.action() + "' — expected one of " + STATUS_BY_ACTION.keySet());
         }
 
         Finding finding = findingRepository.findById(req.findingId())
@@ -126,7 +126,7 @@ public class ScanController {
                     "Finding " + req.findingId() + " not found");
         }
 
-        finding.setStatus(action);
+        finding.setStatus(status);
         finding.setDispositionAt(Instant.now());
         findingRepository.save(finding);
 
@@ -138,8 +138,8 @@ public class ScanController {
     }
 
     /**
-     * Returns true when the given finding's PR's repository's owner
-     * matches the caller's GitHub login. Treats unauthenticated callers
+     * Returns true when the finding's PR's repository is owned by the
+     * caller (compared by user id). Treats unauthenticated callers
      * as non-owners (defence in depth — the filter chain should already
      * have rejected them).
      */

@@ -11,10 +11,11 @@ import org.springframework.stereotype.Component;
 /**
  * Validates the canonical taxonomy at application startup.
  *
- * <p>Runs early so any misconfiguration fails fast — before the web
- * layer begins accepting traffic. If the {@code anti_patterns} table
- * is empty or contains malformed rows (invalid category/severity),
- * application boot is aborted with a clear error.</p>
+ * <p>As an {@link ApplicationRunner} it runs once the context has
+ * refreshed, i.e. after the embedded web server has started. If the
+ * {@code anti_patterns} table is empty or contains malformed rows
+ * (invalid category/severity), the exception aborts startup and the
+ * application exits with a clear error.</p>
  */
 @Component
 @Order(0)
@@ -37,7 +38,6 @@ public class TaxonomyStartupValidator implements ApplicationRunner {
             throw new IllegalStateException(
                     "Taxonomy validation failed: total=" + total + " trainable=" + trainable);
         }
-        log.info("Taxonomy validated: version={} total={} trainable={}",
-                taxonomy.taxonomyVersion(), total, trainable);
+        log.info("Taxonomy validated: total={} trainable={}", total, trainable);
     }
 }

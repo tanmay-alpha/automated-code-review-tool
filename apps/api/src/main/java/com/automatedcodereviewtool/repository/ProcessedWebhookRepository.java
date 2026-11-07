@@ -32,6 +32,11 @@ public interface ProcessedWebhookRepository extends JpaRepository<ProcessedWebho
                        @Param("headSha") String headSha,
                        @Param("action") String action);
 
+    /**
+     * Compare-and-set claim. The caller passes the {@code attempt_count} it
+     * read; on success the row's new attempt number ({@code expectedAttempt + 1})
+     * is the fencing token for {@link #markTerminal} and {@link #markFailed}.
+     */
     @Modifying
     @Transactional
     @Query(value = """
@@ -42,8 +47,10 @@ public interface ProcessedWebhookRepository extends JpaRepository<ProcessedWebho
                AND status IN ('received', 'failed')
                AND available_at <= NOW()
                AND attempt_count < max_attempts
+               AND attempt_count = :expectedAttempt
             """, nativeQuery = true)
-    int claim(@Param("deliveryId") String deliveryId);
+    int claim(@Param("deliveryId") String deliveryId,
+              @Param("expectedAttempt") int expectedAttempt);
 
     @Query(value = """
             SELECT delivery_id
@@ -69,17 +76,28 @@ public interface ProcessedWebhookRepository extends JpaRepository<ProcessedWebho
             """, nativeQuery = true)
     int recoverStale(@Param("staleBefore") Instant staleBefore);
 
+    /**
+     * Dead-letter deliveries that used up their attempts. A row still in
+     * {@code processing} is only touched once its lease has expired, so the
+     * final attempt is never dead-lettered while it is running.
+     */
     @Modifying
     @Transactional
     @Query(value = """
             UPDATE processed_webhooks
                SET status = 'dead_letter', completed_at = NOW(), processing_started_at = NULL,
                    updated_at = NOW(), last_error = COALESCE(last_error, 'Maximum attempts exhausted')
-             WHERE status IN ('received', 'processing', 'failed')
-               AND attempt_count >= max_attempts
+             WHERE attempt_count >= max_attempts
+               AND (status IN ('received', 'failed')
+                    OR (status = 'processing' AND processing_started_at < :staleBefore))
             """, nativeQuery = true)
-    int deadLetterExhausted();
+    int deadLetterExhausted(@Param("staleBefore") Instant staleBefore);
 
+    /**
+     * Finish the attempt identified by {@code claimedAttempt}. A worker whose
+     * lease expired and whose row was re-claimed matches nothing, so it can't
+     * overwrite the newer attempt.
+     */
     @Modifying
     @Transactional
     @Query(value = """
@@ -87,11 +105,14 @@ public interface ProcessedWebhookRepository extends JpaRepository<ProcessedWebho
                SET status = :status, completed_at = NOW(), processing_started_at = NULL,
                    updated_at = NOW(), last_error = :message
              WHERE delivery_id = :deliveryId AND status = 'processing'
+               AND attempt_count = :claimedAttempt
             """, nativeQuery = true)
     int markTerminal(@Param("deliveryId") String deliveryId,
+                     @Param("claimedAttempt") int claimedAttempt,
                      @Param("status") String status,
                      @Param("message") String message);
 
+    /** Fenced like {@link #markTerminal}. */
     @Modifying
     @Transactional
     @Query(value = """
@@ -101,8 +122,10 @@ public interface ProcessedWebhookRepository extends JpaRepository<ProcessedWebho
                    processing_started_at = NULL, available_at = :retryAt,
                    updated_at = NOW(), last_error = :message
              WHERE delivery_id = :deliveryId AND status = 'processing'
+               AND attempt_count = :claimedAttempt
             """, nativeQuery = true)
     int markFailed(@Param("deliveryId") String deliveryId,
+                   @Param("claimedAttempt") int claimedAttempt,
                    @Param("retryAt") Instant retryAt,
                    @Param("message") String message);
 }

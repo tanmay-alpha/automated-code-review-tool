@@ -4,7 +4,6 @@ import com.automatedcodereviewtool.security.ApiKeyAuthFilter;
 import com.automatedcodereviewtool.security.AuthRateLimitFilter;
 import com.automatedcodereviewtool.security.JwtAuthFilter;
 import com.automatedcodereviewtool.security.RequestSizeLimitFilter;
-import com.automatedcodereviewtool.logging.LogRedactorFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -14,7 +13,6 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -24,24 +22,27 @@ import java.util.List;
 /**
  * Stateless security configuration.
  *
- * <p>Three filters protect the API:</p>
+ * <p>Filters in front of Spring Security's authorization rules:</p>
  * <ul>
- *   <li>{@link ApiKeyAuthFilter} — runs first; activates <em>only</em>
- *       for {@code /api/scan/file} (the VS Code extension endpoint).
+ *   <li>{@link RequestSizeLimitFilter} — rejects oversized query strings,
+ *       headers and declared request bodies.</li>
+ *   <li>{@link ApiKeyAuthFilter} — activates <em>only</em> for
+ *       {@code /api/scan/file} (VS Code extension / GitHub Action).
  *       Authenticates via {@code Authorization: Bearer cl_live_…}
- *       and applies a Redis rate limit.</li>
- *   <li>{@link AuthRateLimitFilter} — runs second; activates <em>only</em>
- *       for the public auth flow endpoints
- *       ({@code /api/auth/github}, {@code /api/auth/callback},
- *       {@code /api/auth/refresh}). Caps each client IP at 10 req/min
- *       so brute-force attempts on the OAuth handshake are shed early.</li>
- *   <li>{@link JwtAuthFilter} — runs last; validates the {@code accessToken}
- *       cookie and binds the {@link java.util.UUID} user id to the
+ *       and applies a per-user rate limit.</li>
+ *   <li>{@link AuthRateLimitFilter} — activates <em>only</em> for the
+ *       public auth endpoints ({@code /api/auth/github},
+ *       {@code /api/auth/callback}, {@code /api/auth/refresh}) and caps
+ *       each client IP at 10 req/min.</li>
+ *   <li>{@link JwtAuthFilter} — validates the {@code accessToken} cookie
+ *       (or a JWT bearer header) and binds the {@code User} entity as the
  *       request principal.</li>
  * </ul>
  *
- * <p>CSRF is disabled because the API is stateless and does not use
- * cookie-based session auth.</p>
+ * <p>CSRF tokens are disabled. The dashboard authenticates with cookies,
+ * so CSRF protection relies on those cookies being {@code SameSite=Lax}
+ * (browsers do not attach them to cross-site POST/DELETE requests) and on
+ * CORS allowing only the configured frontend origin.</p>
  */
 @Configuration
 @EnableWebSecurity
@@ -53,20 +54,17 @@ public class SecurityConfig {
     private final AuthRateLimitFilter authRateLimitFilter;
     private final AppConfig appConfig;
     private final RequestSizeLimitFilter requestSizeLimitFilter;
-    private final LogRedactorFilter logRedactorFilter;
 
     public SecurityConfig(JwtAuthFilter jwtAuthFilter,
                           ApiKeyAuthFilter apiKeyAuthFilter,
                           AuthRateLimitFilter authRateLimitFilter,
                           AppConfig appConfig,
-                          RequestSizeLimitFilter requestSizeLimitFilter,
-                          LogRedactorFilter logRedactorFilter) {
+                          RequestSizeLimitFilter requestSizeLimitFilter) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.apiKeyAuthFilter = apiKeyAuthFilter;
         this.authRateLimitFilter = authRateLimitFilter;
         this.appConfig = appConfig;
         this.requestSizeLimitFilter = requestSizeLimitFilter;
-        this.logRedactorFilter = logRedactorFilter;
     }
 
     @Bean
@@ -89,7 +87,7 @@ public class SecurityConfig {
                                 "/actuator/health").permitAll()
                         // /api/scan/file accepts either a JWT (dashboard
                         // curl tests) or an API key (VS Code extension).
-                        // The API key filter handles its own 403/429.
+                        // The API key filter handles its own 401/429.
                         .requestMatchers("/api/scan/file").hasAnyRole("USER", "API_KEY")
                         .anyRequest().authenticated())
                 // API key filter must run before JWT filter so a key
@@ -99,8 +97,7 @@ public class SecurityConfig {
                 // on /api/auth/* are shed before any token work.
                 .addFilterBefore(authRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(logRedactorFilter, ApiKeyAuthFilter.class)
-                .addFilterBefore(requestSizeLimitFilter, LogRedactorFilter.class);
+                .addFilterBefore(requestSizeLimitFilter, ApiKeyAuthFilter.class);
         return http.build();
     }
 
@@ -117,22 +114,11 @@ public class SecurityConfig {
         return source;
     }
 
+    /** Registered inside the security chain only; don't also run it as a plain servlet filter. */
     @Bean
     public org.springframework.boot.web.servlet.FilterRegistrationBean<RequestSizeLimitFilter> requestSizeLimitFilterRegistration(RequestSizeLimitFilter filter) {
         org.springframework.boot.web.servlet.FilterRegistrationBean<RequestSizeLimitFilter> registration = new org.springframework.boot.web.servlet.FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
-    }
-
-    @Bean
-    public org.springframework.boot.web.servlet.FilterRegistrationBean<LogRedactorFilter> logRedactorFilterRegistration(LogRedactorFilter filter) {
-        org.springframework.boot.web.servlet.FilterRegistrationBean<LogRedactorFilter> registration = new org.springframework.boot.web.servlet.FilterRegistrationBean<>(filter);
-        registration.setEnabled(false);
-        return registration;
-    }
-
-    @Bean
-    public WebClient.Builder webClientBuilder() {
-        return WebClient.builder();
     }
 }

@@ -1,14 +1,11 @@
 package com.automatedcodereviewtool.controller;
 
 import com.automatedcodereviewtool.dto.request.ConnectRepoRequest;
+import com.automatedcodereviewtool.dto.response.PullRequestSummary;
 import com.automatedcodereviewtool.dto.response.RepoResponse;
-import com.automatedcodereviewtool.entity.PullRequestEntity;
-import com.automatedcodereviewtool.entity.Repository;
 import com.automatedcodereviewtool.entity.User;
-import com.automatedcodereviewtool.repository.RepositoryRepository;
 import com.automatedcodereviewtool.security.JwtAuthFilter;
 import com.automatedcodereviewtool.service.RepoService;
-import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
@@ -36,11 +33,9 @@ import java.util.UUID;
 public class RepoController {
 
     private final RepoService repoService;
-    private final RepositoryRepository repositoryRepository;
 
-    public RepoController(RepoService repoService, RepositoryRepository repositoryRepository) {
+    public RepoController(RepoService repoService) {
         this.repoService = repoService;
-        this.repositoryRepository = repositoryRepository;
     }
 
     // POST /api/repos/connect
@@ -53,7 +48,7 @@ public class RepoController {
         // response viewer / fetch interceptor.
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header("X-Webhook-Secret", result.plaintextSecret())
-                .body(RepoResponse.from(result.repo()));
+                .body(RepoResponse.from(repoService.getForOwner(user, result.repo().getId())));
     }
 
     // GET /api/repos
@@ -67,8 +62,7 @@ public class RepoController {
     // GET /api/repos/{id}
     @GetMapping("/{id}")
     public RepoResponse get(@AuthenticationPrincipal User user, @PathVariable UUID id) {
-        Repository repo = requireOwned(user, id);
-        return RepoResponse.from(repo);
+        return RepoResponse.from(repoService.getForOwner(user, id));
     }
 
     // DELETE /api/repos/{id}
@@ -80,23 +74,13 @@ public class RepoController {
 
     // GET /api/repos/{id}/prs
     @GetMapping("/{id}/prs")
-    public Page<PullRequestEntity> listPrs(@AuthenticationPrincipal User user,
-                                           @PathVariable UUID id,
-                                           @RequestParam(defaultValue = "0") int page,
-                                           @RequestParam(defaultValue = "20") int size) {
+    public Page<PullRequestSummary> listPrs(@AuthenticationPrincipal User user,
+                                            @PathVariable UUID id,
+                                            @RequestParam(defaultValue = "0") int page,
+                                            @RequestParam(defaultValue = "20") int size) {
         return repoService.listPrs(user, id,
                 Math.max(0, page),
-                Math.min(100, Math.max(1, size)));
-    }
-
-    // helper
-    private Repository requireOwned(User caller, UUID repoId) {
-        Repository repo = repositoryRepository.findById(repoId)
-                .orElseThrow(() -> new EntityNotFoundException("Repo " + repoId + " not found"));
-        if (!repo.getOwner().getId().equals(caller.getId())) {
-            // 404 to avoid leaking existence of repos the caller doesn't own
-            throw new EntityNotFoundException("Repo " + repoId + " not found");
-        }
-        return repo;
+                Math.min(100, Math.max(1, size)))
+                .map(PullRequestSummary::from);
     }
 }

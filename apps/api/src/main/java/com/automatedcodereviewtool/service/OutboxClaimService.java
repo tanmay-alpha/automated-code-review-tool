@@ -20,19 +20,20 @@ public class OutboxClaimService {
 
     @Transactional
     public List<IngestionOutbox> claim(String workerId, int batchSize, OffsetDateTime staleBefore) {
-        repository.deadLetterExhausted();
         repository.recoverStaleProcessing(staleBefore);
-        repository.deadLetterExhausted();
+        repository.deadLetterExhausted(staleBefore);
         return repository.claimEligibleBatch(workerId, batchSize);
     }
 
+    /** {@code claimedAttempt} is the {@code attempt_count} returned by {@link #claim}. */
     @Transactional
-    public boolean complete(java.util.UUID id, String workerId) {
-        return repository.markCompleted(id, workerId) == 1;
+    public boolean complete(java.util.UUID id, String workerId, int claimedAttempt) {
+        return repository.markCompleted(id, workerId, claimedAttempt) == 1;
     }
 
     @Transactional
-    public boolean fail(java.util.UUID id, String workerId, String error, OffsetDateTime availableAt) {
-        return repository.markFailed(id, workerId, error, availableAt) == 1;
+    public boolean fail(java.util.UUID id, String workerId, int claimedAttempt,
+                        String error, OffsetDateTime availableAt) {
+        return repository.markFailed(id, workerId, claimedAttempt, error, availableAt) == 1;
     }
 }

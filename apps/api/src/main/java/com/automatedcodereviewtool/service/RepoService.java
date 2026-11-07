@@ -11,13 +11,10 @@ import com.automatedcodereviewtool.repository.QualityMetricRepository;
 import com.automatedcodereviewtool.repository.RepositoryRepository;
 import com.automatedcodereviewtool.repository.UserRepository;
 import com.automatedcodereviewtool.security.EncryptionService;
-import com.automatedcodereviewtool.dto.FindingStats;
-import com.automatedcodereviewtool.dto.FindingTrendRow;
 import com.automatedcodereviewtool.config.WebhookConfig;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -30,19 +27,17 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
  * Business logic for repo connect / disconnect / list / PR history /
  * quality trend.
  *
- * <p>Extracted from the controller so the controller stays thin and
- * the rules can be unit-tested without standing up MockMvc. The
- * service is fully transactional — webhook install + DB save happen
- * inside one transaction, so a GitHub failure rolls back the DB
- * (no orphan rows, no encrypted secret without a matching hook).</p>
+ * <p>Every read of a single repo goes through {@link #requireOwned}, which
+ * returns 404 (not 403) for repos the caller does not own so their
+ * existence is not leaked.</p>
  */
 @Service
 public class RepoService {
@@ -89,18 +84,21 @@ public class RepoService {
      * Connect a GitHub repo to the current user.
      *
      * <ol>
-     *   <li>Look up the user and confirm they have a valid GitHub token.</li>
-     *   <li>Resolve {@code owner/repo} → numeric ID + visibility via GitHub.</li>
-     *   <li>Reject if the user does not have admin permissions on the repo
-     *       (404-equivalent for permission denied).</li>
-     *   <li>Reject if the repo is already connected for this owner.</li>
-     *   <li>Generate a 32-hex webhook secret, install the webhook on
-     *       GitHub, then save the repo (with the secret encrypted) in
-     *       one transaction.</li>
+     *   <li>Look up the user and confirm they have a GitHub token.</li>
+     *   <li>Resolve {@code owner/repo} → numeric ID + visibility via GitHub
+     *       (a repo the caller cannot see is rejected).</li>
+     *   <li>Reject if the repo is actively connected (by anyone). An
+     *       inactive row left by a disconnect is reused; if a different
+     *       account disconnected it, ownership moves to the caller (the
+     *       webhook install below proves admin access).</li>
+     *   <li>Generate a webhook secret, install the webhook on GitHub, then
+     *       save the repo with the secret encrypted.</li>
      * </ol>
      *
-     * <p>Any failure inside step 5 rolls the DB write back — no
-     * orphan rows, no encrypted secret without a matching hook.</p>
+     * <p>If GitHub rejects the webhook install nothing is written. If the
+     * DB write fails after the install, the transaction rolls back and the
+     * GitHub webhook is left orphaned (its deliveries are ignored because
+     * no active repo matches).</p>
      *
      * @return the saved Repository plus the plaintext secret
      *         (returned <strong>only here</strong>).
@@ -114,36 +112,33 @@ public class RepoService {
         String repoOwner = parts[0];
         String repoName = parts[1];
 
-        // 1. Look up the calling user.
         User caller = userRepository.findById(owner.getId())
                 .orElseThrow(() -> new EntityNotFoundException("User " + owner.getId() + " not found"));
 
         if (caller.getAccessToken() == null || caller.getAccessToken().isBlank()) {
             throw new ConnectRepoException("User has no GitHub access token; re-authenticate");
         }
+        // users.access_token is AES-encrypted at rest; GitHub needs the plaintext.
+        String githubToken = encryptionService.decrypt(caller.getAccessToken());
 
-        // 2. Resolve the repo via GitHub (also acts as a permission check —
-        //    404 = caller cannot see the repo, which we treat as "not yours").
-        var ghRepo = gitHubService.getRepository(caller.getAccessToken(), repoOwner, repoName);
+        var ghRepo = gitHubService.getRepository(githubToken, repoOwner, repoName);
         if (ghRepo == null || ghRepo.get("id") == null) {
             throw new ConnectRepoException("Repository not found on GitHub or not visible to caller");
         }
         Long ghId = ((Number) ghRepo.get("id")).longValue();
         boolean isPrivate = Boolean.TRUE.equals(ghRepo.get("private"));
 
-        // 3. Reject if this github-id is already connected (any user) —
-        //    avoids accidentally double-hooking the same repo for two users.
-        if (repositoryRepository.findByGithubId(ghId).isPresent()) {
+        // github_id is unique, so a disconnected (inactive) row must be reused.
+        Optional<Repository> existing = repositoryRepository.findByGithubId(ghId);
+        if (existing.isPresent() && existing.get().isActive()) {
             throw new ConnectRepoException("This repository is already connected to an automated-code-review-tool account");
         }
 
-        // 4. Generate secret + install webhook on GitHub. If GitHub
-        //    rejects, we throw before any DB write.
         String plaintextSecret = generateSecret();
         Long webhookId;
         try {
             webhookId = gitHubService.installWebhook(
-                    caller.getAccessToken(), fullName, webhookCallbackUrl, plaintextSecret);
+                    githubToken, fullName, webhookCallbackUrl, plaintextSecret);
         } catch (RuntimeException ex) {
             throw new ConnectRepoException(
                     "Failed to install webhook on GitHub: " + ex.getMessage(), ex);
@@ -152,17 +147,20 @@ public class RepoService {
             throw new ConnectRepoException("GitHub did not return a webhook id");
         }
 
-        // 5. Persist the repo. Encrypt the secret at rest.
-        Repository repo = Repository.builder()
+        Repository repo = existing.orElseGet(() -> Repository.builder()
                 .githubId(ghId)
-                .fullName(fullName)
-                .description((String) ghRepo.get("description"))
-                .isPrivate(isPrivate)
-                .owner(caller)
-                .webhookId(webhookId)
-                .webhookSecret(encryptionService.encrypt(plaintextSecret))
-                .isActive(true)
-                .build();
+                .build());
+        if (repo.getOwner() != null && !repo.getOwner().getId().equals(caller.getId())) {
+            log.info("Reassigning inactive repo {} from user {} to {}",
+                    fullName, repo.getOwner().getId(), caller.getId());
+        }
+        repo.setOwner(caller);
+        repo.setFullName(fullName);
+        repo.setDescription((String) ghRepo.get("description"));
+        repo.setPrivate(isPrivate);
+        repo.setWebhookId(webhookId);
+        repo.setWebhookSecret(encryptionService.encrypt(plaintextSecret));
+        repo.setActive(true);
         Repository saved = repositoryRepository.save(repo);
         log.info("Connected repo {} (id={}, webhookId={}) for user {}",
                 fullName, saved.getId(), webhookId, caller.getGithubUsername());
@@ -176,25 +174,19 @@ public class RepoService {
 
     /**
      * Soft-delete a repo. Best-effort webhook delete on GitHub; if it
-     * fails we still mark the repo inactive so the dashboard stops
-     * showing it (the dead webhook will simply fail deliveries on
-     * GitHub's side and they'll retry-then-disable on their end).
+     * fails we still mark the repo inactive, and any further deliveries
+     * for it are acknowledged and ignored by the webhook handler.
      */
     @Transactional
     public void disconnect(User caller, UUID repoId) {
-        Repository repo = repositoryRepository.findById(repoId)
-                .orElseThrow(() -> new EntityNotFoundException("Repo " + repoId + " not found"));
-
-        if (!repo.getOwner().getId().equals(caller.getId())) {
-            // Use 404 to avoid leaking existence of repos the caller
-            // doesn't own (mirrors ScanController.recordAction pattern).
-            throw new EntityNotFoundException("Repo " + repoId + " not found");
-        }
+        Repository repo = requireOwned(caller, repoId);
 
         try {
             if (repo.getWebhookId() != null) {
+                // The repo's owner is the caller (requireOwned); its token is encrypted at rest.
                 gitHubService.deleteWebhook(
-                        caller.getAccessToken(), repo.getFullName(), repo.getWebhookId());
+                        encryptionService.decrypt(repo.getOwner().getAccessToken()),
+                        repo.getFullName(), repo.getWebhookId());
             }
         } catch (Exception ex) {
             log.warn("Webhook delete on GitHub failed for {} ({}); soft-deleting anyway",
@@ -211,21 +203,43 @@ public class RepoService {
     // -------------------------------------------------------------------
 
     /**
-     * Returns the active repos owned by the caller, plus the latest
-     * quality score, total PRs reviewed, and the most recent review
-     * date. Cheap N+1: one query for repos, two more aggregated
-     * queries (PRs + metrics) shared across the whole page.
+     * Returns the caller's active repos with their dashboard aggregates.
+     * Issues three small queries per repo (PR count, latest review, 30-day
+     * metrics) — fine for the handful of repos a user connects.
      */
     @Transactional(readOnly = true)
     public List<RepoSummary> listForOwner(User caller) {
-        List<Repository> repos = repositoryRepository.findAllByOwnerAndIsActiveTrue(caller);
-        return repos.stream()
-                .map(repo -> new RepoSummary(
-                        repo,
-                        pullRequestRepository.countByRepoAndStatus(repo, "reviewed"),
-                        latestReviewAt(repo),
-                        averageScore(repo)))
+        return repositoryRepository.findAllByOwnerAndIsActiveTrue(caller).stream()
+                .map(this::summarize)
                 .toList();
+    }
+
+    /** Same aggregates as {@link #listForOwner} for a single owned repo. */
+    @Transactional(readOnly = true)
+    public RepoSummary getForOwner(User caller, UUID repoId) {
+        return summarize(requireOwned(caller, repoId));
+    }
+
+    /**
+     * Load a repo and verify the caller owns it. Throws
+     * {@link EntityNotFoundException} (→ 404) for missing and foreign repos alike.
+     */
+    @Transactional(readOnly = true)
+    public Repository requireOwned(User caller, UUID repoId) {
+        Repository repo = repositoryRepository.findById(repoId)
+                .orElseThrow(() -> new EntityNotFoundException("Repo " + repoId + " not found"));
+        if (!repo.getOwner().getId().equals(caller.getId())) {
+            throw new EntityNotFoundException("Repo " + repoId + " not found");
+        }
+        return repo;
+    }
+
+    private RepoSummary summarize(Repository repo) {
+        return new RepoSummary(
+                repo,
+                pullRequestRepository.countByRepoAndStatus(repo, "reviewed"),
+                latestReviewAt(repo),
+                averageScore(repo));
     }
 
     private Instant latestReviewAt(Repository repo) {
@@ -234,9 +248,8 @@ public class RepoService {
                 .orElse(null);
     }
 
+    /** Mean of the daily averages over the last 30 days (null when no reviews). */
     private BigDecimal averageScore(Repository repo) {
-        // Average over the last 30 days of metrics — cheap, capped,
-        // and matches what the chart shows on the dashboard.
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
         LocalDate from = today.minusDays(30);
         List<QualityMetric> window = qualityMetricRepository.findRange(repo, from, today);
@@ -255,11 +268,7 @@ public class RepoService {
 
     @Transactional(readOnly = true)
     public Page<PullRequestEntity> listPrs(User caller, UUID repoId, int page, int size) {
-        Repository repo = repositoryRepository.findById(repoId)
-                .orElseThrow(() -> new EntityNotFoundException("Repo " + repoId + " not found"));
-        if (!repo.getOwner().getId().equals(caller.getId())) {
-            throw new EntityNotFoundException("Repo " + repoId + " not found");
-        }
+        Repository repo = requireOwned(caller, repoId);
         PageRequest pageReq = PageRequest.of(page, size,
                 Sort.by(Sort.Direction.DESC, "createdAt"));
         return pullRequestRepository.findAllByRepo(repo, pageReq);
@@ -269,61 +278,32 @@ public class RepoService {
     // quality trend
     // -------------------------------------------------------------------
 
+    /** Daily metrics for the last {@code days} UTC days (clamped to 1..365), today included. */
     @Transactional(readOnly = true)
-    public List<QualityMetric> qualityTrend(User caller, UUID repoId, int days) {
-        Repository repo = repositoryRepository.findById(repoId)
-                .orElseThrow(() -> new EntityNotFoundException("Repo " + repoId + " not found"));
-        if (!repo.getOwner().getId().equals(caller.getId())) {
-            throw new EntityNotFoundException("Repo " + repoId + " not found");
-        }
-        int window = Math.max(1, Math.min(days, 365));
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        LocalDate from = today.minusDays(window - 1L);
-        return qualityMetricRepository.findRange(repo, from, today);
+    public List<QualityMetric> qualityTrend(Repository repo, int days) {
+        return qualityMetricRepository.findRange(repo, windowStart(days), LocalDate.now(ZoneOffset.UTC));
     }
 
-    // -------------------------------------------------------------------
-    // dashboard stats
-    // -------------------------------------------------------------------
-
-    /**
-     * Returns a per-repo aggregate of finding counts grouped by
-     * anti-pattern and severity, backed by a single GROUP-BY query
-     * (no N+1). Used by the dashboard's "biggest issues this week"
-     * chart.
-     */
+    /** Most frequent anti-pattern among findings in the same window as {@link #qualityTrend}. */
     @Transactional(readOnly = true)
-    public List<FindingStats> findingStatsForOwner(User caller, UUID repoId) {
-        Repository repo = repositoryRepository.findById(repoId)
-                .orElseThrow(() -> new EntityNotFoundException("Repo " + repoId + " not found"));
-        if (!repo.getOwner().getId().equals(caller.getId())) {
-            throw new EntityNotFoundException("Repo " + repoId + " not found");
-        }
-        return findingRepository.aggregateByAntiPatternAndSeverity(repo.getId());
+    public String topAntiPattern(Repository repo, int days) {
+        Instant since = windowStart(days).atStartOfDay(ZoneOffset.UTC).toInstant();
+        return findingRepository.findTopAntiPatterns(repo, since).stream()
+                .findFirst()
+                .map(FindingRepository.AntiPatternCount::getPattern)
+                .orElse(null);
     }
 
-    /**
-     * Returns the daily trend of finding counts for the given repo over
-     * the last {@code days} days (clamped 1..365). Backed by a single
-     * GROUP-BY query — service layer must not iterate Findings.
-     */
-    @Transactional(readOnly = true)
-    public List<FindingTrendRow> trendForOwner(User caller, UUID repoId, int days) {
-        Repository repo = repositoryRepository.findById(repoId)
-                .orElseThrow(() -> new EntityNotFoundException("Repo " + repoId + " not found"));
-        if (!repo.getOwner().getId().equals(caller.getId())) {
-            throw new EntityNotFoundException("Repo " + repoId + " not found");
-        }
+    private static LocalDate windowStart(int days) {
         int window = Math.max(1, Math.min(days, 365));
-        Instant since = Instant.now().minus(window, ChronoUnit.DAYS);
-        return findingRepository.trendByDay(repo.getId(), since);
+        return LocalDate.now(ZoneOffset.UTC).minusDays(window - 1L);
     }
 
     // -------------------------------------------------------------------
     // helpers
     // -------------------------------------------------------------------
 
-    /** {@code 32} hex chars = 128 bits of entropy — well above GitHub's limit. */
+    /** 32 random hex chars = 128 bits of entropy. */
     String generateSecret() {
         StringBuilder sb = new StringBuilder(SECRET_HEX_CHARS);
         for (int i = 0; i < SECRET_HEX_CHARS; i++) {

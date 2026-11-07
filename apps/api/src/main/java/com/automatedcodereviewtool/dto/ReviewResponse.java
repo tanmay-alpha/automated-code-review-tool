@@ -33,6 +33,12 @@ public record ReviewResponse(
         List<FindingDto> findings
 ) {
 
+    /**
+     * One finding. {@code status} is the developer's disposition:
+     * {@code open} (untouched), {@code accepted}, {@code dismissed} or
+     * {@code fixed} — the values allowed by the {@code findings.status}
+     * CHECK constraint and written by {@code POST /api/scan/action}.
+     */
     public record FindingDto(
             UUID id,
             String filePath,
@@ -43,7 +49,8 @@ public record ReviewResponse(
             String severity,
             BigDecimal confidence,
             String explanation,
-            String codeSnippet
+            String codeSnippet,
+            String status
     ) {
     }
 }

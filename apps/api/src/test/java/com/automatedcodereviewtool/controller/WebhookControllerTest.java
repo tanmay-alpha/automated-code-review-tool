@@ -8,7 +8,6 @@ import com.automatedcodereviewtool.security.JwtService;
 import com.automatedcodereviewtool.service.ApiKeyService;
 import com.automatedcodereviewtool.service.WebhookService;
 import com.automatedcodereviewtool.logging.SecurityEventLogger;
-import com.automatedcodereviewtool.monitoring.SecurityMonitor;
 import com.automatedcodereviewtool.webhook.GitHubWebhookEvent;
 import com.automatedcodereviewtool.webhook.HmacVerificationException;
 import com.automatedcodereviewtool.webhook.HmacVerifier;
@@ -23,6 +22,9 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.nio.charset.StandardCharsets;
+
+import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -50,6 +52,8 @@ class WebhookControllerTest {
 
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
+    @Autowired WebhookController webhookController;
+    @Autowired com.automatedcodereviewtool.security.RequestSizeLimitFilter requestSizeLimitFilter;
 
     @MockBean HmacVerifier hmacVerifier;
     @MockBean WebhookService webhookService;
@@ -66,7 +70,6 @@ class WebhookControllerTest {
     // it as a pass-through alongside ApiKeyAuthFilter.
     @MockBean AuthRateLimitFilter authRateLimitFilter;
     @MockBean SecurityEventLogger securityEventLogger;
-    @MockBean SecurityMonitor securityMonitor;
 
     @org.junit.jupiter.api.BeforeEach
     void stubApiKeyFilter() throws Exception {
@@ -125,7 +128,7 @@ class WebhookControllerTest {
     @Test
     void testValidWebhookReturns200() throws Exception {
         String body = payload("opened", 123L);
-        when(hmacVerifier.verify(eq(body), anyString(), eq("123"))).thenReturn(true);
+        when(hmacVerifier.verify(aryEq(utf8(body)), anyString(), eq("123"))).thenReturn(true);
         when(webhookService.receiveDelivery(eq(DELIVERY), any(GitHubWebhookEvent.class), eq(123L)))
                 .thenReturn(true);
 
@@ -143,7 +146,7 @@ class WebhookControllerTest {
     @Test
     void testForgedSignatureReturns400() throws Exception {
         String body = payload("opened", 123L);
-        when(hmacVerifier.verify(anyString(), anyString(), anyString())).thenReturn(false);
+        when(hmacVerifier.verify(any(byte[].class), anyString(), anyString())).thenReturn(false);
 
         mockMvc.perform(post("/api/webhook/github")
                         .header("X-Hub-Signature-256", "sha256=forged")
@@ -159,7 +162,7 @@ class WebhookControllerTest {
     @Test
     void testDuplicateDeliveryIdReturns200WithNoProcessing() throws Exception {
         String body = payload("opened", 123L);
-        when(hmacVerifier.verify(eq(body), anyString(), eq("123"))).thenReturn(true);
+        when(hmacVerifier.verify(aryEq(utf8(body)), anyString(), eq("123"))).thenReturn(true);
         when(webhookService.receiveDelivery(eq(DELIVERY), any(GitHubWebhookEvent.class), eq(123L)))
                 .thenReturn(false);
 
@@ -177,7 +180,7 @@ class WebhookControllerTest {
     @Test
     void testDurableIngressFailureReturns503ForRedelivery() throws Exception {
         String body = payload("opened", 123L);
-        when(hmacVerifier.verify(eq(body), anyString(), eq("123"))).thenReturn(true);
+        when(hmacVerifier.verify(aryEq(utf8(body)), anyString(), eq("123"))).thenReturn(true);
         when(webhookService.receiveDelivery(eq(DELIVERY), any(GitHubWebhookEvent.class), eq(123L)))
                 .thenThrow(new IllegalStateException("database unavailable"));
 
@@ -205,7 +208,7 @@ class WebhookControllerTest {
                         .content(ping))
                 .andExpect(status().isOk());
 
-        verify(hmacVerifier, never()).verify(anyString(), anyString(), anyString());
+        verify(hmacVerifier, never()).verify(any(byte[].class), anyString(), anyString());
         verify(webhookService, never()).processAsync(anyString());
     }
 
@@ -214,7 +217,7 @@ class WebhookControllerTest {
         // HmacVerifier throws when we have no secret for the repo — that means
         // the webhook isn't for one of our installed repos, so 200 + ignore.
         String body = payload("opened", 123L);
-        when(hmacVerifier.verify(eq(body), anyString(), eq("123")))
+        when(hmacVerifier.verify(aryEq(utf8(body)), anyString(), eq("123")))
                 .thenThrow(new HmacVerificationException("no repo"));
 
         mockMvc.perform(post("/api/webhook/github")
@@ -226,5 +229,83 @@ class WebhookControllerTest {
                 .andExpect(status().isOk());
 
         verify(webhookService, never()).processAsync(anyString());
+    }
+
+    @Test
+    void signatureIsCheckedOverTheExactRawBytes() throws Exception {
+        // UTF-8 bytes declared as ISO-8859-1: any decode/re-encode (e.g. a
+        // String @RequestBody) would turn each multi-byte character into
+        // different bytes, so only the raw request bytes match aryEq(raw).
+        byte[] raw = ("{\"action\":\"opened\",\"repository\":{\"id\":123},"
+                + "\"pull_request\":{\"number\":42,\"title\":\"Café ✓ \\u00e9\","
+                + "\"head\":{\"sha\":\"abc123sha\"}}}").getBytes(StandardCharsets.UTF_8);
+        when(hmacVerifier.verify(aryEq(raw), anyString(), eq("123"))).thenReturn(true);
+        when(webhookService.receiveDelivery(eq(DELIVERY), any(GitHubWebhookEvent.class), eq(123L)))
+                .thenReturn(true);
+
+        mockMvc.perform(post("/api/webhook/github")
+                        .header("X-Hub-Signature-256", "sha256=valid")
+                        .header("X-GitHub-Event", "pull_request")
+                        .header("X-GitHub-Delivery", DELIVERY)
+                        .contentType("application/json;charset=ISO-8859-1")
+                        .content(raw))
+                .andExpect(status().isOk());
+
+        verify(hmacVerifier).verify(aryEq(raw), anyString(), eq("123"));
+        verify(webhookService).processAsync(DELIVERY);
+    }
+
+    @Test
+    void sizeFilterBoundsAChunkedBodyWhileItIsRead() throws Exception {
+        // No Content-Length (chunked): the size filter can't reject it up
+        // front, so the stream it hands downstream must stop the read.
+        byte[] oversized = new byte[1_048_576 + 10];
+        java.util.Arrays.fill(oversized, (byte) ' ');
+        java.util.concurrent.atomic.AtomicBoolean reached = new java.util.concurrent.atomic.AtomicBoolean();
+
+        requestSizeLimitFilter.doFilter(chunked(oversized),
+                new org.springframework.mock.web.MockHttpServletResponse(), (req, res) -> {
+                    reached.set(true);
+                    org.assertj.core.api.Assertions.assertThatThrownBy(() -> req.getInputStream().readAllBytes())
+                            .isInstanceOf(com.automatedcodereviewtool.security.RequestSizeLimitFilter.BodyTooLargeException.class);
+                });
+
+        org.assertj.core.api.Assertions.assertThat(reached).isTrue();
+    }
+
+    @Test
+    void chunkedBodyOverTheLimitIsRejectedByTheControllerItself() {
+        byte[] oversized = new byte[1_048_576 + 1];
+        java.util.Arrays.fill(oversized, (byte) ' ');
+
+        org.springframework.http.ResponseEntity<Void> result = webhookController.handle(
+                chunked(oversized), "sha256=x", "pull_request", DELIVERY);
+
+        org.assertj.core.api.Assertions.assertThat(result.getStatusCode().value()).isEqualTo(413);
+        verify(hmacVerifier, never()).verify(any(byte[].class), anyString(), anyString());
+    }
+
+    /** A request whose body is readable but whose length is undeclared. */
+    private static org.springframework.mock.web.MockHttpServletRequest chunked(byte[] body) {
+        org.springframework.mock.web.MockHttpServletRequest request =
+                new org.springframework.mock.web.MockHttpServletRequest("POST", "/api/webhook/github") {
+                    @Override
+                    public int getContentLength() {
+                        return -1;
+                    }
+
+                    @Override
+                    public long getContentLengthLong() {
+                        return -1L;
+                    }
+                };
+        request.setContentType("application/json");
+        request.addHeader("Transfer-Encoding", "chunked");
+        request.setContent(body);
+        return request;
+    }
+
+    private static byte[] utf8(String body) {
+        return body.getBytes(StandardCharsets.UTF_8);
     }
 }

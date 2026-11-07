@@ -48,16 +48,22 @@ public interface IngestionOutboxRepository extends JpaRepository<IngestionOutbox
     List<IngestionOutbox> claimEligibleBatch(@Param("workerId") String workerId,
                                              @Param("batchSize") int batchSize);
 
+    /**
+     * Dead-letter events that used up their attempts. A row still in
+     * {@code processing} is only touched once its lease has expired, so the
+     * final attempt is never dead-lettered while a worker holds it.
+     */
     @Modifying
     @Query(value = """
             UPDATE ml.ingestion_outbox
                SET status = 'dead_letter', dead_lettered_at = NOW(),
                    locked_at = NULL, locked_by = NULL, updated_at = NOW(),
                    last_error = COALESCE(last_error, 'Maximum attempts exhausted')
-             WHERE status IN ('pending', 'processing', 'failed')
-               AND attempt_count >= max_attempts
+             WHERE attempt_count >= max_attempts
+               AND (status IN ('pending', 'failed')
+                    OR (status = 'processing' AND locked_at < :staleBefore))
             """, nativeQuery = true)
-    int deadLetterExhausted();
+    int deadLetterExhausted(@Param("staleBefore") OffsetDateTime staleBefore);
 
     @Modifying
     @Query(value = """
@@ -71,15 +77,24 @@ public interface IngestionOutboxRepository extends JpaRepository<IngestionOutbox
             """, nativeQuery = true)
     int recoverStaleProcessing(@Param("staleBefore") OffsetDateTime staleBefore);
 
+    /**
+     * Completion is fenced on both the worker id and the claimed
+     * {@code attempt_count}: worker ids are per process, so a process that
+     * re-claims its own expired lease must not let the stale attempt finish.
+     */
     @Modifying
     @Query(value = """
             UPDATE ml.ingestion_outbox
                SET status = 'completed', processed_at = NOW(), last_error = NULL,
                    locked_at = NULL, locked_by = NULL, updated_at = NOW()
              WHERE id = :id AND status = 'processing' AND locked_by = :workerId
+               AND attempt_count = :claimedAttempt
             """, nativeQuery = true)
-    int markCompleted(@Param("id") UUID id, @Param("workerId") String workerId);
+    int markCompleted(@Param("id") UUID id,
+                      @Param("workerId") String workerId,
+                      @Param("claimedAttempt") int claimedAttempt);
 
+    /** Fenced like {@link #markCompleted}. */
     @Modifying
     @Query(value = """
             UPDATE ml.ingestion_outbox
@@ -88,9 +103,11 @@ public interface IngestionOutboxRepository extends JpaRepository<IngestionOutbox
                    dead_lettered_at = CASE WHEN attempt_count >= max_attempts THEN NOW() ELSE NULL END,
                    last_error = :lastError, locked_at = NULL, locked_by = NULL, updated_at = NOW()
              WHERE id = :id AND status = 'processing' AND locked_by = :workerId
+               AND attempt_count = :claimedAttempt
             """, nativeQuery = true)
     int markFailed(@Param("id") UUID id,
                    @Param("workerId") String workerId,
+                   @Param("claimedAttempt") int claimedAttempt,
                    @Param("lastError") String lastError,
                    @Param("availableAt") OffsetDateTime availableAt);
 }

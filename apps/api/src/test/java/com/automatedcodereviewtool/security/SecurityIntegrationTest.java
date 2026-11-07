@@ -1,318 +1,253 @@
 package com.automatedcodereviewtool.security;
 
-import com.automatedcodereviewtool.config.SecurityConfig;
 import com.automatedcodereviewtool.logging.SecurityEventLogger;
-import com.automatedcodereviewtool.monitoring.SecurityMonitor;
+import com.automatedcodereviewtool.repository.UserRepository;
+import com.automatedcodereviewtool.webhook.HmacVerifier;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
+import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
-import jakarta.servlet.http.HttpServletRequest;
-import io.github.resilience4j.circuitbreaker.CircuitBreaker;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
 import java.time.Duration;
-import com.automatedcodereviewtool.webhook.HmacVerifier;
-
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Comprehensive security integration tests.
+ * Full filter-chain tests (real JWT, size-limit, header and webhook
+ * handling) with Redis replaced by an in-memory mock.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import({SecurityConfig.class, SecurityIntegrationTest.TestControllerConfig.class})
-public class SecurityIntegrationTest {
+@Import(SecurityIntegrationTest.TestControllerConfig.class)
+class SecurityIntegrationTest {
 
-    @Autowired
-    private MockMvc mockMvc;
+    @Autowired private MockMvc mockMvc;
+    @Autowired private JwtService jwtService;
 
-    @MockBean
-    private SecurityEventLogger securityEventLogger;
+    @MockBean private SecurityEventLogger securityEventLogger;
+    @MockBean private StringRedisTemplate redis;
+    @MockBean private HmacVerifier hmacVerifier;
+    @MockBean private UserRepository userRepository;
 
-    @MockBean
-    private SecurityMonitor securityMonitor;
+    private final Set<String> redisKeys = ConcurrentHashMap.newKeySet();
 
-    @Autowired
-    private JwtService jwtService;
-
-    @MockBean
-    private StringRedisTemplate redis;
-
-    @MockBean
-    private HmacVerifier hmacVerifier;
-
-    @MockBean
-    private com.automatedcodereviewtool.repository.UserRepository userRepository;
-
-    @Autowired
-    @Qualifier("mlWorkerCircuitBreaker")
-    private CircuitBreaker mlWorkerCircuitBreaker;
-
-    @Autowired
-    private TestSecurityController testSecurityController;
-
-    private final java.util.Set<String> redisKeys = new java.util.concurrent.ConcurrentHashMap<String, Boolean>().newKeySet();
-    private final java.util.Map<String, Long> redisCounters = new java.util.concurrent.ConcurrentHashMap<>();
-
-    @org.junit.jupiter.api.BeforeEach
-    void setUpRedisMock() throws Exception {
+    @BeforeEach
+    @SuppressWarnings("unchecked")
+    void setUpRedisMock() {
         when(hmacVerifier.verify(any(), any(), any())).thenReturn(false);
-        when(userRepository.findById(any())).thenAnswer(inv -> java.util.Optional.of(
+        when(userRepository.findById(any())).thenAnswer(inv -> Optional.of(
                 com.automatedcodereviewtool.entity.User.builder()
                         .id(inv.getArgument(0))
                         .githubUsername("test-user")
                         .accessToken("dummy")
                         .build()));
         redisKeys.clear();
-        redisCounters.clear();
-        if (mlWorkerCircuitBreaker != null) {
-            mlWorkerCircuitBreaker.reset();
-        }
-        if (testSecurityController != null) {
-            testSecurityController.resetHits();
-        }
-        org.springframework.data.redis.core.ValueOperations valueOps = mock(org.springframework.data.redis.core.ValueOperations.class);
-        
+
+        ValueOperations<String, String> valueOps = mock(ValueOperations.class);
         doAnswer(inv -> {
-            String key = inv.getArgument(0);
-            redisKeys.add(key);
+            redisKeys.add(inv.getArgument(0));
             return null;
         }).when(valueOps).set(any(), any(), any());
-        
         when(redis.opsForValue()).thenReturn(valueOps);
-
-        when(redis.hasKey(any())).thenAnswer(inv -> {
-            String key = inv.getArgument(0);
-            return redisKeys.contains(key);
-        });
-
-        when(redis.delete(any(String.class))).thenAnswer(inv -> {
-            String key = inv.getArgument(0);
-            return redisKeys.remove(key);
-        });
-
-        doAnswer(inv -> {
-            String key = inv.getArgument(0);
-            long newCount = redisCounters.compute(key, (k, v) -> v == null ? 1L : v + 1L);
-            return newCount;
-        }).when(valueOps).increment(any());
-
-        when(redis.expire(any(), any())).thenReturn(true);
+        when(redis.hasKey(any())).thenAnswer(inv -> redisKeys.contains(inv.<String>getArgument(0)));
+        when(redis.delete(any(String.class))).thenAnswer(inv -> redisKeys.remove(inv.<String>getArgument(0)));
     }
 
+    /** A trivial authenticated endpoint to probe the JWT filter with. */
     @RestController
-    @RequestMapping("/api")
-    static class TestSecurityController {
-        private final CircuitBreaker mlWorkerCircuitBreaker;
-        private final SecurityMonitor securityMonitor;
-        private int dashboardHits = 0;
-
-        public void resetHits() {
-            this.dashboardHits = 0;
-        }
-
-        @Autowired
-        public TestSecurityController(@Qualifier("mlWorkerCircuitBreaker") CircuitBreaker mlWorkerCircuitBreaker,
-                                    SecurityMonitor securityMonitor) {
-            this.mlWorkerCircuitBreaker = mlWorkerCircuitBreaker;
-            this.securityMonitor = securityMonitor;
-
-            // Listen to circuit breaker state changes
-            this.mlWorkerCircuitBreaker.getEventPublisher().onStateTransition(event -> {
-                if (event.getStateTransition() == CircuitBreaker.StateTransition.CLOSED_TO_OPEN) {
-                    securityMonitor.recordSecurityViolation(
-                        "CIRCUIT_BREAKER_OPEN", "Circuit breaker opened for ML service", "unknown");
-                }
-            });
-        }
-
-        @GetMapping("/dashboard")
-        public String dashboard(HttpServletRequest request) {
-            dashboardHits++;
-            if (dashboardHits > 5) {
-                securityMonitor.recordRateLimitEvent(
-                    null, request.getRemoteAddr() != null ? request.getRemoteAddr() : "127.0.0.1", "/api/dashboard", "RATE_LIMIT");
-            }
-            return "Dashboard Data";
-        }
-
-        @GetMapping("/ml/analyze")
-        public String analyze() {
-            try {
-                return mlWorkerCircuitBreaker.executeSupplier(() -> {
-                    throw new RuntimeException("ML Service Failed");
-                });
-            } catch (io.github.resilience4j.circuitbreaker.CallNotPermittedException e) {
-                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Circuit breaker is open");
-            } catch (Exception e) {
-                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Service error");
-            }
+    static class ProtectedTestController {
+        @GetMapping("/api/test/protected")
+        String protectedEndpoint() {
+            return "ok";
         }
     }
 
-    @org.springframework.boot.test.context.TestConfiguration
+    @TestConfiguration
     static class TestControllerConfig {
-        @org.springframework.context.annotation.Bean
-        public TestSecurityController testSecurityController(
-                @org.springframework.beans.factory.annotation.Qualifier("mlWorkerCircuitBreaker") CircuitBreaker mlWorkerCircuitBreaker,
-                SecurityMonitor securityMonitor) {
-            return new TestSecurityController(mlWorkerCircuitBreaker, securityMonitor);
+        @Bean
+        ProtectedTestController protectedTestController() {
+            return new ProtectedTestController();
         }
     }
 
     @Test
-    void testCSRFProtection() throws Exception {
-        mockMvc.perform(post("/api/auth/logout")
-                .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isUnauthorized());
+    void oversizedRequestBodyIsRejected() throws Exception {
+        String largeBody = "x".repeat(10_000); // test profile limit: 5000 bytes
+
+        mockMvc.perform(post("/api/scan/file")
+                        .content(largeBody)
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest());
 
         verify(securityEventLogger).logSecurityViolation(
-                eq("CSRF_PROTECTION"), eq("Missing CSRF token"), eq("unknown"));
+                eq("REQUEST_TOO_LARGE"), anyString(), anyString());
     }
 
     @Test
-    void testRequestSizeLimit() throws Exception {
-        // Create a large request body
-        StringBuilder largeBody = new StringBuilder();
-        for (int i = 0; i < 100000; i++) {
-            largeBody.append("This is a test line that should exceed the limit. ");
-        }
-
-        mockMvc.perform(post("/api/auth/api-key")
-                .content(largeBody.toString())
-                .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().is4xxClientError());
-
-        verify(securityMonitor).recordSecurityViolation(
-                eq("REQUEST_TOO_LARGE"), any(String.class), anyString());
-    }
-
-    @Test
-    void testSecurityHeaders() throws Exception {
+    void securityHeadersArePresent() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
-                .andExpect(header().string("Content-Security-Policy",
-                    containsString("default-src 'self'")))
-                .andExpect(header().string("Strict-Transport-Security",
-                    containsString("max-age=31536000")))
+                .andExpect(header().string("Content-Security-Policy", containsString("default-src 'self'")))
+                .andExpect(header().string("Strict-Transport-Security", containsString("max-age=31536000")))
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(header().string("X-Frame-Options", "DENY"))
                 .andExpect(header().doesNotExist("Server"));
     }
 
     @Test
-    void testRedactionSensitiveData() throws Exception {
-        // Test sensitive data in headers
-        mockMvc.perform(get("/actuator/health")
-                .header("Authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."))
+    void loggedOutAccessTokenIsRejected() throws Exception {
+        UUID userId = UUID.randomUUID();
+        String token = jwtService.generateAccessToken(userId, "test-user");
+
+        mockMvc.perform(get("/api/test/protected").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
 
-        // Verify that sensitive data was redacted in logs
-        verify(securityEventLogger).logSecurityViolation(
-                eq("HEADER_CONTAINS_TOKEN"), eq("Authorization header redacted"), eq("unknown"));
-    }
+        mockMvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
 
-    @Test
-    void testRateLimiting() throws Exception {
-        UUID testUserId = UUID.randomUUID();
-        String token = jwtService.generateAccessToken(testUserId, "test-user");
-
-        // Make many rapid requests
-        for (int i = 0; i < 5; i++) {
-            mockMvc.perform(get("/api/dashboard")
-                    .header("Authorization", "Bearer " + token));
-        }
-
-        // Should still be successful
-        mockMvc.perform(get("/api/dashboard")
-                .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
-
-        // Rate limit event should be logged
-        verify(securityMonitor).recordRateLimitEvent(
-                any(), any(String.class), any(String.class), eq("RATE_LIMIT"));
-    }
-
-    @Test
-    void testJWTBlacklisting() throws Exception {
-        // First get a valid token
-        UUID testUserId = UUID.randomUUID();
-        String token = jwtService.generateAccessToken(testUserId, "test-user");
-
-        // Use the token to make a request
-        mockMvc.perform(get("/api/dashboard")
-                .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
-
-        // Now blacklist the token (simulate logout)
-        mockMvc.perform(post("/api/auth/logout")
-                .header("Authorization", "Bearer " + token));
-
-        // The token should be rejected
-        mockMvc.perform(get("/api/dashboard")
-                .header("Authorization", "Bearer " + token))
+        mockMvc.perform(get("/api/test/protected").header("Authorization", "Bearer " + token))
                 .andExpect(status().isUnauthorized());
 
-        verify(securityEventLogger).logTokenBlacklisting(
-                any(String.class), any(UUID.class), eq("logout"));
+        verify(securityEventLogger).logTokenBlacklisting(anyString(), eq(userId), eq("logout"));
     }
 
     @Test
-    void testCircuitBreaker() throws Exception {
-        UUID testUserId = UUID.randomUUID();
-        String token = jwtService.generateAccessToken(testUserId, "test-user");
+    void refreshTokenIsNotAcceptedAsAccessToken() throws Exception {
+        String refresh = jwtService.generateRefreshToken(UUID.randomUUID());
 
-        // Simulate multiple failures
-        for (int i = 0; i < 10; i++) {
-            mockMvc.perform(get("/api/ml/analyze")
-                    .header("Authorization", "Bearer " + token)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content("invalid"))
-                    .andExpect(status().is5xxServerError());
-        }
-
-        // Circuit breaker should open and return 503
-        mockMvc.perform(get("/api/ml/analyze")
-                .header("Authorization", "Bearer " + token)
-                .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isServiceUnavailable());
-
-        verify(securityMonitor).recordSecurityViolation(
-                eq("CIRCUIT_BREAKER_OPEN"), eq("Circuit breaker opened for ML service"), eq("unknown"));
+        mockMvc.perform(get("/api/test/protected").header("Authorization", "Bearer " + refresh))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void testWebhookSecurity() throws Exception {
-        // Test webhook with invalid signature
+    void accessTokenIsRejectedWith503WhenRevocationCheckIsUnavailable() throws Exception {
+        doThrow(new RedisConnectionFailureException("redis down")).when(redis).hasKey(any());
+        String token = jwtService.generateAccessToken(UUID.randomUUID(), "test-user");
+
+        mockMvc.perform(get("/api/test/protected").header("Authorization", "Bearer " + token))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.error").value("AUTH_UNAVAILABLE"))
+                .andExpect(jsonPath("$.status").value(503));
+    }
+
+    @Test
+    void refreshFailsClosedWhenSessionStoreIsUnavailable() throws Exception {
+        when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+                .thenThrow(new RedisConnectionFailureException("redis down"));
+        String refresh = jwtService.generateRefreshToken(UUID.randomUUID());
+
+        mockMvc.perform(post("/api/auth/refresh").cookie(new jakarta.servlet.http.Cookie("refreshToken", refresh)))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.error").value("SERVICE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.status").value(503));
+    }
+
+    @Test
+    void refreshWithTokenThatIsNotTheCurrentSessionIsRejected() throws Exception {
+        // The compare-and-set script found a different token (and revoked the session).
+        when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(0L);
+        String refresh = jwtService.generateRefreshToken(UUID.randomUUID());
+
+        mockMvc.perform(post("/api/auth/refresh").cookie(new jakarta.servlet.http.Cookie("refreshToken", refresh)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().doesNotExist("Set-Cookie"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void refreshRotatesSessionWithSingleCompareAndSet() throws Exception {
+        UUID userId = UUID.randomUUID();
+        when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+        String refresh = jwtService.generateRefreshToken(userId);
+
+        mockMvc.perform(post("/api/auth/refresh").cookie(new jakarta.servlet.http.Cookie("refreshToken", refresh)))
+                .andExpect(status().isOk())
+                .andExpect(header().stringValues("Set-Cookie",
+                        hasItem(startsWith("refreshToken="))));
+
+        ArgumentCaptor<List<String>> keys = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Object> rotatedTo = ArgumentCaptor.forClass(Object.class);
+        verify(redis).execute(any(RedisScript.class), keys.capture(),
+                eq(refresh), rotatedTo.capture(), eq("604800"));
+        assertThat(keys.getValue()).containsExactly("session:refresh:" + userId);
+        assertThat(rotatedTo.getValue()).isNotEqualTo(refresh);
+        // No separate read-then-write: the rotation is one atomic script call.
+        verify(redis.opsForValue(), never()).get(anyString());
+        verify(redis.opsForValue(), never()).set(anyString(), anyString(), any(Duration.class));
+    }
+
+    @Test
+    void logoutFailsClosedWhenBlacklistWriteFails() throws Exception {
+        String token = jwtService.generateAccessToken(UUID.randomUUID(), "test-user");
+        ValueOperations<String, String> valueOps = redis.opsForValue();
+        doThrow(new RedisConnectionFailureException("redis down"))
+                .when(valueOps).set(anyString(), anyString(), any(Duration.class));
+
+        mockMvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + token))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.error").value("SERVICE_UNAVAILABLE"))
+                .andExpect(header().doesNotExist("Set-Cookie"));
+    }
+
+    @Test
+    void logoutFailsClosedWhenRefreshSessionDeleteFails() throws Exception {
+        String token = jwtService.generateAccessToken(UUID.randomUUID(), "test-user");
+        when(redis.delete(any(String.class))).thenThrow(new RedisConnectionFailureException("redis down"));
+
+        mockMvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + token))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.error").value("SERVICE_UNAVAILABLE"));
+    }
+
+    @Test
+    void webhookWithInvalidSignatureIsRejected() throws Exception {
         String webhookPayload = "{\"action\":\"opened\",\"repository\":{\"id\":123}}";
-        String signature = "invalid-signature";
 
         mockMvc.perform(post("/api/webhook/github")
-                .content(webhookPayload)
-                .header("X-GitHub-Delivery", "test-delivery-id")
-                .header("X-GitHub-Event", "pull_request")
-                .header("X-Hub-Signature-256", signature)
-                .contentType(MediaType.APPLICATION_JSON))
+                        .content(webhookPayload)
+                        .header("X-GitHub-Delivery", "test-delivery-id")
+                        .header("X-GitHub-Event", "pull_request")
+                        .header("X-Hub-Signature-256", "sha256=invalid")
+                        .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest());
 
         verify(securityEventLogger).logWebhookSecurityEvent(

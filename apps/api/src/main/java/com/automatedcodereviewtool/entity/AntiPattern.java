@@ -9,8 +9,8 @@ import jakarta.persistence.UniqueConstraint;
 /**
  * Canonical anti-pattern taxonomy row.
  *
- * <p>Populated at build time from {@code taxonomy/anti_patterns.yaml}
- * via the V5 Flyway migration. The application reads it through
+ * <p>Kept in sync with {@code taxonomy/anti_patterns.yaml} by Flyway
+ * (most recently V17). The application reads it through
  * {@link com.automatedcodereviewtool.repository.AntiPatternRepository}
  * and {@link com.automatedcodereviewtool.service.TaxonomyService}.</p>
  */

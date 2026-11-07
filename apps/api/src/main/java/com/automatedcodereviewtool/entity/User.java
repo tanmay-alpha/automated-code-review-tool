@@ -41,25 +41,6 @@ public class User {
     @Column(name = "access_token", nullable = false, columnDefinition = "TEXT")
     private String accessToken;
 
-    /** SHA-256 hash of the GitHub OAuth refresh token. */
-    @Column(name = "refresh_token")
-    private String refreshTokenHash;
-
-    /**
-     * Legacy column — API keys are now managed via the {@code api_keys} table.
-     * This field is read-only at the entity level (insertable=false, updatable=false).
-     * Retained for backward compatibility with the V1 schema.
-     */
-    @Column(name = "api_key_hash", insertable = false, updatable = false)
-    private String apiKeyHash;
-
-    /**
-     * Legacy column — first 8 chars of the API key for display.
-     * Read-only at the entity level; managed by {@link com.automatedcodereviewtool.service.ApiKeyService}.
-     */
-    @Column(name = "api_key_prefix", insertable = false, updatable = false)
-    private String apiKeyPrefix;
-
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

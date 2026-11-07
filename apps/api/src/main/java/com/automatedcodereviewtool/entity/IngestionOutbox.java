@@ -7,6 +7,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -36,6 +38,8 @@ public class IngestionOutbox {
     @Column(name = "aggregate_id", nullable = false)
     private UUID aggregateId;
 
+    // Bound as JSON so Postgres accepts it for the jsonb column (a varchar bind is rejected).
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "payload", columnDefinition = "JSONB")
     private String payload;
 

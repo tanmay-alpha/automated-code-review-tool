@@ -46,7 +46,7 @@ public class ReviewController {
     @GetMapping("/{prId}")
     public ResponseEntity<ReviewResponse> getReview(@PathVariable("prId") UUID prId,
                                                     @AuthenticationPrincipal User caller) {
-        PullRequestEntity pr = pullRequestRepository.findById(prId)
+        PullRequestEntity pr = pullRequestRepository.findWithRepoAndOwnerById(prId)
                 .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException(
                         "Review " + prId + " not found"));
 
@@ -68,7 +68,8 @@ public class ReviewController {
                         f.getSeverity(),
                         f.getConfidence(),
                         f.getExplanation(),
-                        f.getCodeSnippet()
+                        f.getCodeSnippet(),
+                        f.getStatus()
                 ))
                 .toList();
 

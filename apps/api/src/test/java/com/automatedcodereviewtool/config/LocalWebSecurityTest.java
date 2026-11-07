@@ -29,7 +29,7 @@ class LocalWebSecurityTest {
     void corsAllowsConfiguredFrontendWithCredentials() {
         AppConfig appConfig = new AppConfig();
         appConfig.setFrontendUrl("http://localhost:3000");
-        SecurityConfig securityConfig = new SecurityConfig(null, null, null, appConfig, null, null);
+        SecurityConfig securityConfig = new SecurityConfig(null, null, null, appConfig, null);
 
         CorsConfiguration cors = securityConfig.corsConfigurationSource()
                 .getCorsConfiguration(new MockHttpServletRequest("GET", "/api/auth/me"));

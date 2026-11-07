@@ -2,7 +2,6 @@ package com.automatedcodereviewtool.config;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
-import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import com.automatedcodereviewtool.exception.InvalidDiffException;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,23 +9,19 @@ import org.springframework.context.annotation.Configuration;
 import java.time.Duration;
 
 /**
- * Configuration for Resilience4j circuit breakers.
- *
- * This configuration provides circuit breakers for:
- * - Redis rate limiting (fallback to in-memory rate limiting)
- * - ML worker service calls
+ * Resilience4j circuit breakers, built directly (no Spring auto-config):
+ * one guarding the Redis-backed API-key rate limiter, one guarding ML
+ * worker calls. Both use a count-based window and open when at least
+ * half of the recent calls in the window failed.
  */
 @Configuration
 public class ResilienceConfig {
 
-    /**
-     * Circuit breaker for Redis operations during rate limiting.
-     * Opens after 5 consecutive failures, with a 60-second wait.
-     */
+    /** Redis rate limiting: 5-call window, stays open for 60 s. */
     @Bean
     public CircuitBreaker redisRateLimiterCircuitBreaker() {
         CircuitBreakerConfig config = CircuitBreakerConfig.custom()
-                .failureRateThreshold(50) // Open after 50% failures
+                .failureRateThreshold(50)
                 .waitDurationInOpenState(Duration.ofSeconds(60))
                 .permittedNumberOfCallsInHalfOpenState(2)
                 .slidingWindowSize(5)
@@ -37,8 +32,9 @@ public class ResilienceConfig {
     }
 
     /**
-     * Circuit breaker for ML worker service calls.
-     * Opens after 3 consecutive failures, with a 30-second wait.
+     * ML worker calls: 3-call window, stays open for 30 s. A 4xx from the
+     * worker ({@link InvalidDiffException}) is a bad input, not an outage,
+     * so it does not count as a failure.
      */
     @Bean
     public CircuitBreaker mlWorkerCircuitBreaker() {
@@ -53,10 +49,5 @@ public class ResilienceConfig {
                 .build();
 
         return CircuitBreaker.of("mlWorker", config);
-    }
-
-    @Bean
-    public CircuitBreakerRegistry circuitBreakerRegistry() {
-        return CircuitBreakerRegistry.of(redisRateLimiterCircuitBreaker().getCircuitBreakerConfig());
     }
 }

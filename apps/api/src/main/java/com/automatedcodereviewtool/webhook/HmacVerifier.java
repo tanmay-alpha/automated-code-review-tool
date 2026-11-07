@@ -18,9 +18,9 @@ import java.util.HexFormat;
  * <p>GitHub computes HMAC-SHA256 over the raw request body using the
  * shared secret it was given at webhook installation, and sends the
  * result hex-encoded with a {@code sha256=} prefix. We re-derive the
- * same digest and compare with {@link MessageDigest#isEqual(byte[], byte[])}
- * (a fixed-time comparison, so we don't leak signature length/content
- * via timing).</p>
+ * digest over the same raw bytes (never a decoded/re-encoded string) and
+ * compare with {@link MessageDigest#isEqual(byte[], byte[])}, a
+ * constant-time comparison.</p>
  *
  * <p>The shared secret is stored encrypted in {@code repositories.webhook_secret};
  * we decrypt it here with {@link EncryptionService} before use.</p>
@@ -41,13 +41,13 @@ public class HmacVerifier {
     }
 
     /**
-     * @param payload         the raw request body (before any parsing)
+     * @param payload         the raw request body bytes, exactly as received
      * @param signatureHeader value of the {@code X-Hub-Signature-256} header
      * @param repoGithubId    the GitHub repo id from the payload
      * @return true if the signature matches
      * @throws HmacVerificationException if we have no secret on file for the repo
      */
-    public boolean verify(String payload, String signatureHeader, String repoGithubId) {
+    public boolean verify(byte[] payload, String signatureHeader, String repoGithubId) {
         if (signatureHeader == null || !signatureHeader.startsWith(SIGNATURE_PREFIX)) {
             return false;
         }
@@ -72,11 +72,11 @@ public class HmacVerifier {
                 signatureHeader.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static String hmacHex(String secret, String payload) {
+    private static String hmacHex(String secret, byte[] payload) {
         try {
             Mac mac = Mac.getInstance(HMAC_ALG);
             mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), HMAC_ALG));
-            byte[] digest = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
+            byte[] digest = mac.doFinal(payload);
             return HexFormat.of().formatHex(digest);
         } catch (Exception e) {
             throw new IllegalStateException("HMAC computation failed", e);

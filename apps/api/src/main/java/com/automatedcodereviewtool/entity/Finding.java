@@ -66,7 +66,7 @@ public class Finding {
     @Column(name = "code_snippet", columnDefinition = "TEXT")
     private String codeSnippet;
 
-    /** ML engine identifier (e.g. "semgrep", "ml-worker"). */
+    /** Detector reported by the ML worker: {@code "model"} or {@code "fallback"} (rule-based). */
     @Column(name = "engine", length = 60)
     private String engine;
 

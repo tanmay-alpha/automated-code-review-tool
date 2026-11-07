@@ -24,36 +24,26 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.ArrayDeque;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
 /**
- * Authenticates {@code /api/scan/file} (and any future
- * {@code /api/scan/...} endpoint) by an
+ * Authenticates {@code /api/scan/file} by an
  * {@code Authorization: Bearer cl_live_xxxx...} header.
  *
  * <p>Flow:</p>
  * <ol>
- *   <li>Skip when the request is not for {@code /api/scan/file}
- *       — JWT or other filters take over.</li>
- *   <li>Parse the {@code Authorization} header.</li>
- *   <li>Extract the prefix ({@code cl_live_} + first 8 hex chars).</li>
- *   <li>Look up the user by prefix.</li>
- *   <li>Bcrypt-verify the full key against the stored hash.</li>
- *   <li>Apply a 60-second Redis rate limit
- *       (key {@code ratelimit:apikey:{userId}}).</li>
- *   <li>On success: set the {@code SecurityContextHolder} with
- *       a {@code ROLE_API_KEY} authority so the controller can
- *       accept the call.</li>
- *   <li>On any failure: 403 (or 429 if rate-limited).</li>
+ *   <li>Skip when the request is not for {@code /api/scan/file}, or the
+ *       bearer value is not an API key — the JWT filter handles those.</li>
+ *   <li>Look up the key by its prefix ({@code cl_live_} + first 8 hex chars)
+ *       and bcrypt-verify the full key.</li>
+ *   <li>Apply a per-user limit of {@code app.ratelimit.api-key.requests-per-minute}
+ *       (Redis key {@code ratelimit:apikey:{userId}}, 60-second window).</li>
+ *   <li>On success: authenticate the request as the key's {@link User}
+ *       with {@code ROLE_API_KEY}.</li>
+ *   <li>On failure: 401, or 429 when rate-limited.</li>
  * </ol>
- *
- * <p>This filter is registered <strong>before</strong> {@link JwtAuthFilter}
- * in the chain; for non-{@code /api/scan/file} requests it returns
- * immediately and the JWT filter handles auth as usual.</p>
  */
 @Component
 public class ApiKeyAuthFilter extends OncePerRequestFilter {
@@ -177,7 +167,8 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             return CircuitBreaker.decorateSupplier(redisCircuitBreaker,
                 () -> checkRateLimitWithRedis(key, userId)).get();
         } catch (Exception e) {
-            log.warn("Circuit breaker open for Redis rate limiting, falling back to in-memory limiter for user {}", userId);
+            log.warn("Redis rate limiting unavailable ({}); using in-memory limiter for user {}",
+                    e.getClass().getSimpleName(), userId);
             return fallbackRateLimit(userId);
         }
     }

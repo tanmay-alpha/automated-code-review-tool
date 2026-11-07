@@ -1,16 +1,5 @@
 package com.automatedcodereviewtool;
 
-import com.automatedcodereviewtool.entity.Annotation;
-import com.automatedcodereviewtool.entity.CodeSample;
-import com.automatedcodereviewtool.entity.Finding;
-import com.automatedcodereviewtool.entity.IngestionOutbox;
-import com.automatedcodereviewtool.entity.PredictionEvent;
-import com.automatedcodereviewtool.entity.PullRequestEntity;
-import com.automatedcodereviewtool.entity.Repository;
-import com.automatedcodereviewtool.entity.User;
-import com.automatedcodereviewtool.repository.AnnotationRepository;
-import com.automatedcodereviewtool.repository.IngestionOutboxRepository;
-import com.automatedcodereviewtool.repository.PredictionEventRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -18,18 +7,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.math.BigDecimal;
-import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
-
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * PostgreSQL integration checks for the ML data contract.
@@ -42,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MlDataContractPostgresTest {
 
     @Container
-    static final PostgreSQLContainer<?> PG = new PostgreSQLContainer<>("postgres:16-alpine")
+    static final PostgreSQLContainer PG = new PostgreSQLContainer("postgres:16-alpine")
             .withDatabaseName("acrt_ml_contract_test")
             .withUsername("test")
             .withPassword("test");
@@ -63,17 +45,8 @@ class MlDataContractPostgresTest {
     @Autowired
     private JdbcTemplate jdbc;
 
-    @Autowired
-    private AnnotationRepository annotationRepository;
-
-    @Autowired
-    private IngestionOutboxRepository outboxRepository;
-
-    @Autowired
-    private PredictionEventRepository predictionEventRepository;
-
     // ================================================================
-    // Annotation idempotency
+    // Annotation constraints (idempotency key, feedback action, resolution state)
     // ================================================================
 
     @Test

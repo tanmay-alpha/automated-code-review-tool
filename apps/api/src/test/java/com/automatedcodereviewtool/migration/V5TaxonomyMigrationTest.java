@@ -6,7 +6,7 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -36,7 +36,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class V5TaxonomyMigrationTest {
 
     @Container
-    static final PostgreSQLContainer<?> PG = new PostgreSQLContainer<>("postgres:16-alpine")
+    static final PostgreSQLContainer PG = new PostgreSQLContainer("postgres:16-alpine")
             .withDatabaseName("acrt_test")
             .withUsername("test")
             .withPassword("test");
@@ -83,16 +83,19 @@ class V5TaxonomyMigrationTest {
     }
 
     @Test
-    void taxonomyServiceValidationPasses() {
-        assertThat(taxonomyService.allIds()).isNotEmpty();
-        assertThat(taxonomyService.trainableIds()).isNotEmpty();
-        assertThat(taxonomyService.contains("PERFORMANCE_N_PLUS_ONE")).isTrue();
-        assertThat(taxonomyService.contains("PERFORMANCE_N_PLUS_1")).isFalse();
-        assertThat(taxonomyService.isTrainable("MAINTAINABILITY_PRINT_STATEMENT")).isFalse();
-        assertThat(taxonomyService.isTrainable("SECURITY_HARDCODED_SECRET")).isTrue();
-        assertThat(taxonomyService.categoryOf("PERFORMANCE_N_PLUS_ONE"))
-                .isEqualTo("PERFORMANCE");
-        assertThat(taxonomyService.severityOf("PERFORMANCE_N_PLUS_ONE"))
+    void taxonomyMatchesYamlAfterV17() {
+        taxonomyService.reload();
+        assertThat(taxonomyService.allIds()).hasSize(12)
+                .contains("PERFORMANCE_N_PLUS_ONE", "PERFORMANCE_QUADRATIC_LOOP",
+                        "RELIABILITY_MISSING_TIMEOUT", "MAINTAINABILITY_COMMENTED_CODE")
+                .doesNotContain("PERFORMANCE_N_PLUS_1", "READABILITY_COMMENTED_OUT_CODE",
+                        "SECURITY_XSS_VULNERABILITY");
+        assertThat(taxonomyService.trainableIds())
+                .contains("SECURITY_HARDCODED_SECRET")
+                .doesNotContain("MAINTAINABILITY_PRINT_STATEMENT", "MAINTAINABILITY_COMMENTED_CODE");
+        assertThat(antiPatternRepository.findById("PERFORMANCE_N_PLUS_ONE"))
+                .get()
+                .extracting(AntiPattern::getDefaultSeverity)
                 .isEqualTo("major");
     }
 }

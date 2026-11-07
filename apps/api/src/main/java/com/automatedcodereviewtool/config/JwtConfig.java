@@ -12,7 +12,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "app.jwt")
 public class JwtConfig {
 
-    /** Base64-encoded HMAC-SHA256 secret. Must decode to >= 32 bytes. */
+    /** HMAC-SHA256 signing secret, base64 or raw text; must yield >= 32 bytes. */
     private String secret;
 
     /** Access-token lifetime in seconds (default 900 = 15 minutes). */

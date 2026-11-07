@@ -1,109 +1,51 @@
 package com.automatedcodereviewtool.security;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.util.concurrent.TimeUnit;
 
 /**
- * Service for managing JWT token blacklists.
+ * Revokes access tokens on logout.
  *
- * <p>This service implements token invalidation by storing JWT IDs in Redis
- * with a TTL matching the token's expiration time. When a user logs out,
- * their access token is blacklisted to prevent reuse.</p>
+ * <p>The token's {@code jti} is stored in Redis under
+ * {@code blacklist:jti:<jti>} with a TTL equal to the token lifetime, so
+ * entries expire on their own once the token could no longer be used
+ * anyway.</p>
  *
- * <p>Tokens are stored with the pattern {@code blacklist:jti:<tokenJTI>} and
- * automatically expire when the token would naturally expire.</p>
+ * <p><b>Redis-outage policy.</b> Auth paths fail closed: if Redis is
+ * unreachable, JWT-authenticated requests (blacklist check), OAuth login,
+ * token refresh and logout (refresh-session store) answer 503 rather than
+ * accepting a token that might have been revoked. Rate limiters fail open
+ * with a warning — the auth limiter lets the request through, the API-key
+ * limiter falls back to a per-instance in-memory limit.</p>
  */
 @Service
 public class JwtBlacklistService {
 
-    private static final Logger log = LoggerFactory.getLogger(JwtBlacklistService.class);
     private static final String BLACKLIST_PREFIX = "blacklist:jti:";
+
     private final StringRedisTemplate redis;
-    private final long tokenExpiryHours;
 
     public JwtBlacklistService(StringRedisTemplate redis) {
         this.redis = redis;
-        // Default to 24 hours, slightly longer than JWT expiry
-        this.tokenExpiryHours = 24;
     }
 
     /**
-     * Blacklist a JWT token by its JTI (JWT ID).
-     *
-     * @param jti the unique JWT ID from the token claims
-     * @param expiration the token's expiration time in seconds
+     * @param jti        the unique JWT ID from the token claims
+     * @param ttlSeconds how long to remember it (the token's lifetime)
      */
-    public void blacklistToken(String jti, long expiration) {
+    public void blacklistToken(String jti, long ttlSeconds) {
         if (jti == null || jti.isBlank()) {
             throw new IllegalArgumentException("JWT ID cannot be null or empty");
         }
-
-        // Calculate TTL: use the token's expiration time, but cap at our maximum
-        long ttl = Math.min(expiration, tokenExpiryHours * 3600);
-
-        String key = BLACKLIST_PREFIX + jti;
-        redis.opsForValue().set(key, "blacklisted", Duration.ofSeconds(ttl));
-
-        // Log for audit purposes
-        log.warn("[AUDIT] Token blacklisted: jti={}, userId={}, reason={}",
-                jti.substring(0, Math.min(8, jti.length())) + "...",
-                "N/A", "logout");
+        redis.opsForValue().set(BLACKLIST_PREFIX + jti, "1", Duration.ofSeconds(ttlSeconds));
     }
 
-    /**
-     * Check if a JWT token is blacklisted.
-     *
-     * @param jti the unique JWT ID from the token claims
-     * @return true if the token is blacklisted, false otherwise
-     */
     public boolean isBlacklisted(String jti) {
         if (jti == null || jti.isBlank()) {
             return false;
         }
-
-        String key = BLACKLIST_PREFIX + jti;
-        return Boolean.TRUE.equals(redis.hasKey(key));
-    }
-
-    /**
-     * Remove a token from the blacklist (useful for token rotation).
-     *
-     * @param jti the unique JWT ID from the token claims
-     */
-    public void removeFromBlacklist(String jti) {
-        if (jti == null || jti.isBlank()) {
-            return;
-        }
-
-        String key = BLACKLIST_PREFIX + jti;
-        redis.delete(key);
-    }
-
-    /**
-     * Clean up expired blacklist entries.
-     * This is typically run periodically by a scheduler.
-     */
-    public void cleanupExpiredEntries() {
-        // In a production environment, you would use Redis keyspace notifications
-        // or a scheduled job to clean up expired entries. Redis automatically
-        // removes keys when they expire, so explicit cleanup is not necessary
-        // but can be added for monitoring purposes.
-    }
-
-    /**
-     * Get the current size of the blacklist.
-     *
-     * @return the number of blacklisted tokens
-     */
-    public long getBlacklistSize() {
-        // Note: This is an approximation as we can't efficiently count keys
-        // with a pattern without Redis 7's COUNT option or SCAN.
-        // In production, consider maintaining a counter.
-        return 0L;
+        return Boolean.TRUE.equals(redis.hasKey(BLACKLIST_PREFIX + jti));
     }
 }

@@ -1,13 +1,9 @@
+server:
+  max-http-request-header-size: 8KB   # Tomcat default; auth cookies need the headroom
+
 spring:
   application:
     name: automated-code-review-tool-api
-
-  server:
-    max-http-request-header-size: 4KB
-
-  servlet:
-    multipart:
-      max-request-size: 1MB
 
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/automated-code-review-tool}
@@ -22,6 +18,8 @@ spring:
       keepalive-time: 30000
 
   jpa:
+    # Lazy associations are loaded inside service transactions or via fetch graphs.
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     show-sql: false
@@ -52,6 +50,14 @@ app:
   ratelimit:
     api-key:
       requests-per-minute: ${API_KEY_RPM:60}
+    auth:
+      # Comma-separated IPs/CIDRs of reverse proxies whose X-Forwarded-For is
+      # trusted. Empty: the direct peer address is the client IP.
+      trusted-proxies: ${AUTH_TRUSTED_PROXIES:}
+      # Header holding the original client IP, set by a CDN in front of the
+      # trusted proxy (e.g. True-Client-IP on Render/Cloudflare). Only read
+      # from trusted-proxies peers; empty disables it.
+      client-ip-header: ${AUTH_CLIENT_IP_HEADER:}
 
   github:
     client-id: ${GITHUB_CLIENT_ID}
@@ -59,15 +65,11 @@ app:
     oauth-redirect-uri: ${APP_BASE_URL:http://localhost:8080}/api/auth/callback
 
   ml-worker:
-    url: ${ML_WORKER_URL:http://localhost:8000}
+    url: ${ML_WORKER_URL:http://${ML_WORKER_HOSTPORT:localhost:8000}}
     secret: ${ML_WORKER_SECRET}
 
   encryption:
     key: ${ENCRYPTION_KEY}
-
-  supabase:
-    url: ${SUPABASE_URL:}
-    anon-key: ${SUPABASE_ANON_KEY:}
 
 management:
   endpoints:

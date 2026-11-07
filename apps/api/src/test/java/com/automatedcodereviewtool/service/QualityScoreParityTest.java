@@ -10,6 +10,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -59,17 +60,23 @@ class QualityScoreParityTest {
     }
 
     @Test
-    void javaTrainableIdsMatchesCanonicalTaxonomy() {
-        // The Java service must load the same canonical taxonomy as Python.
-        // Verify each entry has the expected structure and that the
-        // trainable list is non-empty and contains well-known IDs.
-        assertThat(taxonomyService.trainableIds()).isNotEmpty();
-        assertThat(taxonomyService.contains("SECURITY_HARDCODED_SECRET")).isTrue();
-        assertThat(taxonomyService.isTrainable("SECURITY_HARDCODED_SECRET")).isTrue();
-        assertThat(taxonomyService.categoryOf("SECURITY_HARDCODED_SECRET"))
-                .isEqualTo("SECURITY");
-        assertThat(taxonomyService.contains("PERFORMANCE_N_PLUS_1")).isFalse();
-        assertThat(taxonomyService.contains("PERFORMANCE_N_PLUS_ONE")).isTrue();
+    @SuppressWarnings("unchecked")
+    void databaseTaxonomyMatchesCanonicalYaml() throws Exception {
+        // Surefire runs from apps/api, so the repo-root taxonomy is two levels up.
+        java.nio.file.Path yamlPath = java.nio.file.Paths.get("../../taxonomy/anti_patterns.yaml");
+        Map<String, Object> yaml;
+        try (java.io.Reader reader = java.nio.file.Files.newBufferedReader(yamlPath)) {
+            yaml = new org.yaml.snakeyaml.Yaml().load(reader);
+        }
+        List<Map<String, Object>> entries = (List<Map<String, Object>>) yaml.get("anti_patterns");
+        List<String> yamlIds = entries.stream().map(e -> (String) e.get("id")).sorted().toList();
+        List<String> yamlTrainable = entries.stream()
+                .filter(e -> Boolean.TRUE.equals(e.get("trainable")))
+                .map(e -> (String) e.get("id")).sorted().toList();
+
+        taxonomyService.reload();
+        assertThat(taxonomyService.allIds()).containsExactlyInAnyOrderElementsOf(yamlIds);
+        assertThat(taxonomyService.trainableIds()).containsExactlyInAnyOrderElementsOf(yamlTrainable);
     }
 
     @Test

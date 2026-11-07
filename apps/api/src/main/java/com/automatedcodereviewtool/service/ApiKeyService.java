@@ -17,11 +17,11 @@ import java.util.UUID;
 /**
  * Mints, lists, and revokes API keys.
  *
- * <p>Format: {@code cl_live_} + 32 lowercase hex chars = 64 hex chars
- * after the prefix, 256 bits of entropy. The prefix
- * {@code cl_live_} + first 8 hex chars is stored plaintext (for
- * O(1) lookup in {@link com.automatedcodereviewtool.security.ApiKeyAuthFilter});
- * the rest is bcrypt-hashed and never returned after creation.</p>
+ * <p>Format: {@code cl_live_} + 32 lowercase hex chars (128 bits of
+ * entropy). The prefix {@code cl_live_} + first 8 hex chars is stored
+ * in plaintext for lookup in
+ * {@link com.automatedcodereviewtool.security.ApiKeyAuthFilter}; the full
+ * key is bcrypt-hashed and never returned after creation.</p>
  */
 @Service
 public class ApiKeyService {
@@ -68,9 +68,10 @@ public class ApiKeyService {
         return new CreatedApiKey(saved, keyValue);
     }
 
+    /** Active (non-revoked) keys, newest first. */
     @Transactional(readOnly = true)
     public List<ApiKey> listKeys(User caller) {
-        return apiKeyRepository.findAllByUserId(caller.getId());
+        return apiKeyRepository.findAllByUserIdAndRevokedFalseOrderByCreatedAtDesc(caller.getId());
     }
 
     @Transactional
@@ -84,20 +85,14 @@ public class ApiKeyService {
         apiKeyRepository.save(key);
     }
 
-    /**
-     * Look up a key by its prefix. Returns {@code null} when no
-     * key matches — the filter then 403s. Used by
-     * {@code ApiKeyAuthFilter}; package-private would be cleaner but
-     * Spring needs the bean to be public.
-     */
+    /** Look up a key by its prefix; {@code null} when none matches. */
     public ApiKey findByPrefix(String prefix) {
         return apiKeyRepository.findByPrefix(prefix).orElse(null);
     }
 
     /**
-     * Verify a candidate key string against the stored bcrypt hash.
-     * Returns {@code true} only when the prefix matches <em>and</em>
-     * the bcrypt verifies <em>and</em> the key is not revoked.
+     * True only when the key exists, is not revoked, starts with its stored
+     * prefix, and the bcrypt hash matches.
      */
     public boolean verify(ApiKey key, String candidate) {
         if (key == null || key.isRevoked()) return false;

@@ -8,13 +8,12 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Public view of a connected repository. Hides the encrypted
- * webhook secret and access token — those never leave the service.
+ * Public view of a connected repository, used by every repo endpoint.
+ * Hides the encrypted webhook secret and the owner's access token.
  *
- * <p>The {@code totalPrsReviewed}, {@code lastReviewedAt} and
- * {@code latestQualityScore} fields are aggregated by
- * {@link RepoService#listForOwner} and are suitable for the
- * dashboard's repo-list view.</p>
+ * <p>{@code totalPrsReviewed}, {@code lastReviewedAt} and
+ * {@code latestQualityScore} (mean of the daily averages over the last
+ * 30 days) come from {@link RepoService.RepoSummary}.</p>
  */
 public record RepoResponse(
         UUID id,
@@ -26,19 +25,6 @@ public record RepoResponse(
         Instant lastReviewedAt,
         BigDecimal latestQualityScore
 ) {
-    public static RepoResponse from(Repository repo) {
-        return new RepoResponse(
-                repo.getId(),
-                repo.getFullName(),
-                repo.getGithubId(),
-                repo.isActive(),
-                repo.getCreatedAt(),
-                0L,
-                null,
-                null
-        );
-    }
-
     public static RepoResponse from(RepoService.RepoSummary s) {
         Repository repo = s.repo();
         return new RepoResponse(
