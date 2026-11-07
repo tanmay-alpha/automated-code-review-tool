@@ -1,5 +1,5 @@
 name: 'automated-code-review-tool Code Review'
-description: 'Analyze a pull-request diff with an automated-code-review-tool API'
+description: 'Scan the files changed in a pull request with an automated-code-review-tool API and annotate findings on added lines'
 author: 'tanmay-alpha'
 
 inputs:
@@ -10,28 +10,28 @@ inputs:
     description: 'automated-code-review-tool API key from the dashboard'
     required: true
   github-token:
-    description: 'Token used to read the pull-request diff'
+    description: 'Token used to list the pull-request files and read their contents'
     required: true
-  language:
-    description: 'Primary language of the PR (python | javascript | java)'
-    required: false
-    default: 'python'
   fail-threshold:
-    description: 'Minimum quality score (0-100). Below this the action fails.'
+    description: 'Minimum quality score (0-100), computed from findings on added lines. Below this the action fails.'
     required: false
     default: '60'
   fetch-timeout-ms:
-    description: 'Timeout for HTTP requests to the API and GitHub (1000-300000 ms).'
+    description: 'Timeout for each HTTP request to the API and GitHub (1000-300000 ms).'
     required: false
     default: '30000'
+  max-files:
+    description: 'Maximum number of changed files to scan (1-3000). Each file is one API request.'
+    required: false
+    default: '50'
 
 outputs:
   quality-score:
-    description: 'Quality score reported by automated-code-review-tool (0-100).'
+    description: 'Quality score (0-100) computed from findings on added lines; empty when no file was scanned.'
   findings-count:
-    description: 'Total number of findings returned.'
+    description: 'Number of findings on added lines.'
   critical-count:
-    description: 'Number of CRITICAL findings.'
+    description: 'Number of critical findings on added lines.'
 
 runs:
   using: 'node20'
