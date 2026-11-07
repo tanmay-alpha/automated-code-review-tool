@@ -13,7 +13,7 @@ import jakarta.validation.constraints.Pattern;
  */
 public record ConnectRepoRequest(
         @NotBlank
-        @Pattern(regexp = "^[\\w.-]+/[\\w.-]+$",
+        @Pattern(regexp = "^(?!\\.{1,2}/)[\\w.-]+/(?!\\.{1,2}$)[\\w.-]+$",
                 message = "must be in 'owner/repo' format")
         String fullName
 ) {

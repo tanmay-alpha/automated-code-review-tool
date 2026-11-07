@@ -230,6 +230,7 @@ test('action scans changed files and annotates findings on added lines', async (
   for (const request of requests) {
     assert.equal(request.url, 'https://localhost:8080/api/scan/file');
     assert.equal(request.init.headers.Authorization, 'Bearer cl_live_test');
+    assert.equal(request.init.redirect, 'error');
     assert.ok(request.init.signal instanceof AbortSignal, 'fetch must carry an AbortSignal for the timeout');
   }
 
@@ -309,7 +310,7 @@ test('action reports API errors with the file path', async () => {
   await run({ ...harness, fetch });
 
   assert.deepEqual(harness.calls.failed, [
-    'automated-code-review-tool API returned HTTP 503 for a.py: down',
+    'automated-code-review-tool API returned HTTP 503 for a.py',
   ]);
 });
 
@@ -345,4 +346,65 @@ test('action rejects plain-http api-url (HTTPS only)', async () => {
 
   assert.equal(fetched, false, 'fetch must NOT be called when api-url is plain http');
   assert.match(harness.calls.failed[0], /https:\/\//);
+});
+
+test('action rejects credential-bearing API URLs without logging their contents', async () => {
+  const { run } = await import('../index.js');
+  for (const apiUrl of [
+    'https://user:secret-password@review.example.test',
+    'https://review.example.test?token=secret-password',
+    'https://review.example.test#secret-password',
+    'https://',
+  ]) {
+    const harness = actionHarness({ inputs: { 'api-url': apiUrl } });
+    await run({ ...harness, fetch: async () => { assert.fail('unexpected request'); } });
+    assert.equal(harness.calls.failed.length, 1);
+    assert.ok(!harness.calls.failed[0].includes('secret-password'));
+  }
+});
+
+test('real Actions annotations escape attacker-controlled command delimiters', () => {
+  const { spawnSync } = require('node:child_process');
+  const script = `
+    import * as core from '@actions/core';
+    import { run } from './index.js';
+    const inputs = {
+      'api-url': 'https://review.example.test',
+      'api-key': 'secret-api-key',
+      'github-token': 'secret-github-token'
+    };
+    const filename = 'bad\\n::error::injected.py';
+    const github = {
+      context: {
+        eventName: 'pull_request', repo: { owner: 'owner', repo: 'repo' },
+        payload: { pull_request: { number: 1, head: { sha: 'head' } } }
+      },
+      getOctokit: () => ({ rest: {
+        pulls: { listFiles: async () => ({ data: [
+          { filename, status: 'added', patch: '@@ -0,0 +1 @@\\n+x = 1' }
+        ] }) },
+        repos: { getContent: async () => ({ data: {
+          type: 'file', encoding: 'base64', content: Buffer.from('x = 1').toString('base64')
+        } }) }
+      } })
+    };
+    await run({
+      core: { ...core, getInput: (name) => inputs[name] || '' },
+      github,
+      fetch: async () => ({ ok: true, json: async () => ({ findings: [{
+        antiPattern: 'test,field=value\\n::error::injected',
+        severity: 'minor', confidence: 1, lineStart: 1, lineEnd: 1,
+        explanation: 'body\\n::error::injected%'
+      }] }) })
+    });
+  `;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: ROOT, encoding: 'utf8',
+    env: { ...process.env, GITHUB_OUTPUT: '' },
+  });
+  assert.equal(child.status, 0, child.stderr);
+  assert.ok(child.stdout.includes('::notice '), child.stdout);
+  assert.ok(child.stdout.includes('%0A::error::injected'), child.stdout);
+  assert.ok(child.stdout.includes('%2Cfield=value'), child.stdout);
+  assert.ok(!child.stdout.split(/\r?\n/).some((line) => line.startsWith('::error::injected')));
 });

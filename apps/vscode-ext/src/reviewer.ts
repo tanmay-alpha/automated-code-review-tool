@@ -94,7 +94,6 @@ export async function scanFile(
   }
 
   const apiUrl = getApiUrl();
-  warnForInsecureRemoteUrl(apiUrl);
   statusBar().text = "$(sync~spin) automated-code-review-tool: scanning…";
   statusBar().show();
 
@@ -164,21 +163,6 @@ function applyDiagnostics(
   statusBar().show();
 }
 
-function warnForInsecureRemoteUrl(apiUrl: string): void {
-  try {
-    const url = new URL(apiUrl);
-    if (
-      url.protocol === "http:" &&
-      !["localhost", "127.0.0.1", "::1"].includes(url.hostname)
-    ) {
-      void window.showWarningMessage(
-        "automated-code-review-tool: the API key is being sent over unencrypted HTTP.",
-      );
-    }
-  } catch {
-    // The client reports malformed URLs as a request error.
-  }
-}
 
 function shortError(message: string): string {
   return message.length <= 60 ? message : `${message.slice(0, 57)}…`;

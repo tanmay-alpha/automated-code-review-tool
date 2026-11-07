@@ -14,7 +14,9 @@ from training.dataset_contract import DatasetRecord
 SPLITS = ("train", "validation", "test")
 DEFAULT_RATIOS = {"train": 0.70, "validation": 0.15, "test": 0.15}
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9]*|\d+(?:\.\d+)?|[^\s]")
-_LINE_COMMENT_RE = re.compile(r"(?m)^\s*(?:#|//).*$")
+# Horizontal whitespace only: crossing newlines caused each blank line to
+# rescan the remaining document when no comment followed.
+_LINE_COMMENT_RE = re.compile(r"(?m)^[^\S\r\n]*+(?:#|//).*$")
 
 
 @dataclass(frozen=True)

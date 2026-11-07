@@ -261,7 +261,7 @@ def validate_checkpoint_compatibility(
 
 
 class AutomatedCodeReviewToolModel:
-    """Load an explicitly promoted checkpoint and classify one hunk at a time."""
+    """Load a promoted checkpoint with tensor-only weights and no custom code."""
 
     def __init__(
         self,
@@ -294,10 +294,13 @@ class AutomatedCodeReviewToolModel:
         )
 
         self.tokenizer: Any = AutoTokenizer.from_pretrained(
-            self.model_name, **token_kwargs
+            self.model_name, trust_remote_code=False, **token_kwargs
         )
         self.model: Any = AutoModelForSequenceClassification.from_pretrained(
-            self.model_name, **token_kwargs
+            self.model_name,
+            trust_remote_code=False,
+            weights_only=True,
+            **token_kwargs,
         ).to(self.device)
         self.model.eval()
         self.compatibility = validate_checkpoint_compatibility(

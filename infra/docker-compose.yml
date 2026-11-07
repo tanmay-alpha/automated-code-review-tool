@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-automated-code-review-tool}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-automated-code-review-tool_local}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -34,7 +34,7 @@ services:
       - --protected-mode
       - "yes"
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-automated-code-review-tool_local}", "ping"]
       interval: 5s
@@ -53,7 +53,7 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
       ML_WORKER_SECRET: ${ML_WORKER_SECRET:-local-ml-worker-secret-change-me}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - hf_cache:/home/automated-code-review-tool/.cache/huggingface
     healthcheck:
@@ -88,7 +88,7 @@ services:
       WEBHOOK_CALLBACK_URL: ${WEBHOOK_CALLBACK_URL:-http://localhost:8080/api/webhook/github}
       API_KEY_RPM: ${API_KEY_RPM:-60}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,7 +115,7 @@ services:
     environment:
       NODE_ENV: production
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       api:
         condition: service_healthy

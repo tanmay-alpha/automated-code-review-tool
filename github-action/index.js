@@ -78,11 +78,18 @@ async function run(deps = {}) {
     if (Number.isNaN(maxFiles) || maxFiles < 1 || maxFiles > 3000) {
       return coreApi.setFailed(`Invalid max-files: must be 1-3000, got ${maxFiles}`);
     }
-    // HTTPS-only — a CI secret in HTTP is exfiltration waiting to happen.
-    if (!/^https:\/\//i.test(apiUrl)) {
-      return coreApi.setFailed(
-        `api-url must use https:// (plain http is rejected for security); got: ${apiUrl}`,
-      );
+    // Validate the parsed URL, not just its prefix; never echo credentials.
+    let endpoint;
+    try {
+      endpoint = new URL(apiUrl);
+    } catch {
+      return coreApi.setFailed('api-url must be a valid https:// URL');
+    }
+    if (
+      endpoint.protocol !== 'https:' ||
+      endpoint.username || endpoint.password || endpoint.search || endpoint.hash
+    ) {
+      return coreApi.setFailed('api-url must use https:// and contain no credentials, query or fragment');
     }
 
     const context = githubApi.context;
@@ -322,6 +329,7 @@ async function postScan(fetchApi, { apiUrl, apiKey, timeoutMs, body }) {
   try {
     const response = await fetchApi(`${apiUrl}/api/scan/file`, {
       method: 'POST',
+      redirect: 'error',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
@@ -331,9 +339,8 @@ async function postScan(fetchApi, { apiUrl, apiKey, timeoutMs, body }) {
       signal: controller.signal,
     });
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
       throw new Error(
-        `automated-code-review-tool API returned HTTP ${response.status} for ${body.filePath}: ${text.slice(0, 500)}`,
+        `automated-code-review-tool API returned HTTP ${response.status} for ${body.filePath}`,
       );
     }
     const result = await response.json();

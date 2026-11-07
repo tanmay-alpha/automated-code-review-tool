@@ -114,6 +114,20 @@ export async function postScan(
   options: PostScanOptions,
 ): Promise<ScanFileResponse> {
   const apiUrl = options.apiUrl.replace(/\/+$/, "");
+  let endpoint: URL;
+  try {
+    endpoint = new URL(apiUrl);
+  } catch {
+    throw new ReviewerClientError("Invalid API URL.");
+  }
+  const localHttp = endpoint.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname);
+  if (
+    (endpoint.protocol !== "https:" && !localHttp) ||
+    endpoint.username || endpoint.password || endpoint.search || endpoint.hash
+  ) {
+    throw new ReviewerClientError("API URL must use HTTPS (HTTP is allowed only for loopback) and contain no credentials, query or fragment.");
+  }
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = options.fetchImpl ?? fetch;
   const controller = new AbortController();
@@ -128,6 +142,7 @@ export async function postScan(
     try {
       response = await fetchImpl(`${apiUrl}/api/scan/file`, {
         method: "POST",
+        redirect: "error",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
@@ -144,18 +159,16 @@ export async function postScan(
     }
 
     if (!response.ok) {
-      const body = await safeReadText(response);
       throw new ReviewerClientError(
-        `API returned ${response.status} ${response.statusText}: ${body}`,
+        `API returned HTTP ${response.status}.`,
         response.status,
       );
     }
 
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.toLowerCase().includes("application/json")) {
-      const body = await safeReadText(response);
       throw new ReviewerClientError(
-        `Expected JSON but got ${contentType.split(";")[0].trim() || "unknown content type"}: ${body}`,
+        "Expected a JSON API response.",
         response.status,
       );
     }
@@ -205,10 +218,3 @@ function prettify(id: string): string {
     .join(" ");
 }
 
-async function safeReadText(response: Response): Promise<string> {
-  try {
-    return (await response.text()).slice(0, 200) || "(empty body)";
-  } catch {
-    return "(unreadable body)";
-  }
-}

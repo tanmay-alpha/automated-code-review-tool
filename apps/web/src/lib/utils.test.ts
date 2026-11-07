@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { qualityScoreColor, timeAgo, titleCase } from "@/lib/utils";
+import { githubPullRequestUrl, qualityScoreColor, timeAgo, titleCase } from "@/lib/utils";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -33,5 +33,23 @@ describe("qualityScoreColor", () => {
     expect(qualityScoreColor(60)).toContain("yellow");
     expect(qualityScoreColor(59.9)).toContain("red");
     expect(qualityScoreColor(null)).toContain("gray");
+  });
+});
+
+describe("githubPullRequestUrl", () => {
+  it("accepts only HTTPS GitHub pull requests without credentials", () => {
+    expect(githubPullRequestUrl("https://github.com/owner/repo/pull/42")).toBe(
+      "https://github.com/owner/repo/pull/42",
+    );
+    for (const value of [
+      "javascript:alert(document.cookie)",
+      "data:text/html,<script>alert(1)</script>",
+      "//github.com/owner/repo/pull/42",
+      "https://github.com.evil.test/owner/repo/pull/42",
+      "https://github.com@evil.test/owner/repo/pull/42",
+      "https://user:password@github.com/owner/repo/pull/42",
+      "http://github.com/owner/repo/pull/42",
+      "https://github.com/owner/repo/issues/42",
+    ]) expect(githubPullRequestUrl(value)).toBeUndefined();
   });
 });

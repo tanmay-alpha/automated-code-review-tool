@@ -15,6 +15,9 @@ on:
       - "contracts/**"
       - ".github/workflows/ci-integrations.yml"
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-integrations-${{ github.ref }}
   cancel-in-progress: true
@@ -32,9 +35,9 @@ jobs:
       - name: Install dependencies
         working-directory: github-action
         run: npm ci
-      - name: Audit production dependencies
+      - name: Audit all dependencies
         working-directory: github-action
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=high
       - name: Test
         working-directory: github-action
         run: npm test
@@ -56,9 +59,9 @@ jobs:
       - name: Install dependencies
         working-directory: apps/vscode-ext
         run: npm ci
-      - name: Audit production dependencies
+      - name: Audit all dependencies
         working-directory: apps/vscode-ext
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=high
       - name: Typecheck
         working-directory: apps/vscode-ext
         run: npm run lint

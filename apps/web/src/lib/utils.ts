@@ -10,6 +10,25 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** Untrusted API links must point to a GitHub pull request, never script/data URLs. */
+export function githubPullRequestUrl(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== "github.com" ||
+      url.port ||
+      url.username ||
+      url.password ||
+      !/^\/[^/]+\/[^/]+\/pull\/[1-9]\d*\/?$/.test(url.pathname)
+    ) return undefined;
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Maps a numeric quality score (0–100) to a tailwind color class. */
 export function qualityScoreColor(score: number | null | undefined): string {
   if (score == null) return "bg-gray-200 text-gray-700";

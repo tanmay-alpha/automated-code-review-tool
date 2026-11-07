@@ -27,12 +27,73 @@ class RedactionResult:
     redaction_version: str
 
 
+# Scan delimiters once rather than repeatedly backtracking over an unfinished
+# PEM block or URL. Missing closing delimiters must remain cheap on source data.
+_PRIVATE_KEY_MARKER_RE = re.compile(
+    r"-----(BEGIN|END) [A-Z0-9 ]+PRIVATE KEY-----"
+)
+_URL_SCHEME_RE = re.compile(r"(?i)(?<![a-z0-9+.\-])\b[a-z0-9+.\-]++://")
+_URL_PASSWORD_END_RE = re.compile(r"[@\s\"']")
+_URL_HOST_RE = re.compile(r"[^:\s\"'/]++")
+
+
+def _redact_private_keys(text: str) -> tuple[str, int]:
+    pieces: list[str] = []
+    start: int | None = None
+    consumed = 0
+    count = 0
+    for marker in _PRIVATE_KEY_MARKER_RE.finditer(text):
+        if start is None:
+            if marker.group(1) == "BEGIN":
+                start = marker.start()
+            continue
+        if marker.group(1) != "END":
+            continue
+        value = text[start : marker.end()]
+        placeholder = _is_placeholder_or_doc(value)
+        pieces.extend((text[consumed:start], value if placeholder else REDACTED))
+        count += not placeholder
+        consumed = marker.end()
+        start = None
+    pieces.append(text[consumed:])
+    return "".join(pieces), count
+
+
+def _redact_database_urls(text: str) -> tuple[str, int]:
+    pieces: list[str] = []
+    consumed = 0
+    count = 0
+    boundary: re.Match[str] | None = None
+    for scheme in _URL_SCHEME_RE.finditer(text):
+        if scheme.start() < consumed:
+            continue
+        user_end = text.find(":", scheme.end())
+        if user_end <= scheme.end():
+            continue
+        password_start = user_end + 1
+        if boundary is None or boundary.start() < password_start:
+            boundary = _URL_PASSWORD_END_RE.search(text, password_start)
+        if boundary is None:
+            break
+        if boundary.start() == password_start or boundary.group() != "@":
+            continue
+        host = _URL_HOST_RE.match(text, boundary.end())
+        if host is None:
+            continue
+        password = text[password_start : boundary.start()]
+        placeholder = _is_placeholder_or_doc(password)
+        pieces.extend((
+            text[consumed:password_start],
+            password if placeholder else REDACTED,
+            text[boundary.start() : host.end()],
+        ))
+        count += not placeholder
+        consumed = host.end()
+    pieces.append(text[consumed:])
+    return "".join(pieces), count
+
 # Common patterns
 _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    # Private key blocks (PEM format)
-    ("private_key", re.compile(r"-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]+PRIVATE KEY-----")),
-    # Database URL with password
-    ("db_url_password", re.compile(r"(?i)\b([a-z0-9+.\-]+://[^:]+:)([^@\s\"'\n]+)(@[^:\s\"'\n/]+)")),
     # AWS access key id
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     # AWS secret access key (40 chars base64-ish after "secret" / "access_key")
@@ -87,19 +148,11 @@ def redact_secrets(text: str) -> RedactionResult:
     if not text:
         return RedactionResult(text=text, redaction_count=0, redaction_version=REDACTION_VERSION)
 
-    count = 0
-    out = text
+    out, count = _redact_private_keys(text)
+    out, database_count = _redact_database_urls(out)
+    count += database_count
     for name, pattern in _PATTERNS:
-        if name == "db_url_password":
-            def repl_db(m: re.Match[str]) -> str:
-                nonlocal count
-                prefix, pass_val, suffix = m.group(1), m.group(2), m.group(3)
-                if _is_placeholder_or_doc(pass_val):
-                    return m.group(0)
-                count += 1
-                return f"{prefix}{REDACTED}{suffix}"
-            out = pattern.sub(repl_db, out)
-        elif name == "generic":
+        if name == "generic":
             def repl_gen(m: re.Match[str]) -> str:
                 nonlocal count
                 key_part, separator, quote, val = m.group(1), m.group(2), m.group(3), m.group(4)

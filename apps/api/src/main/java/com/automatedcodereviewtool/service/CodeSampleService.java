@@ -61,7 +61,6 @@ public class CodeSampleService {
         }
 
         CodeSample sample = new CodeSample();
-        sample.setId(UUID.randomUUID());
         sample.setRepositoryId(req.repositoryId);
         sample.setPullRequestId(req.pullRequestId);
         sample.setCommitSha(req.commitSha);

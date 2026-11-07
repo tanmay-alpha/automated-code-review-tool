@@ -185,7 +185,9 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("output directory already contains a checkpoint")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(config.base_model)
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.base_model, trust_remote_code=False
+    )
     labels = dataset.label_order
     id2label = {index: label for index, label in enumerate(labels)}
     label2id = {label: index for index, label in enumerate(labels)}
@@ -196,6 +198,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         label2id=label2id,
         problem_type="multi_label_classification",
         ignore_mismatched_sizes=True,
+        trust_remote_code=False,
+        weights_only=True,
     )
     training_sha = git_sha()
     model.config.task_type = "code_review_multi_label"

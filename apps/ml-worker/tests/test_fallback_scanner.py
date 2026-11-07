@@ -119,3 +119,32 @@ def test_commented_out_function_is_commented_code() -> None:
     )
     for diff in (python, java, js):
         assert "MAINTAINABILITY_COMMENTED_CODE" in _ids(diff)
+
+
+def test_sql_concatenation_and_fstrings_remain_detected() -> None:
+    for expression in ("query(sql + user)", 'execute(f"SELECT {user}")', "query(x); execute(y + z)"):
+        assert "SECURITY_SQL_INJECTION" in _ids(_diff("a.py", expression))
+    assert "SECURITY_SQL_INJECTION" not in _ids(_diff("a.py", 'query("SELECT ?", user)'))
+
+
+def test_annotated_constant_and_parenthesized_exception_remain_detected() -> None:
+    assert "READABILITY_MAGIC_NUMBER" not in _ids(_diff("a.py", "LIMIT: int = 100"))
+    for expression in ("except (Exception):", "except ( Exception ) as exc:", "except Exception   :"):
+        assert "RELIABILITY_BROAD_EXCEPTION" in _ids(_diff("a.py", expression))
+
+
+def test_adversarial_lines_at_request_limit_are_bounded() -> None:
+    import time
+
+    for text in (
+        ("query(" * 40_000)[:200_000],
+        "except " + " " * 199_992 + "!",
+        "except Exception" + " " * 199_983 + "!",
+        ("A:" * 99_999) + "99",
+        "# x\n# x\n#" + " " * 199_988,
+        ("while x:\n" * 25_000)[:200_000],
+    ):
+        started = time.perf_counter()
+        findings, _, _ = fallback_findings(text, mode="file", language="python")
+        assert isinstance(findings, list)
+        assert time.perf_counter() - started < 5.0

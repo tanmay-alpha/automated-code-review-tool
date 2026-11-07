@@ -147,3 +147,31 @@ def test_none_input():
     result = redact_secrets(None)
     assert result.text is None
     assert result.redaction_count == 0
+
+
+def test_database_url_preserves_colons_in_password_and_multiple_urls():
+    result = redact_secrets("postgresql://alice:secret:with:colons@db:5432/x mysql://bob:other-secret@db/y")
+    assert result.text == f"postgresql://alice:{REDACTED}@db:5432/x mysql://bob:{REDACTED}@db/y"
+    assert result.redaction_count == 2
+
+
+def test_database_url_placeholder_is_preserved():
+    text = "postgresql://user:your_password@db:5432/test"
+    result = redact_secrets(text)
+    assert result.text == text
+    assert result.redaction_count == 0
+
+
+def test_unterminated_private_keys_and_urls_at_request_limit_are_bounded():
+    import time
+
+    for text in (
+        ("-----BEGIN RSA PRIVATE KEY-----\n" * 7_000)[:200_000],
+        ("postgresql://user:password:" * 8_000)[:199_998] + "@:",
+        ("a-" * 100_000),
+    ):
+        started = time.perf_counter()
+        result = redact_secrets(text)
+        assert result.text == text
+        assert result.redaction_count == 0
+        assert time.perf_counter() - started < 5.0

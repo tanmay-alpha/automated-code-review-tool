@@ -18,6 +18,9 @@ on:
       - 'contracts/**'
       - '.github/workflows/ci-ml-worker.yml'
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-ml-worker-${{ github.ref }}
   cancel-in-progress: true
@@ -50,7 +53,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Install the CPU-only torch wheel before the complete test set.
-          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1+cpu
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0+cpu
           pip install -r requirements-train.txt
           pip install -r requirements-test.txt
 

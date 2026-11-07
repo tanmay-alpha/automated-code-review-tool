@@ -116,7 +116,11 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  void offerApiKeyMigration(context);
+  void offerApiKeyMigration(context).catch(() => {
+    void vscode.window.showErrorMessage(
+      "automated-code-review-tool: API key migration failed. Plain-text settings may remain; retry with Set API Key.",
+    );
+  });
 }
 
 /** Subscriptions registered on the context are disposed by VS Code. */

@@ -192,3 +192,35 @@ def test_quality_score_contract() -> None:
         )
     ]
     assert compute_quality_score(findings) == pytest.approx(80.0)
+
+
+@pytest.mark.parametrize("serving", [False, True])
+def test_checkpoint_loading_disables_custom_code_and_unsafe_pickle(
+    serving: bool, taxonomy: Taxonomy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    from unittest.mock import MagicMock
+
+    from app.model import AutomatedCodeReviewToolModel
+    from training.checkpoint import load_compatible_checkpoint
+
+    model = MagicMock()
+    model.config = _stub_model(taxonomy, **_promotion_metadata(taxonomy)).config
+    model.to.return_value = model
+    model_loader = MagicMock(return_value=model)
+    tokenizer_loader = MagicMock()
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(
+        AutoModelForSequenceClassification=SimpleNamespace(from_pretrained=model_loader),
+        AutoTokenizer=SimpleNamespace(from_pretrained=tokenizer_loader),
+    ))
+
+    if serving:
+        AutomatedCodeReviewToolModel(model_name="local-checkpoint")
+    else:
+        load_compatible_checkpoint(
+            "local-checkpoint", taxonomy, expected_manifest_sha256="a" * 64
+        )
+
+    assert model_loader.call_args.kwargs["trust_remote_code"] is False
+    assert model_loader.call_args.kwargs["weights_only"] is True
+    assert tokenizer_loader.call_args.kwargs["trust_remote_code"] is False

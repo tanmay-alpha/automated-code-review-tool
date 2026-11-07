@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir \
       --retries 10 --timeout 120 \
       --index-url https://download.pytorch.org/whl/cpu \
-      torch==2.12.1+cpu
+      torch==2.13.0+cpu
 
 # Install the rest of the requirements (PyYAML is pinned explicitly).
 COPY apps/ml-worker/requirements.txt /tmp/requirements.txt

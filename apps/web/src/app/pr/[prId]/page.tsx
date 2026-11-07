@@ -19,6 +19,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { getPRReview } from "@/lib/api";
 import {
+  githubPullRequestUrl,
   qualityScoreColor,
   severityClasses,
   timeAgo,
@@ -37,6 +38,7 @@ function PRReviewContent() {
 
   const findings = data?.findings ?? [];
   const grouped = groupBySeverity(findings);
+  const githubUrl = githubPullRequestUrl(data?.githubPrUrl);
 
   return (
     <div className="mx-auto max-w-7xl p-6">
@@ -74,9 +76,9 @@ function PRReviewContent() {
                 Reviewed {timeAgo(data.reviewedAt)}
               </span>
             ) : null}
-            {data?.githubPrUrl ? (
+            {githubUrl ? (
               <a
-                href={data.githubPrUrl}
+                href={githubUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1 underline"

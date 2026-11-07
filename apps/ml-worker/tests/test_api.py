@@ -102,6 +102,28 @@ def test_review_validation_error_does_not_echo_input(client: TestClient):
     assert errors[0]["type"] == "string_too_long"
 
 
+def test_malformed_json_validation_does_not_echo_secret(client: TestClient):
+    secret = "private-request-content"
+    response = client.post(
+        "/ml/review",
+        headers={**SECRET_HEADER, "Content-Type": "application/json"},
+        content=f'{{"diff":"{secret}",',
+    )
+    assert response.status_code == 422
+    assert secret not in response.text
+
+
+def test_unconfigured_worker_secret_fails_closed(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "ML_WORKER_SECRET", "")
+    assert client.get("/ml/health").status_code == 200
+    response = client.post(
+        "/ml/review", headers=SECRET_HEADER, json={"diff": "+print(1)"}
+    )
+    assert response.status_code == 503
+
+
 def test_review_rejects_invalid_language(client: TestClient):
     r = client.post(
         "/ml/review",

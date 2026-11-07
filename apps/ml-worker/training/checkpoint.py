@@ -37,8 +37,14 @@ def load_compatible_checkpoint(
 ) -> tuple[Any, Any, dict[str, Any]]:
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    model = AutoModelForSequenceClassification.from_pretrained(str(checkpoint))
-    tokenizer = AutoTokenizer.from_pretrained(str(checkpoint))
+    # Keep legacy tensor checkpoints supported without permitting pickle objects
+    # or repository-supplied Python code to execute during a load.
+    model = AutoModelForSequenceClassification.from_pretrained(
+        str(checkpoint), trust_remote_code=False, weights_only=True
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        str(checkpoint), trust_remote_code=False
+    )
     compatibility = validate_checkpoint_compatibility(model, taxonomy)
     if compatibility.get("status") != "healthy":
         raise ValueError(

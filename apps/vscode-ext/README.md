@@ -42,11 +42,11 @@ as `Authorization: Bearer ...`. **`automated-code-review-tool: Clear API Key`**
 removes it.
 
 The old plain-text `automated-code-review-tool.apiKey` setting is deprecated.
-If it is still set and no key is in secret storage, the extension uses it and
-offers once to move it into secret storage (which also removes it from your
-user and workspace settings). Setting or clearing the key via the commands also
-removes the plain-text setting. Treat the key as a secret and rotate it if it
-was ever committed.
+If it is still set, the extension offers to move it into secret storage and
+remove plaintext copies from user, workspace and every workspace-folder setting.
+An existing secret is preserved rather than overwritten. Failed migrations can
+be retried. Setting or clearing the key via the commands also removes these
+plain-text settings. Treat the key as a secret and rotate it if it was committed.
 
 ### Settings
 
@@ -54,7 +54,7 @@ Open Settings and search for `automated-code-review-tool`:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `automated-code-review-tool.apiUrl` | `http://localhost:8080` | Spring API base URL. Remote URLs should use HTTPS. |
+| `automated-code-review-tool.apiUrl` | `http://localhost:8080` | Machine/user API URL; workspace overrides are ignored to prevent repository-controlled key exfiltration. HTTPS required except on loopback. |
 | `automated-code-review-tool.enabled` | `true` | Enables scans (on save and via commands). |
 | `automated-code-review-tool.scanOnSave` | `true` | Scans supported files when saved. |
 | `automated-code-review-tool.apiKey` | empty | Deprecated plain-text fallback; use the Set API Key command. |
@@ -70,6 +70,9 @@ Open Settings and search for `automated-code-review-tool`:
 The client skips files longer than 200,000 characters (the API's request
 limit), applies a 15-second request timeout, clears stale diagnostics after
 failures, and deduplicates repeated findings.
+Redirects are rejected so source code cannot be forwarded to another endpoint.
+API URLs cannot contain credentials, queries or fragments. HTTP failures show
+status only, never response bodies that might echo source code or credentials.
 The server decides which concrete taxonomy IDs are detected; the extension does
 not contain a separate label list.
 

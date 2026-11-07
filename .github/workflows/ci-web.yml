@@ -11,6 +11,9 @@ on:
       - "apps/web/**"
       - ".github/workflows/ci-web.yml"
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-web-${{ github.ref }}
   cancel-in-progress: true
@@ -36,9 +39,9 @@ jobs:
       - name: Test
         working-directory: apps/web
         run: npm test
-      - name: Audit production dependencies
+      - name: Audit all dependencies
         working-directory: apps/web
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=high
       - name: Build
         working-directory: apps/web
         run: npm run build

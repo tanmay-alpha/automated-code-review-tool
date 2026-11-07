@@ -14,10 +14,14 @@ _SECRET_RE = re.compile(
     r"(?i)(api_key|api_token|apikey|secret_key|private_key|access_key|"
     r"auth_token|password)\s*[=:]\s*['\"][A-Za-z0-9_+/=\-]{16,}['\"]"
 )
-_SQL_CONCAT_RE = re.compile(r"(?:execute|query)\s*\(.*(?:\+|f['\"])", re.I)
+# Match the call once, then inspect its suffix once; a trailing wildcard in an
+# unanchored search rescanned the whole line for every repeated query opener.
+_SQL_CALL_RE = re.compile(r"(?:execute|query)\s*+\(", re.I)
+_SQL_VALUE_RE = re.compile(r"\+|f['\"]", re.I)
 # Bare ``except:``, ``except Exception[ as e]:`` and ``except BaseException``.
 _BROAD_EXC_RE = re.compile(
-    r"^\s*except\s*(?:\(?\s*(?:Base)?Exception\s*\)?(?:\s+as\s+\w+)?\s*)?:"
+    r"^\s*+except\s*+(?:\(?\s*+(?:Base)?Exception"
+    r"(?:\s*+\))?(?:\s++as\s++\w++)?\s*+)?:"
 )
 _JAVA_CATCH_RE = re.compile(r"catch\s*\(\s*(?:Exception|Throwable)\b")
 _WEAK_CRYPTO_RE = re.compile(
@@ -27,7 +31,7 @@ _WEAK_CRYPTO_RE = re.compile(
 _PRINT_RE = re.compile(r"(?:^\s*print\s*\(|console\.log\s*\()", re.I)
 _MAGIC_NUMBER_RE = re.compile(r"(?<![\w.'\"])(?:[2-9]\d|[1-9]\d{2,})(?![\w.'\"])")
 # ``MAX_RETRIES = 50`` / ``static final int LIMIT = 100`` is the remedy, not the smell.
-_CONSTANT_DEF_RE = re.compile(r"\b[A-Z][A-Z0-9_]*\s*(?::[^=]+)?=(?!=)")
+_CONSTANT_NAME_RE = re.compile(r"\b[A-Z][A-Z0-9_]*+\s*+(?::[\s\S]|$)")
 _LOOP_RE = re.compile(r"^\s*(?:for|while)\b")
 # Per-iteration DB/HTTP calls. ``.get(`` only counts on an HTTP client or ORM
 # manager receiver, so a plain ``dict.get(key)`` inside a loop is not flagged.
@@ -36,9 +40,7 @@ _QUERY_RE = re.compile(
     r"|\b(?:requests|httpx|session|client|http|axios|objects)\.get\s*\(",
     re.I,
 )
-_COMMENTED_CODE_RE = re.compile(
-    r"(?m)^[ \t]*(?:#|//)[ \t]*\S.*\n(?:^[ \t]*(?:#|//)[ \t]*\S.*\n?){2,}"
-)
+_COMMENT_LINE_RE = re.compile(r"^[ \t]*+(?:#|//)[ \t]*+\S")
 _COMMENT_PREFIX_RE = re.compile(r"^[ \t]*(?:#|//)[ \t]*")
 # A comment line "looks like code" when it ends in statement/block punctuation,
 # contains an assignment, or opens with a common statement keyword.
@@ -48,6 +50,22 @@ _CODE_KEYWORD_RE = re.compile(
     r"^(?:def|class|return|if|elif|else|for|while|try|except|catch|import|from"
     r"|const|let|var|function|public|private|protected|static)\b"
 )
+
+
+def _has_sql_concatenation(text: str) -> bool:
+    call = _SQL_CALL_RE.search(text)
+    return call is not None and _SQL_VALUE_RE.search(text, call.end()) is not None
+
+
+def _is_constant_definition(text: str) -> bool:
+    # Each '='-delimited segment is visited only once, including annotations.
+    start = 0
+    for match in re.finditer("=", text):
+        end = match.start()
+        if text[end + 1 : end + 2] != "=" and _CONSTANT_NAME_RE.search(text[start:end]):
+            return True
+        start = end + 1
+    return False
 
 
 def _looks_like_code(comment_body: str) -> bool:
@@ -111,7 +129,7 @@ def _scan_hunk(hunk: FileHunk) -> list[RuleHit]:
         line_no = _line_number(diff_line, hunk.new_start)
         if _SECRET_RE.search(text):
             hits.append(RuleHit("SECURITY_HARDCODED_SECRET", line_no, line_no))
-        if _SQL_CONCAT_RE.search(text):
+        if _has_sql_concatenation(text):
             hits.append(RuleHit("SECURITY_SQL_INJECTION", line_no, line_no))
         if _WEAK_CRYPTO_RE.search(text):
             hits.append(RuleHit("SECURITY_WEAK_CRYPTO", line_no, line_no))
@@ -123,7 +141,7 @@ def _scan_hunk(hunk: FileHunk) -> list[RuleHit]:
             hits.append(RuleHit("MAINTAINABILITY_PRINT_STATEMENT", line_no, line_no))
         if len(text.rstrip()) > 200:
             hits.append(RuleHit("READABILITY_LONG_METHOD", line_no, line_no))
-        if _MAGIC_NUMBER_RE.search(text) and not _CONSTANT_DEF_RE.search(text):
+        if _MAGIC_NUMBER_RE.search(text) and not _is_constant_definition(text):
             hits.append(RuleHit("READABILITY_MAGIC_NUMBER", line_no, line_no))
 
         if _QUERY_RE.search(text):
@@ -137,7 +155,8 @@ def _scan_hunk(hunk: FileHunk) -> list[RuleHit]:
         if not _LOOP_RE.match(line.text):
             continue
         indent = len(line.text) - len(line.text.lstrip())
-        for nested in lines[index + 1 :]:
+        for nested_index in range(index + 1, len(lines)):
+            nested = lines[nested_index]
             if not nested.text.strip():
                 continue
             nested_indent = len(nested.text) - len(nested.text.lstrip())
@@ -149,22 +168,26 @@ def _scan_hunk(hunk: FileHunk) -> list[RuleHit]:
                 hits.append(RuleHit("PERFORMANCE_QUADRATIC_LOOP", start, end))
                 break
 
-    block = "\n".join(line.text for line in lines)
-    for match in _COMMENTED_CODE_RE.finditer(block):
-        if not _is_commented_code(match.group(0)):
+    # Group comment lines directly instead of a nested repetition whose
+    # backtracking grew exponentially on a long whitespace-only comment.
+    block_start: int | None = None
+    for index in range(len(lines) + 1):
+        if index < len(lines) and _COMMENT_LINE_RE.match(lines[index].text):
+            if block_start is None:
+                block_start = index
             continue
-        start_index = block[: match.start()].count("\n")
-        end_index = min(
-            len(lines) - 1,
-            start_index + max(0, match.group(0).rstrip("\n").count("\n")),
-        )
-        hits.append(
-            RuleHit(
-                "MAINTAINABILITY_COMMENTED_CODE",
-                _line_number(lines[start_index], hunk.new_start),
-                _line_number(lines[end_index], hunk.new_start),
-            )
-        )
+        if block_start is not None:
+            if index - block_start >= 3 and _is_commented_code(
+                "\n".join(line.text for line in lines[block_start:index])
+            ):
+                hits.append(
+                    RuleHit(
+                        "MAINTAINABILITY_COMMENTED_CODE",
+                        _line_number(lines[block_start], hunk.new_start),
+                        _line_number(lines[index - 1], hunk.new_start),
+                    )
+                )
+            block_start = None
 
     unique = {(hit.anti_pattern_id, hit.line_start, hit.line_end): hit for hit in hits}
     return list(unique.values())

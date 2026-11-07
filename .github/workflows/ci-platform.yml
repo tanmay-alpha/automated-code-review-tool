@@ -15,6 +15,9 @@ on:
       - "render.yaml"
       - ".github/workflows/ci-platform.yml"
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-platform-${{ github.ref }}
   cancel-in-progress: true

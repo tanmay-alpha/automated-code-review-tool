@@ -111,3 +111,14 @@ def test_promotion_support_gate_requires_both_test_classes() -> None:
     supported["A"]["support_negative"] = 0
     with pytest.raises(ValueError, match="positive and negative"):
         _support_gate(supported, ("A",))
+
+
+def test_code_normalization_bounds_blank_line_scanning() -> None:
+    import time
+
+    from training.group_split import normalize_code
+
+    started = time.perf_counter()
+    assert normalize_code("\n" * 200_000) == ""
+    assert time.perf_counter() - started < 5.0
+    assert normalize_code("\n \t# comment\n\n // comment\n x = 1\r\n") == "x = 1"

@@ -74,6 +74,7 @@
           "deprecationMessage": "Stored in plain text. Run 'automated-code-review-tool: Set API Key' to store the key in VS Code secret storage; this setting is only read as a fallback."
         },
         "automated-code-review-tool.apiUrl": {
+          "scope": "machine",
           "type": "string",
           "default": "http://localhost:8080",
           "description": "automated-code-review-tool API base URL"
@@ -104,5 +105,9 @@
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^3.9.2",
     "typescript": "^5.4.5"
+  },
+  "overrides": {
+    "glob": "14.0.2",
+    "minimatch": "11.0.1"
   }
 }

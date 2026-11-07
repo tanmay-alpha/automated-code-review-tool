@@ -12,8 +12,10 @@ fastapi==0.138.0
 uvicorn[standard]==0.49.0
 
 # --- ML core (CodeBERT inference) ---
-torch==2.12.1
+torch==2.13.0
 transformers==5.12.1
+# Torch's packaging dependency must include the Windows wheel-path security fix.
+setuptools==84.1.0
 
 # --- Numerics ---
 numpy==2.4.6

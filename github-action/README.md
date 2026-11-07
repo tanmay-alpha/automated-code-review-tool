@@ -71,7 +71,13 @@ jobs:
 ```
 
 For production use, pin the action to a reviewed commit SHA or immutable
-release tag. `api-url` must use HTTPS.
+release tag. `api-url` must use HTTPS and cannot contain credentials, queries
+or fragments. Redirects are rejected so source code is not forwarded to another
+endpoint. API error bodies are not logged because they may echo source or secrets.
+API keys and GitHub tokens are registered with the runner's secret masker;
+annotations use the Actions toolkit's command escaping for untrusted filenames
+and finding text. Use `pull_request`, never execute untrusted PR code in a
+secret-bearing `pull_request_target` job.
 
 ## Inputs
 

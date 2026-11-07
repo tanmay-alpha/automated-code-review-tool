@@ -40,6 +40,7 @@ import {
   getQualityTrend,
 } from "@/lib/api";
 import {
+  githubPullRequestUrl,
   qualityScoreColor,
   timeAgo,
   titleCase,
@@ -221,9 +222,9 @@ function RepoDetailContent() {
                           {timeAgo(pr.reviewedAt)}
                         </TableCell>
                         <TableCell>
-                          {pr.githubPrUrl ? (
+                          {githubPullRequestUrl(pr.githubPrUrl) ? (
                             <a
-                              href={pr.githubPrUrl}
+                              href={githubPullRequestUrl(pr.githubPrUrl)}
                               target="_blank"
                               rel="noreferrer"
                               title={`Open PR #${pr.githubPrNumber} on GitHub`}

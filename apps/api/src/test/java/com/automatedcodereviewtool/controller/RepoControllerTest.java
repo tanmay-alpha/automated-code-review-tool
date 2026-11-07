@@ -183,6 +183,16 @@ class RepoControllerTest {
     }
 
     @Test
+    void connect_rejectsDotPathSegmentsBeforeCallingGitHub() throws Exception {
+        for (String fullName : new String[]{"../repo", "./repo", "alice/..", "alice/."}) {
+            mockMvc.perform(connectRepo(objectMapper.writeValueAsString(Map.of("fullName", fullName))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"));
+        }
+        org.mockito.Mockito.verifyNoInteractions(gitHubService);
+    }
+
+    @Test
     void connect_returns400_whenGitHubRepoMissing() throws Exception {
         org.mockito.Mockito.when(gitHubService.getRepository(eq(GH_TOKEN), anyString(), anyString()))
                 .thenReturn(null);

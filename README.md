@@ -130,7 +130,23 @@ a PR diff (Markdown, config, etc.) are skipped.
 - **Clients that respect the same contract.** The GitHub Action scans each
   changed file at the PR head and annotates only findings on added lines. The
   VS Code extension keeps its API key in VS Code SecretStorage. The dashboard
-  lets reviewers accept, dismiss or mark a finding fixed.
+  lets reviewers accept, dismiss or mark a finding fixed. External PR links
+  allow only HTTPS `github.com` pull-request URLs without embedded credentials;
+  script URLs and lookalike domains are not rendered as links.
+
+### Security verification
+
+Run full `npm audit` in each Node package and `pip-audit` against the worker
+requirements, including training dependencies. Dependency scans do not prove
+that an application is vulnerability-free.
+
+The Maven runtime graph was checked against OSV. Three Spring Framework
+advisories still apply at the package-version level:
+[SSE view fragments](https://osv.dev/vulnerability/GHSA-j9f9-w8pj-32f8),
+[XSLT views](https://osv.dev/vulnerability/GHSA-pc63-qcmh-9cmg) and
+[functional WebFlux routes](https://osv.dev/vulnerability/GHSA-9qf2-26p9-2q2q).
+This API uses none of those features; no findings are suppressed. Reassess
+these advisories before adding view rendering, SSE or functional routes.
 
 ## Running locally
 
@@ -147,6 +163,11 @@ docker compose --env-file .env -f infra/docker-compose.yml up --build
 - Dashboard: <http://localhost:3000>
 - API health: <http://localhost:8080/actuator/health>
 - ML worker health: <http://localhost:8000/ml/health>
+
+Compose publishes ports on `127.0.0.1` only: its example database passwords,
+JWT signing key and worker secret are development values, not deployment
+credentials. Replace them before deploying; expose only the dashboard/API
+through your HTTPS ingress, not PostgreSQL, Redis or the worker.
 
 Try the worker on its own (the default secret from `.env.example`):
 
