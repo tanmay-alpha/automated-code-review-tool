@@ -96,6 +96,13 @@ services:
         value: "true"
       - key: API_KEY_RPM
         value: "60"
+      # Render fronts services with Cloudflare and its proxy appends to
+      # X-Forwarded-For, so the auth rate limiter keys on Cloudflare's
+      # True-Client-IP, trusted only when the peer is Render's private proxy.
+      - key: AUTH_TRUSTED_PROXIES
+        value: 10.0.0.0/8
+      - key: AUTH_CLIENT_IP_HEADER
+        value: True-Client-IP
 
   - type: web
     name: automated-code-review-tool-web

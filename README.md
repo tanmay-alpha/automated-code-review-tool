@@ -1,213 +1,197 @@
-# Automated Code Review Tool — Java Spring Boot Backend with ML-assisted Code Analysis
+# Automated Code Review Tool
 
-The **Automated Code Review Tool** is a multi-service code review platform designed to analyze pull requests, detect software anti-patterns, calculate code quality metrics, and automate developer feedback loops.
+A self-hostable pull-request reviewer. It receives GitHub webhooks, parses each
+PR diff into hunks, runs anti-pattern detection over the added lines, stores
+findings and a quality score, and posts a summary comment back on the PR. The
+same detection is available from a VS Code extension and a GitHub Action.
 
-The central core of the system is a **Java 21 + Spring Boot** application acting as the primary control plane and API gateway, orchestrating data storage, security, GitHub webhooks, and asynchronous communication with a specialized Python/FastAPI Machine Learning inference worker.
+> **Detection status:** the detector that runs by default is a deterministic,
+> rule-based scanner (`MODEL_NAME=none`). The repo also contains a CodeBERT
+> multi-label training and serving pipeline. No trained checkpoint or labelled
+> dataset is shipped, and no model accuracy figures are claimed.
 
----
+## Architecture
 
-## Architectural Overview
-
-The platform uses a decoupled microservice architecture where Java Spring Boot orchestrates all business logic and external integrations:
-
-- **Java 21 & Spring Boot (Central Control Plane & Backend)**:
-  - Exposes secured REST APIs for dashboards, extensions, and CI pipelines.
-  - Implements Spring Security authentication, JWT/API-key authentication, endpoint authorization, rate limiting, and repository ownership checks.
-  - Manages GitHub lifecycle integrations: webhook ingestion, HMAC signature verification, pull request diff parsing, status checks, and inline review comments.
-  - Controls repository management, review scheduling, and data ingestion pipelines.
-  - Manages relational persistence in **PostgreSQL** using Spring Data JPA with versioned schema migrations managed by **Flyway**.
-  - Coordinates Redis-backed token blacklisting and outbox worker state.
-  - Dispatches code hunks to the ML worker and aggregates review findings.
-- **Next.js Dashboard (Frontend)**:
-  - React, TypeScript, and TailwindCSS interface for repository monitoring, PR quality trends, anti-pattern breakdowns, and API key management.
-- **Python ML Worker (Inference Engine & Model Pipeline)**:
-  - Dedicated FastAPI service used for unified-diff and hunk parsing, secret redaction, rule-based pattern detection, and transformer-based code classification (CodeBERT).
-- **Client Integrations**:
-  - **GitHub Action**: Automates CI PR reviews with quality-score gating.
-  - **VS Code Extension**: Real-time in-editor anti-pattern diagnostics via the Spring Boot API.
-
-```text
-GitHub Webhook / Action / VS Code / Next.js Dashboard
-                         |
-                         v
-      +-------------------------------------+
-      |   Spring Boot Backend (Java 21)     |
-      |   - REST API & Security (JWT / Key) |
-      |   - GitHub Webhook & Diff Ingestion |
-      |   - Review & Outbox Orchestration   |
-      +-------------------------------------+
-             |                 |
-             v                 v
-   PostgreSQL 16 + Redis   FastAPI ML Worker (Python)
-                               |
-                      localized diff hunks
-                               |
-                    +----------+----------+
-                    |                     |
-                    v                     v
-              CodeBERT Model       Rule-based Fallback
+```mermaid
+flowchart LR
+    GH[GitHub webhook] --> API
+    ACT[GitHub Action] --> API
+    EXT[VS Code extension] --> API
+    WEB[Next.js dashboard] --> API
+    subgraph API[Spring Boot API &#40;Java 21&#41;]
+      direction TB
+      SEC[JWT / API-key auth, rate limit, HMAC verify]
+      REV[ReviewService: diff to hunks, quality score]
+      OUT[Outbox processor]
+    end
+    API --> PG[(PostgreSQL 16 + Flyway)]
+    API --> RD[(Redis: token blacklist, rate limits)]
+    API -->|POST /ml/review, shared secret| ML[FastAPI ML worker]
+    ML --> RULES[Rule-based scanner]
+    ML -.optional checkpoint.-> BERT[CodeBERT classifier]
 ```
 
----
-
-## Java Backend
-
-The primary Java application is located in [`apps/api/`](apps/api/) and follows standard Maven and Spring Boot conventions:
-
-```text
-apps/api/
-├── pom.xml                                   # Maven dependencies, plugins, test profiles
-└── src/
-    ├── main/
-    │   ├── java/com/automatedcodereviewtool/ # Core Java source code
-    │   └── resources/                        # application.yml, Flyway SQL migrations
-    └── test/
-        ├── java/com/automatedcodereviewtool/ # JUnit 5 unit, slice, and integration tests
-        └── resources/                        # Test configurations & H2 migration scripts
-```
-
-### Core Java Packages
-
-The Java backend adheres to clear separation of concerns across its package hierarchy:
-
-| Package | Purpose & Responsibilities |
-| --- | --- |
-| `config` | Spring configuration beans: WebClient timeouts, Redis caching, CORS policies, async executor pools, and Resilience4j circuit breakers. |
-| `controller` | REST controllers exposing versioned endpoints for scans (`/api/scan`), pull request reviews (`/api/reviews`), repositories (`/api/repos`), API keys (`/api/keys`), system metrics (`/api/metrics`), and webhooks (`/api/webhook`). |
-| `dto` | Strongly-typed request/response data transfer objects, validated with Jakarta Bean Validation (`@NotNull`, `@NotBlank`, `@Size`). |
-| `entity` | JPA domain models mapped to PostgreSQL tables: `Repository`, `PullRequestEntity`, `SampleReview`, `Finding`, `CodeSample`, `ApiKey`, `ProcessedWebhook`, `IngestionOutbox`, `User`, `Annotation`, `AntiPattern`, `DatasetItem`, `DatasetVersion`, `PredictionEvent`, and `QualityMetric`. |
-| `exception` | Domain-specific exception hierarchy (`ConnectRepoException`, `InvalidDiffException`, `MlWorkerException`) and framework exceptions (`EntityNotFoundException`, `ResponseStatusException`) handled globally by `GlobalExceptionHandler` (`@RestControllerAdvice`). |
-| `repository` | Spring Data JPA repositories with custom transactional queries, row-level locking (`SELECT FOR UPDATE`), and pagination support. |
-| `security` | Authentication filter chains, JWT validation (`JwtAuthFilter`), API key authentication (`ApiKeyAuthFilter`), IP rate limiting (`AuthRateLimitFilter`), and cryptographic utilities (`EncryptionService`). |
-| `service` | Core business logic layer coordinating GitHub interactions (`GitHubService`), review workflows (`ReviewService`), ML worker HTTP client (`MlWorkerService`), and outbox publishing (`OutboxProcessor`). |
-| `webhook` | GitHub webhook ingress processor: validates HMAC-SHA256 signatures, deduplicates deliveries, and triggers async review pipelines. |
-
-### Architectural Data Flow
-
-1. **Controller Layer → Service Layer → Repository Layer → PostgreSQL**:
-   Requests entering the Spring Boot application are validated in the controllers, processed within transactional boundaries in the service layer, and persisted to PostgreSQL using Spring Data JPA and Flyway versioned schemas.
-2. **GitHub → Spring Boot API → ML Worker → Review Result**:
-   When a pull request webhook or scan request arrives, the Java API verifies signatures, fetches the raw unified diff, redacts secrets, delegates code hunk classification to the FastAPI ML worker, computes overall quality scores, and records findings in PostgreSQL while optionally commenting back onto the GitHub pull request.
-
----
-
-## Production & Machine Learning Status
-
-| Capability | Current State | Notes |
+| Component | Path | Stack |
 | --- | --- | --- |
-| Primary Production Detector | Deterministic rule-based engine | Rule-based/regex detection over parsed diff hunks. |
-| CodeBERT Checkpoint | Supported, not bundled in Git | CodeBERT-compatible inference is supported, but a model checkpoint is not bundled in Git and the default deployment operates in fallback mode unless a compatible checkpoint is explicitly configured. |
-| Fallback Operation | Default (`MODEL_NAME=none`) | System operates fully on deterministic rule-based detection when no ML checkpoint is configured. |
-| Dataset Ingestion | Database outbox & contract validation | Hunks are normalized, redacted, and versioned before ingestion. |
+| API / control plane | `apps/api` | Java 21, Spring Boot 3, Spring Security, JPA, Flyway, Resilience4j, Redis |
+| ML worker | `apps/ml-worker` | Python 3.11, FastAPI, Pydantic; PyTorch/Transformers loaded only when a checkpoint is configured |
+| Dashboard | `apps/web` | Next.js (App Router), TypeScript, Tailwind, Recharts |
+| VS Code extension | `apps/vscode-ext` | TypeScript, VS Code API |
+| GitHub Action | `github-action` | Node 20, `@actions/core`, Octokit, bundled with ncc |
+| Anti-pattern taxonomy | `taxonomy/anti_patterns.yaml` | Single source of truth for finding IDs |
+| Cross-language fixtures | `contracts/` | JSON cases shared by Java and Python tests |
 
-The repository contains transformer training and inference code, but does not claim unverified performance benchmarks. A model must satisfy explicit dataset contracts, baseline comparisons, and deployment smoke tests before promotion.
+## How a PR review flows
 
----
+```mermaid
+sequenceDiagram
+    participant GH as GitHub
+    participant API as Spring Boot API
+    participant DB as PostgreSQL
+    participant ML as ML worker
+    GH->>API: POST /api/webhook/github (X-Hub-Signature-256)
+    API->>API: verify HMAC (constant-time), dedupe delivery id
+    API->>DB: record delivery, return 200
+    API->>GH: fetch PR diff (user's encrypted OAuth token)
+    API->>ML: POST /ml/review (full diff, shared secret)
+    ML->>ML: split into hunks, run rules (or model)
+    ML-->>API: findings + engine used ("fallback" or "model")
+    API->>API: map findings to hunks, redact hunks for dataset capture
+    API->>DB: findings, quality score, code samples, outbox rows (one transaction)
+    API->>GH: PR summary comment
+```
 
-## Repository Layout
+## Taxonomy
 
-| Path | Purpose |
+Finding IDs come from `taxonomy/anti_patterns.yaml`. The Python worker loads
+the file directly. A Flyway migration seeds the same IDs into the API's
+`anti_patterns` table, a test checks that they match, and the API refuses to
+start if the table is empty.
+
+| Category | IDs |
 | --- | --- |
-| `apps/api/` | Java 21 + Spring Boot control plane and PostgreSQL migrations |
-| `apps/ml-worker/` | Python FastAPI inference service and CodeBERT lifecycle pipeline |
-| `apps/web/` | Next.js / TypeScript dashboard frontend |
-| `apps/vscode-ext/` | VS Code extension client |
-| `github-action/` | GitHub Action integration for pull-request CI |
-| `contracts/` | Shared JSON contract fixtures for cross-service parity tests |
-| `taxonomy/` | Concrete anti-pattern taxonomy specification (`anti_patterns.yaml`) |
-| `infra/docker-compose.yml` | Full-stack local development environment |
-| `render.yaml` | Production deployment blueprint |
+| Security | `SECURITY_HARDCODED_SECRET`, `SECURITY_SQL_INJECTION`, `SECURITY_WEAK_CRYPTO` |
+| Performance | `PERFORMANCE_N_PLUS_ONE`, `PERFORMANCE_QUADRATIC_LOOP` |
+| Reliability | `RELIABILITY_BROAD_EXCEPTION`, `RELIABILITY_MISSING_TIMEOUT`\* |
+| Readability | `READABILITY_MAGIC_NUMBER`, `READABILITY_LONG_METHOD` |
+| Maintainability | `MAINTAINABILITY_DUPLICATE_CODE`\*, `MAINTAINABILITY_COMMENTED_CODE`, `MAINTAINABILITY_PRINT_STATEMENT` |
 
----
+\* Model-only labels. The rule scanner has no rule for them, so the default
+deployment never reports them.
 
-## Local Full Stack Setup
+The rule scanner handles Python, JavaScript/TypeScript and Java. Other files in
+a PR diff (Markdown, config, etc.) are skipped.
 
-### Prerequisites
-- Docker Engine with Docker Compose v2
-- Java 21 (JDK) and Maven 3.9+ (for local Java development)
-- Git
+## API surface
 
-### Running with Docker Compose
+| Method | Path | Auth |
+| --- | --- | --- |
+| GET | `/api/auth/github`, `/api/auth/callback` | GitHub OAuth (state-checked) |
+| GET | `/api/auth/me` | JWT cookie |
+| POST | `/api/auth/refresh`, `/api/auth/logout` | refresh cookie / JWT |
+| GET/POST/DELETE | `/api/auth/api-keys[/{id}]` | JWT |
+| GET/POST/DELETE | `/api/repos`, `/api/repos/connect`, `/api/repos/{id}` | JWT, owner-scoped |
+| GET | `/api/repos/{id}/prs` | JWT, owner-scoped, paginated |
+| GET | `/api/reviews/{prId}` | JWT, owner-scoped |
+| GET | `/api/metrics/quality-trend?repo=&days=` | JWT, owner-scoped |
+| POST | `/api/scan/file` | API key (`Authorization: Bearer <key>`) or JWT |
+| POST | `/api/scan/action` | JWT (accept/dismiss a finding) |
+| POST | `/api/webhook/github` | HMAC-SHA256 signature |
+
+## Design decisions worth discussing
+
+- **Two services, one owner of state.** Only the Java API touches PostgreSQL
+  and GitHub. The ML worker is stateless and reachable only with a shared
+  secret, so it can be scaled or swapped (rules ↔ model) without touching
+  persistence.
+- **Honest degradation.** If no checkpoint is configured, or the configured one
+  fails validation, the worker serves the rule engine and reports
+  `engine: "fallback"` in every response and in `/ml/health`.
+- **Webhook safety.** The HMAC is computed over the raw request bytes and
+  compared in constant time. Deliveries are deduplicated by `X-GitHub-Delivery`
+  and processed asynchronously, so GitHub gets a fast 2xx and retries are
+  idempotent. A diff the worker rejects (4xx) is marked failed immediately
+  instead of being retried.
+- **Explicit Redis-outage policy.** Auth paths fail closed: if the token
+  blacklist can't be checked, the API returns 503 rather than accepting a
+  possibly revoked token. Rate limiters fail open and log a warning.
+- **Secrets handling.** GitHub OAuth tokens and webhook secrets are encrypted at
+  rest (AES-256-GCM), and API keys are stored as bcrypt hashes. Hunks are
+  passed through a secret redactor before they're written to the dataset tables.
+  The worker gets raw code, because detecting hard-coded secrets needs it.
+- **Transactional outbox.** Findings, code samples and outbox rows are written
+  in one transaction. A scheduled processor claims outbox rows with
+  `SELECT … FOR UPDATE SKIP LOCKED` and a lease, so a crash can't lose an event.
+  Delivery is at-least-once, and handlers are idempotent.
+- **Taxonomy as a contract.** One YAML file defines finding IDs for the rule
+  scanner, the model label order, and the database `anti_patterns` table.
+  Cross-language JSON fixtures in `contracts/` pin the quality-score formula
+  and hunk identity hashing for the Java, Python and Action implementations.
+- **Clients that respect the same contract.** The GitHub Action scans each
+  changed file at the PR head and annotates only findings on added lines. The
+  VS Code extension keeps its API key in VS Code SecretStorage. The dashboard
+  lets reviewers accept, dismiss or mark a finding fixed.
+
+## Running locally
+
+Requirements: Docker with Compose v2. For running services outside Docker you
+also need JDK 21 + Maven 3.9, Python 3.11, and Node 20+.
 
 ```bash
 git clone https://github.com/tanmay-alpha/automated-code-review-tool.git
 cd automated-code-review-tool
-cp .env.example .env
+cp .env.example .env     # set GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET for OAuth login
 docker compose --env-file .env -f infra/docker-compose.yml up --build
 ```
 
-Local endpoints:
-- Dashboard: `http://localhost:3000`
-- Java API Health: `http://localhost:8080/actuator/health`
-- ML Worker Health: `http://localhost:8000/ml/health`
+- Dashboard: <http://localhost:3000>
+- API health: <http://localhost:8080/actuator/health>
+- ML worker health: <http://localhost:8000/ml/health>
 
-To stop services:
-```bash
-docker compose --env-file .env -f infra/docker-compose.yml down
-```
-
----
-
-## Verification & Testing
-
-Run all commands from the repository root unless a `cd` is noted:
+Try the worker on its own (the default secret from `.env.example`):
 
 ```bash
-# 1. Java API (Maven + JUnit 5)
-cd apps/api
-mvn -B -ntp test
-# Optional: PostgreSQL Testcontainers correctness suite (requires Docker)
-mvn -B -ntp -Ppostgres-correctness test
-
-# 2. Python ML Worker
-cd ../ml-worker
-ruff check app training tests
-mypy app training
-pytest -m "not slow" -q
-
-# 3. Next.js Web Frontend
-cd ../web
-npm ci
-npx tsc --noEmit
-npm test
-npm run build
-
-# 4. GitHub Action
-cd ../../github-action
-npm ci
-npm test
-npm run build
-git diff --exit-code -- dist
-
-# 5. VS Code Extension
-cd ../apps/vscode-ext
-npm ci
-npm run compile
-npm test
-
-# 6. Container Builds (Context: Repository Root)
-cd ../..
-docker compose --env-file .env.example -f infra/docker-compose.yml config
-docker build -f apps/api/Dockerfile -t automated-code-review-tool-api:local .
-docker build -f apps/ml-worker/Dockerfile -t automated-code-review-tool-ml:local .
-docker build -f apps/web/Dockerfile -t automated-code-review-tool-web:local apps/web
-
-# 7. Repository Hygiene & Cache Cleanup (Windows PowerShell)
-Get-ChildItem -Path . -Recurse -Directory -Force |
-  Where-Object { $_.Name -in '__pycache__', '.pytest_cache', '.benchmarks', '.mypy_cache', '.ruff_cache' } |
-  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+curl -s localhost:8000/ml/review \
+  -H 'content-type: application/json' \
+  -H 'x-ml-worker-secret: local-ml-worker-secret-change-me' \
+  -d '{"mode":"diff","language":"python","diff":"diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -0,0 +1,5 @@\n+password = \"hunter2hunter2hunter2\"\n+try:\n+    run()\n+except:\n+    pass"}'
 ```
 
----
+## Tests
 
-## Security & Data Integrity
+Each component has its own CI workflow in `.github/workflows/`.
 
-- Never commit `.env`, private keys, secrets, or model checkpoint weights to source control.
-- All code samples undergo secret redaction before ML processing or persistence.
-- Sensitive credentials (GitHub tokens, encryption keys, webhook secrets) are strictly isolated via environment variables.
+```bash
+# API: unit + slice tests on H2; PostgreSQL Testcontainers suite needs Docker
+cd apps/api && mvn -B -ntp test && mvn -B -ntp -Ppostgres-correctness test
 
----
+# ML worker
+cd apps/ml-worker && ruff check app training tests && mypy app training && pytest -q
+
+# Dashboard
+cd apps/web && npm ci && npx tsc --noEmit && npm test && npm run build
+
+# GitHub Action (dist/ must match a fresh build)
+cd github-action && npm ci && npm test && npm run build && git diff --exit-code -- dist
+
+# VS Code extension
+cd apps/vscode-ext && npm ci && npm run compile && npm test
+```
+
+## Deployment
+
+`render.yaml` is a Render blueprint for PostgreSQL, Redis, the ML worker, the
+API, and the dashboard. CI validates it against Render's published schema. The
+ML worker is deployed in fallback mode (`MODEL_NAME=none`).
+
+## Known limitations
+
+- No trained model is shipped. Model promotion requires a labelled dataset and
+  an evaluation run that this repository doesn't include.
+- The rule engine is regex- and heuristic-based, so it trades recall for
+  predictability and can't reason across files.
+- GitHub integration uses an OAuth app and per-repo webhooks, not a GitHub App.
 
 ## License
 
-[MIT](LICENSE) © 2026 Tanmay Mangal.
+[MIT](LICENSE) © 2026 Tanmay Mangal
