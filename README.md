@@ -181,6 +181,8 @@ curl -s localhost:8000/ml/review \
 ## Tests
 
 Each component has its own CI workflow in `.github/workflows/`.
+Each can also be run explicitly from GitHub's Actions tab or with
+`gh workflow run ci-api.yml --ref main` (replace the filename for another component).
 
 ```bash
 # API: unit + slice tests on H2; PostgreSQL Testcontainers suite needs Docker

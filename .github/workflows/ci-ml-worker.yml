@@ -4,6 +4,7 @@ name: ci-ml-worker
 # Runs when apps/ml-worker/**, taxonomy/** or contracts/** (all read by the
 # worker or its tests) or this workflow change.
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
