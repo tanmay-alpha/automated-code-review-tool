@@ -1,7 +1,6 @@
 {
-  "$schema": "https://automatedcodereviewtool.dev/schemas/quality-score-cases-v1.json",
-  "description": "Shared fixture for quality-score parity tests. Both Python and Java read this file and must produce identical numeric results for each case.",
-  "formula": "clamp(100 - sum(weight * confidence), 0, 100) rounded to 2dp",
+  "description": "Quality-score fixture shared by the API (QualityScoreParityTest), the ML worker (tests/test_api.py against app/model.py compute_quality_score) and the GitHub Action (test/smoke.test.cjs). All three must produce these exact results.",
+  "formula": "clamp(100 - sum(weight[severity] * clamp(confidence, 0, 1)), 0, 100) rounded half-up to 2dp; null or unknown severity weighs as minor, null confidence as 0",
   "penaltyWeights": {
     "critical": 20,
     "major": 10,

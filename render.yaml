@@ -26,12 +26,14 @@ services:
     healthCheckPath: /ml/health
     autoDeployTrigger: checksPass
     envVars:
+      # uvicorn listens on 8000 (apps/ml-worker/Dockerfile); tell Render so the
+      # health check and the hostport reference below use that port.
+      - key: PORT
+        value: "8000"
       - key: MODEL_NAME
         value: none
       - key: ML_WORKER_SECRET
         generateValue: true
-      - key: PYTHONUNBUFFERED
-        value: "1"
 
   - type: web
     name: automated-code-review-tool-api
@@ -43,6 +45,9 @@ services:
     healthCheckPath: /actuator/health
     autoDeployTrigger: checksPass
     envVars:
+      # Spring Boot listens on 8080 (apps/api/Dockerfile).
+      - key: PORT
+        value: "8080"
       # Render exposes a postgresql:// connection string, while Spring expects
       # a jdbc:postgresql:// URL. Set this to the database's internal JDBC URL.
       - key: SPRING_DATASOURCE_URL
@@ -60,8 +65,14 @@ services:
           type: keyvalue
           name: automated-code-review-tool-redis
           property: connectionString
-      - key: ML_WORKER_URL
-        value: http://automated-code-review-tool-ml-worker:8000
+      # Render's private-network hostname carries a generated suffix, so the
+      # address must come from the service reference, not a hard-coded name.
+      # application.yml builds http://<hostport> from this value.
+      - key: ML_WORKER_HOSTPORT
+        fromService:
+          type: web
+          name: automated-code-review-tool-ml-worker
+          property: hostport
       - key: ML_WORKER_SECRET
         fromService:
           type: web
@@ -85,8 +96,6 @@ services:
         value: "true"
       - key: API_KEY_RPM
         value: "60"
-      - key: JAVA_TOOL_OPTIONS
-        value: -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0
 
   - type: web
     name: automated-code-review-tool-web
@@ -98,6 +107,9 @@ services:
     healthCheckPath: /
     autoDeployTrigger: checksPass
     envVars:
+      # `next start` honours PORT; keep it on the port the image exposes.
+      - key: PORT
+        value: "3000"
       # NEXT_PUBLIC_* is embedded in the browser bundle during the Docker build.
       - key: NEXT_PUBLIC_API_BASE_URL
         sync: false

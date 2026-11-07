@@ -6,11 +6,13 @@ on:
     paths:
       - "github-action/**"
       - "apps/vscode-ext/**"
+      - "contracts/**"
       - ".github/workflows/ci-integrations.yml"
   pull_request:
     paths:
       - "github-action/**"
       - "apps/vscode-ext/**"
+      - "contracts/**"
       - ".github/workflows/ci-integrations.yml"
 
 concurrency:

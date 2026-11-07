@@ -37,7 +37,7 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - name: Run API tests
+      - name: Run API tests (PostgreSQL group runs in its own job)
         working-directory: apps/api
         run: mvn -B -ntp test
       - name: Upload Surefire reports on failure

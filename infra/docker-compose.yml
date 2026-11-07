@@ -9,7 +9,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ../scripts/seed-db.sql:/docker-entrypoint-initdb.d/seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -53,7 +52,6 @@ services:
       MODEL_NAME: ${MODEL_NAME:-none}
       HF_TOKEN: ${HF_TOKEN:-}
       ML_WORKER_SECRET: ${ML_WORKER_SECRET:-local-ml-worker-secret-change-me}
-      HF_HOME: /home/automated-code-review-tool/.cache/huggingface
     ports:
       - "8000:8000"
     volumes:
@@ -77,18 +75,18 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-automated-code-review-tool}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-automated-code-review-tool_local}
       SPRING_REDIS_HOST: redis
-      SPRING_REDIS_PORT: "6379"
       SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD:-automated-code-review-tool_local}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-local-github-client-id}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-local-github-client-secret}
-      JWT_SECRET: ${JWT_SECRET:-local-only-jwt-secret-change-before-sharing}
+      JWT_SECRET: ${JWT_SECRET:-local-only-jwt-signing-key-change-before-sharing}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-bG9jYWwtZGV2LWVuY3J5cHRpb24ta2V5LTMyYnl0ZXM=}
       ML_WORKER_URL: http://ml-worker:8000
       ML_WORKER_SECRET: ${ML_WORKER_SECRET:-local-ml-worker-secret-change-me}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-      COOKIE_SECURE: "false"
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
       WEBHOOK_CALLBACK_URL: ${WEBHOOK_CALLBACK_URL:-http://localhost:8080/api/webhook/github}
+      API_KEY_RPM: ${API_KEY_RPM:-60}
     ports:
       - "8080:8080"
     depends_on:

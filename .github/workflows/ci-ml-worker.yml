@@ -1,9 +1,8 @@
 name: ci-ml-worker
 
-# Run FastAPI tests, type-checks and lints whenever apps/ml-worker/**
-# taxonomy/** or contracts/** change (or this workflow).
-# 'pytest -m "not slow"' skips tests tagged @pytest.mark.slow — those
-# model-heavy tests, when present, require an explicit external artifact.
+# Lint, type-check and test the ML worker, then build and smoke-test its image.
+# Runs when apps/ml-worker/**, taxonomy/** or contracts/** (all read by the
+# worker or its tests) or this workflow change.
 on:
   push:
     branches: [main]
@@ -25,7 +24,7 @@ concurrency:
 
 jobs:
   test:
-    name: pytest (not slow)
+    name: ruff, mypy, pytest
     runs-on: ubuntu-latest
 
     env:
@@ -55,34 +54,20 @@ jobs:
           pip install -r requirements-train.txt
           pip install -r requirements-test.txt
 
-      - name: Verify lint and type-check tools
-        working-directory: apps/ml-worker
-        run: |
-          ruff --version
-          mypy --version
-
-      - name: ruff check (mandatory gate — must pass)
+      - name: ruff check
         working-directory: apps/ml-worker
         run: |
           ruff check app training tests
 
-      - name: mypy (mandatory gate — must pass)
+      - name: mypy
         working-directory: apps/ml-worker
         run: |
           mypy app training
 
-      - name: pytest (mandatory gate — must pass)
+      - name: pytest
         working-directory: apps/ml-worker
         run: |
-          pytest -m "not slow" -q --tb=short
-
-      - name: Upload test results on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ml-worker-test-results
-          path: apps/ml-worker/tests/.pytest_cache
-          if-no-files-found: ignore
+          pytest -q --tb=short
 
   docker-build:
     name: docker build (ml-worker)
@@ -92,16 +77,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Build ml-worker image (no push)
-        working-directory: apps/ml-worker
-        run: |
-          docker build \
-            --build-arg MODEL_NAME=none \
-            -t automated-code-review-tool/ml-worker:ci \
-            -f Dockerfile ../..
+        run: docker build -f apps/ml-worker/Dockerfile -t automated-code-review-tool/ml-worker:ci .
 
       - name: Smoke test the image (fallback-only boot)
         run: |

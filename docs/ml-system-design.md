@@ -1,8 +1,10 @@
 # ML system design
 
 The ML subsystem is designed around versioned, redacted pull-request hunks.
-The deterministic rule engine remains the production detector until an optional
-multi-label checkpoint is trained, evaluated, and explicitly promoted.
+The deterministic rule engine is the production detector. The repository ships
+no dataset and no trained checkpoint; an optional multi-label checkpoint is only
+loaded after it has been trained, evaluated, and explicitly promoted with the
+tooling in `apps/ml-worker/training`.
 
 ## Canonical contracts
 
@@ -36,7 +38,8 @@ redacted PR hunks
 
 A code sample represents one localized diff hunk and records repository, pull
 request, commit, file, language, line-range, content identity, redaction, and
-data-use metadata. Binary and deleted-file content is not useful training input.
+data-use metadata. The API's hunk parser skips binary files, and dataset records
+require non-empty added code.
 Raw secrets and unconsented private code must not enter outbox payloads, dataset
 artifacts, annotation exports, experiment output, or logs.
 
@@ -58,8 +61,9 @@ The manifest binds the dataset version to a taxonomy version, source revision,
 seed, split counts, label and language distributions, redaction versions, and a
 deterministic manifest hash. The hash is computed without the hash field itself.
 
-Repository and pull-request groups cannot cross splits. Exact or near-duplicate
-groups cannot cross splits either. Validation rejects unknown labels, missing
+Samples are grouped by `repository_id:pull_request_id`, and a group never
+crosses splits. Exact or near-duplicate groups are merged so they cannot cross
+splits either. Validation rejects unknown labels, missing
 provenance, unsupported policy states, leaked secrets, empty hunks, duplicate
 sample IDs, and split leakage before freezing.
 
@@ -73,9 +77,10 @@ outside Git.
 
 No checkpoint is promoted merely because it can be loaded. Promotion also
 requires compatible metadata, a frozen dataset with no critical quality failure,
-an evaluation artifact, baseline comparison, and deployment smoke tests. If a
-promoted model is missing or incompatible, serving degrades to the deterministic
-fallback and reports the engine actually used.
+an evaluation artifact, rule and TF-IDF baseline comparisons, and a local
+load-and-inference smoke report. Promotion does not change deployment
+configuration. If a configured model is missing or incompatible, serving
+degrades to the deterministic fallback and reports the engine actually used.
 
 See [the training guide](../apps/ml-worker/training/README.md) for executable
 commands once a reviewed dataset and approved checkpoint are available.
