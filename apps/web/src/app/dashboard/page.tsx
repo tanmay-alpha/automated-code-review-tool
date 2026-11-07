@@ -19,25 +19,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { getRepos, getQualityTrend } from "@/lib/api";
-import type {
-  QualityTrendDataPoint,
-  QualityTrendResponse,
-  RepoSummaryResponse,
-} from "@/lib/types";
+import type { QualityTrendPoint, QualityTrendResponse, RepoResponse } from "@/lib/types";
 
 /**
- * Top-level repository review dashboard.
- *
- *   1. Stats bar — repos / PRs / avg quality.
- *   2. **Global quality trend chart** — aggregate score across all repos,
- *      computed client-side from each repo's 30-day trend (no backend
- *      aggregate endpoint exists; we average the daily points).
- *   3. "Connect Repository" button → modal.
- *   4. Grid of RepoCard components. Each card now shows a 7-day
- *      sparkline in addition to the existing quality badge.
+ * Dashboard: stats bar, a cross-repo quality chart (merged client-side
+ * from each repo's 30-day trend — the API has no aggregate endpoint),
+ * the "Connect Repository" modal, and one RepoCard per repository.
  */
 function DashboardContent() {
-  const { data: repos, error, isLoading, mutate } = useSWR<RepoSummaryResponse[]>(
+  const { data: repos, error, isLoading, mutate } = useSWR<RepoResponse[]>(
     "repos",
     getRepos,
     { revalidateOnFocus: true },
@@ -115,8 +105,8 @@ function DashboardContent() {
             <CardHeader>
               <CardTitle>No repositories yet</CardTitle>
               <CardDescription>
-                Connect a GitHub repository to start getting AI-powered
-                code review comments on every PR.
+                Connect a GitHub repository to get an automated review
+                comment on each pull request.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -149,13 +139,8 @@ function DashboardContent() {
   );
 }
 
-/**
- * Pulls 7-day trends for every repo in parallel and renders a single
- * sparkline per card. SWR dedupes per (repoId, days) so the global
- * trend (which also asks for 30d per repo) and the sparkline (7d per
- * repo) don't double-fetch.
- */
-function RepoCardWithSparkline({ repo }: { repo: RepoSummaryResponse }) {
+/** RepoCard plus its 7-day sparkline, fetched per repo. */
+function RepoCardWithSparkline({ repo }: { repo: RepoResponse }) {
   const { data: trend } = useSWR<QualityTrendResponse>(
     ["quality-trend", repo.id, 7],
     () => getQualityTrend(repo.id, 7),
@@ -165,7 +150,7 @@ function RepoCardWithSparkline({ repo }: { repo: RepoSummaryResponse }) {
   return (
     <RepoCard
       repo={repo}
-      sparklineData={trend?.trend as QualityTrendDataPoint[] | undefined}
+      sparklineData={trend?.trend}
     />
   );
 }
@@ -200,7 +185,7 @@ function StatCard({
   );
 }
 
-function computeStats(repos: RepoSummaryResponse[] | undefined) {
+function computeStats(repos: RepoResponse[] | undefined) {
   if (!repos || repos.length === 0) {
     return { totalRepos: 0, totalPrs: 0, avgScore: null as number | null };
   }
@@ -226,11 +211,11 @@ function GlobalQualityChart({
   repos,
   isLoading,
 }: {
-  repos: RepoSummaryResponse[] | undefined;
+  repos: RepoResponse[] | undefined;
   isLoading: boolean;
 }) {
   const ids = (repos ?? []).map((r) => r.id);
-  // SWR fan-out: one key per repo, run in parallel.
+  // One SWR key for the whole set; the per-repo requests run in parallel.
   const { data: perRepo, isLoading: trendsLoading } = useSWR(
     ids.length > 0 ? ["global-trend", ids.join("|"), 30] : null,
     async () => {
@@ -272,7 +257,7 @@ function GlobalQualityChart({
 
 function mergeGlobalTrend(
   perRepo: QualityTrendResponse[] | undefined,
-): QualityTrendDataPoint[] {
+): QualityTrendPoint[] {
   if (!perRepo || perRepo.length === 0) return [];
   // Build a map: date -> { sum, count, prs, crit, major, minor }.
   const acc = new Map<

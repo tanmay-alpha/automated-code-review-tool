@@ -11,7 +11,7 @@ import {
 const TAXONOMY_URL =
   "https://github.com/tanmay-alpha/automated-code-review-tool/blob/main/taxonomy/anti_patterns.yaml";
 
-/** The canonical taxonomy is YAML, not a hand-maintained frontend copy. */
+/** Links to the canonical YAML rather than keeping a frontend copy that could drift. */
 export default function TaxonomyPage() {
   return (
     <AuthShell>
@@ -25,8 +25,9 @@ export default function TaxonomyPage() {
           <CardHeader>
             <CardTitle>Canonical anti-pattern definitions</CardTitle>
             <CardDescription>
-              The shared YAML taxonomy is the sole source for training,
-              fallback detection, checkpoint validation, and persistence.
+              The anti-pattern IDs, categories and default severities live
+              in one YAML file. The ML worker loads and caches it, and the
+              API&apos;s database migration seeds the same IDs.
             </CardDescription>
           </CardHeader>
           <CardContent>

@@ -12,19 +12,13 @@ export interface UserResponse {
   id: string;
   githubUsername: string;
   avatarUrl: string | null;
-  apiKeyPrefix: string | null;
   createdAt: string; // ISO Instant
-}
-
-/** POST /api/auth/api-key/regenerate → Map.of("apiKey", …) */
-export interface RegenerateApiKeyResponse {
-  apiKey: string;
 }
 
 // ---------- /api/repos/* ----------
 
-/** GET /api/repos → List<RepoResponse> (one RepoSummary per element) */
-export interface RepoSummaryResponse {
+/** GET /api/repos, GET /api/repos/{id}, POST /api/repos/connect → RepoResponse.java */
+export interface RepoResponse {
   id: string;
   fullName: string;
   githubId: number;
@@ -35,40 +29,19 @@ export interface RepoSummaryResponse {
   latestQualityScore: number | null;
 }
 
-/** POST /api/repos/connect → RepoResponse (X-Webhook-Secret header ignored here) */
-export type RepoResponse = RepoSummaryResponse;
-
-/** GET /api/repos/{id} → RepoResponse */
-export type RepoDetailResponse = RepoResponse;
-
 // ---------- /api/repos/{id}/prs ----------
 
-/**
- * Spring Data `Page<T>` serializes as the following JSON shape.
- * Field names match `org.springframework.data.domain.Page`.
- */
+/** The subset of the Spring Data page envelope the dashboard reads. */
 export interface PaginatedPRResponse<T> {
   content: T[];
-  pageable: {
-    pageNumber: number;
-    pageSize: number;
-    sort: { empty: boolean; sorted: boolean; unsorted: boolean };
-    offset: number;
-    paged: boolean;
-    unpaged: boolean;
-  };
   totalElements: number;
   totalPages: number;
-  last: boolean;
-  size: number;
-  number: number;
-  sort: { empty: boolean; sorted: boolean; unsorted: boolean };
+  number: number; // zero-based page index
   first: boolean;
-  numberOfElements: number;
-  empty: boolean;
+  last: boolean;
 }
 
-/** A row of the PR list (one entry of `Page<PullRequestEntity>`). */
+/** One row of the PR list. */
 export interface PullRequestSummary {
   id: string;
   githubPrNumber: number;
@@ -76,16 +49,15 @@ export interface PullRequestSummary {
   authorGithub: string | null;
   headSha: string | null;
   githubPrUrl: string | null;
-  status: string; // "pending" | "reviewed" | "failed"
+  status: string; // "processing" | "reviewed" | "failed"
   qualityScore: number | null;
   githubCommentId: number | null;
   errorMessage: string | null;
   reviewedAt: string | null;
   createdAt: string;
-  // `repo` field omitted — we know it from the URL.
 }
 
-// ---------- /api/reviews/{prId} → ReviewResponse ----------
+// ---------- /api/reviews/{prId} → ReviewResponse.java ----------
 
 export interface FindingDto {
   id: string;
@@ -94,10 +66,12 @@ export interface FindingDto {
   lineEnd: number | null;
   antiPattern: string;
   category: string;
-  severity: "critical" | "major" | "minor" | string;
+  severity: string; // "critical" | "major" | "minor"
   confidence: number; // 0..1
   explanation: string | null;
   codeSnippet: string | null;
+  /** Saved developer disposition; "open" until an action is recorded. */
+  status: "open" | FindingDisposition;
 }
 
 export interface ReviewDetailResponse {
@@ -119,6 +93,21 @@ export interface ReviewDetailResponse {
   findings: FindingDto[];
 }
 
+// ---------- /api/scan/action ----------
+
+/** Verb accepted by POST /api/scan/action (FindingActionRequest.java). */
+export type FindingAction = "accept" | "dismiss" | "fix";
+
+/** Value the API stores in `findings.status` for each action. */
+export type FindingDisposition = "accepted" | "dismissed" | "fixed";
+
+/** POST /api/scan/action → FindingActionResponse.java */
+export interface FindingActionResponse {
+  findingId: string;
+  action: FindingAction;
+  status: FindingDisposition;
+}
+
 // ---------- /api/metrics/* ----------
 
 /** GET /api/metrics/quality-trend?repo=…&days=… → QualityTrendResponse.java */
@@ -138,25 +127,18 @@ export interface QualityTrendPoint {
   minorCount: number;
 }
 
-/**
- * Alias used by the dashboard widgets. Currently identical to
- * {@link QualityTrendPoint}; kept as a separate name so callers
- * importing chart components don't have to know about the metrics DTO.
- */
-export type QualityTrendDataPoint = QualityTrendPoint;
-
 // ---------- /api/auth/api-keys ----------
 
 /** GET /api/auth/api-keys → List<ApiKeyResponse> */
 export interface ApiKeyResponse {
   id: string;
   label: string;
-  prefix: string; // e.g. "cl_live_abc1"
+  prefix: string;
   createdAt: string;
   lastUsedAt: string | null;
 }
 
-/** POST /api/auth/api-keys → CreatedApiKeyResponse (returned ONCE) */
+/** POST /api/auth/api-keys → CreatedApiKeyResponse (returned once) */
 export interface CreatedApiKeyResponse {
   id: string;
   label: string;
@@ -164,8 +146,3 @@ export interface CreatedApiKeyResponse {
   key: string; // the only time the full plaintext is shown
   createdAt: string;
 }
-
-// ---------- convenience unions ----------
-
-export type Severity = "critical" | "major" | "minor";
-export type ReviewStatus = "pending" | "reviewed" | "failed";

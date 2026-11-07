@@ -2,18 +2,14 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "automated-code-review-tool — semantic code review",
+  title: "automated-code-review-tool",
   description:
-    "Catches what linters miss. AI-powered PR review, repo-level quality trends, and inline anti-pattern annotations.",
+    "Automated pull-request review: rule-based anti-pattern detection, per-repo quality trends, and VS Code diagnostics.",
 };
 
 /**
- * Root layout. Authenticated routes are wrapped in <AuthShell> at the page
- * level (so we don't pay the cost on the public landing page).
- *
- * NB: We do NOT use a top-level `Sidebar` here — instead, every page under
- * (the default tree) decides whether to render <AuthShell>. The landing
- * page is the only fully-public route, so it omits the shell.
+ * Root layout. Authenticated pages wrap themselves in <AuthShell>; the
+ * public landing page does not.
  */
 export default function RootLayout({
   children,
@@ -21,7 +17,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en">
       <body className="min-h-screen bg-background font-sans antialiased">
         {children}
       </body>

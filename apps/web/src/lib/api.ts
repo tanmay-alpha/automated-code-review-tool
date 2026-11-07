@@ -3,8 +3,7 @@
 //
 // All requests carry `credentials: "include"` so the browser forwards the
 // httpOnly `accessToken` / `refreshToken` cookies set by Spring Boot's
-// `AuthController`. We never store tokens in JS-accessible storage —
-// that would defeat the XSS-protection of httpOnly.
+// `AuthController`. Tokens are never stored in JS-accessible storage.
 //
 // The base URL defaults to `http://localhost:8080` and can be overridden
 // with NEXT_PUBLIC_API_BASE_URL in `.env.local`.
@@ -13,18 +12,18 @@
 import type {
   ApiKeyResponse,
   CreatedApiKeyResponse,
+  FindingAction,
+  FindingActionResponse,
   PaginatedPRResponse,
   PullRequestSummary,
   QualityTrendResponse,
-  RegenerateApiKeyResponse,
-  RepoDetailResponse,
-  RepoSummaryResponse,
+  RepoResponse,
   ReviewDetailResponse,
   UserResponse,
 } from "@/lib/types";
 
-const BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ??
+export const BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "http://localhost:8080";
 
 export class ApiError extends Error {
@@ -39,38 +38,53 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "DELETE" | "PUT";
+  method?: "GET" | "POST" | "DELETE";
   body?: unknown;
-  /** Override the default content-type. */
-  contentType?: string;
-  /** Extra headers to merge in. */
-  headers?: Record<string, string>;
 }
 
-async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, contentType, headers = {} } = opts;
+let refreshInFlight: Promise<boolean> | null = null;
+
+/**
+ * POST /api/auth/refresh — trades the refresh cookie for a new access cookie
+ * (the access token lives 15 minutes). The API rotates the refresh token and
+ * rejects reuse of the old one, so concurrent 401s must share one attempt.
+ */
+function refreshSession(): Promise<boolean> {
+  refreshInFlight ??= fetch(`${BASE_URL}/api/auth/refresh`, {
+    method: "POST",
+    credentials: "include",
+  })
+    .then((res) => res.ok)
+    .catch(() => false)
+    .finally(() => {
+      refreshInFlight = null;
+    });
+  return refreshInFlight;
+}
+
+async function request<T>(
+  path: string,
+  opts: RequestOptions = {},
+  isRetry = false,
+): Promise<T> {
+  const { method = "GET", body } = opts;
   const url = `${BASE_URL}${path}`;
 
-  const init: RequestInit = {
+  const res = await fetch(url, {
     method,
     credentials: "include",
     headers: {
       Accept: "application/json",
-      ...(body !== undefined ? { "Content-Type": contentType ?? "application/json" } : {}),
-      ...headers,
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
     },
-    ...(body !== undefined
-      ? { body: typeof body === "string" ? body : JSON.stringify(body) }
-      : {}),
-  };
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
 
-  const res = await fetch(url, init);
+  if (res.status === 401 && !isRetry && (await refreshSession())) {
+    return request<T>(path, opts, true);
+  }
 
   if (!res.ok) {
-    // 204 No Content — return as `undefined as T` for caller convenience.
-    if (res.status === 204) {
-      return undefined as T;
-    }
     const text = await res.text().catch(() => "");
     throw new ApiError(
       text || `${method} ${path} failed with ${res.status}`,
@@ -79,12 +93,9 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     );
   }
 
-  // 204 may also slip through here for callers that don't expect void.
   if (res.status === 204) {
     return undefined as T;
   }
-  // Some endpoints (like /api/auth/api-key/regenerate) return a JSON object
-  // — `await res.json()` is what we want.
   return (await res.json()) as T;
 }
 
@@ -106,14 +117,14 @@ export async function logout(): Promise<void> {
 // /api/repos
 // =============================================================================
 
-/** GET /api/repos → RepoSummaryResponse[]. */
-export function getRepos(): Promise<RepoSummaryResponse[]> {
-  return request<RepoSummaryResponse[]>("/api/repos");
+/** GET /api/repos → RepoResponse[]. */
+export function getRepos(): Promise<RepoResponse[]> {
+  return request<RepoResponse[]>("/api/repos");
 }
 
-/** POST /api/repos/connect → RepoResponse (sets webhook, returns secret in header). */
-export function connectRepo(fullName: string): Promise<RepoSummaryResponse> {
-  return request<RepoSummaryResponse>("/api/repos/connect", {
+/** POST /api/repos/connect → 201 RepoResponse (the API also installs the webhook). */
+export function connectRepo(fullName: string): Promise<RepoResponse> {
+  return request<RepoResponse>("/api/repos/connect", {
     method: "POST",
     body: { fullName },
   });
@@ -126,59 +137,20 @@ export async function disconnectRepo(repoId: string): Promise<void> {
   });
 }
 
-/** GET /api/repos/{id} → RepoDetailResponse. */
-export function getRepoDetail(repoId: string): Promise<RepoDetailResponse> {
-  return request<RepoDetailResponse>(`/api/repos/${encodeURIComponent(repoId)}`);
+/** GET /api/repos/{id} → RepoResponse. */
+export function getRepoDetail(repoId: string): Promise<RepoResponse> {
+  return request<RepoResponse>(`/api/repos/${encodeURIComponent(repoId)}`);
 }
 
-/**
- * GET /api/repos/{id}/prs?page=N&size=20 → PaginatedPRResponse<PullRequestSummary>.
- *
- * The Spring endpoint returns `Page<PullRequestEntity>` which serializes
- * with a `content: [...]` array; we map each entity to a slim summary
- * the dashboard can render.
- */
-export async function getRepoPRs(
+/** GET /api/repos/{id}/prs?page=N&size=M → one page of pull requests. */
+export function getRepoPRs(
   repoId: string,
   page: number,
   size = 20,
 ): Promise<PaginatedPRResponse<PullRequestSummary>> {
-  const raw = await request<
-    PaginatedPRResponse<{
-      id: string;
-      githubPrNumber: number;
-      title: string | null;
-      authorGithub: string | null;
-      headSha: string | null;
-      githubPrUrl: string | null;
-      status: string;
-      qualityScore: number | null;
-      githubCommentId: number | null;
-      errorMessage: string | null;
-      reviewedAt: string | null;
-      createdAt: string;
-    }>
-  >(
+  return request<PaginatedPRResponse<PullRequestSummary>>(
     `/api/repos/${encodeURIComponent(repoId)}/prs?page=${page}&size=${size}`,
   );
-  // Normalize: strip the `repo` nested object (we know it from the URL).
-  return {
-    ...raw,
-    content: raw.content.map((p) => ({
-      id: p.id,
-      githubPrNumber: p.githubPrNumber,
-      title: p.title,
-      authorGithub: p.authorGithub,
-      headSha: p.headSha,
-      githubPrUrl: p.githubPrUrl,
-      status: p.status,
-      qualityScore: p.qualityScore,
-      githubCommentId: p.githubCommentId,
-      errorMessage: p.errorMessage,
-      reviewedAt: p.reviewedAt,
-      createdAt: p.createdAt,
-    })),
-  };
 }
 
 // =============================================================================
@@ -191,13 +163,31 @@ export function getPRReview(prId: string): Promise<ReviewDetailResponse> {
 }
 
 // =============================================================================
+// /api/scan
+// =============================================================================
+
+/**
+ * POST /api/scan/action → FindingActionResponse. Records a developer
+ * disposition on a finding. JWT only; 404 when the finding does not exist
+ * or belongs to a repository the caller does not own.
+ */
+export function recordFindingAction(
+  findingId: string,
+  action: FindingAction,
+): Promise<FindingActionResponse> {
+  return request<FindingActionResponse>("/api/scan/action", {
+    method: "POST",
+    body: { findingId, action },
+  });
+}
+
+// =============================================================================
 // /api/metrics
 // =============================================================================
 
 /**
  * GET /api/metrics/quality-trend?repo=<uuid>&days=<n> → QualityTrendResponse.
- *
- * NB: the Spring endpoint takes `repo` as a query param, NOT a path segment.
+ * The Spring endpoint takes `repo` as a query param, not a path segment.
  */
 export function getQualityTrend(
   repoId: string,
@@ -212,19 +202,12 @@ export function getQualityTrend(
 // /api/auth/api-keys
 // =============================================================================
 
-/** POST /api/auth/api-key/regenerate → { apiKey: string }. */
-export function regenerateApiKey(): Promise<RegenerateApiKeyResponse> {
-  return request<RegenerateApiKeyResponse>("/api/auth/api-key/regenerate", {
-    method: "POST",
-  });
-}
-
 /** GET /api/auth/api-keys → ApiKeyResponse[]. */
 export function listApiKeys(): Promise<ApiKeyResponse[]> {
   return request<ApiKeyResponse[]>("/api/auth/api-keys");
 }
 
-/** POST /api/auth/api-keys → CreatedApiKeyResponse (plaintext returned ONCE). */
+/** POST /api/auth/api-keys → 201 CreatedApiKeyResponse (plaintext returned once). */
 export function createApiKey(label: string): Promise<CreatedApiKeyResponse> {
   return request<CreatedApiKeyResponse>("/api/auth/api-keys", {
     method: "POST",
@@ -238,6 +221,3 @@ export async function revokeApiKey(id: string): Promise<void> {
     method: "DELETE",
   });
 }
-
-// Re-export so consumers can use one import.
-export { BASE_URL };

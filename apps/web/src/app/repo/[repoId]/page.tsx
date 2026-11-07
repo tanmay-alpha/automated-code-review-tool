@@ -25,7 +25,6 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   Table,
@@ -49,7 +48,7 @@ import type {
   PaginatedPRResponse,
   PullRequestSummary,
   QualityTrendResponse,
-  RepoDetailResponse,
+  RepoResponse,
 } from "@/lib/types";
 
 function RepoDetailContent() {
@@ -58,7 +57,7 @@ function RepoDetailContent() {
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
-  const { data: repo, error: repoError } = useSWR<RepoDetailResponse>(
+  const { data: repo, error: repoError } = useSWR<RepoResponse>(
     repoId ? ["repo", repoId] : null,
     () => getRepoDetail(repoId),
   );
@@ -72,12 +71,14 @@ function RepoDetailContent() {
     { keepPreviousData: true },
   );
 
-  // 30-day trend drives the trend stat ("+8.5 vs last 30d") and the chart.
+  // 30-day trend drives the trend stat and the "most common anti-pattern"
+  // stat. QualityChart uses the same SWR key, so the request is shared.
   const { data: trend30 } = useSWR<QualityTrendResponse>(
     repoId ? ["quality-trend", repoId, 30] : null,
     () => getQualityTrend(repoId, 30),
     { revalidateOnFocus: false, dedupingInterval: 60_000 },
   );
+  const delta = trend30 ? trendDelta(trend30) : null;
 
   return (
     <div className="mx-auto max-w-7xl p-8">
@@ -126,14 +127,14 @@ function RepoDetailContent() {
           tone={repo?.latestQualityScore ?? null}
         />
         <SummaryStat
-          label="Trend (vs prev 30d)"
+          label="Trend (last 30 days)"
           value={
-            trend30
-              ? formatTrendDelta(trend30)
-              : null
+            delta == null
+              ? null
+              : `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)}`
           }
           tone="neutral"
-          icon={trendIcon(trend30)}
+          icon={trendIcon(delta)}
         />
         <SummaryStat
           label="PRs reviewed"
@@ -144,7 +145,7 @@ function RepoDetailContent() {
           label="Most common anti-pattern"
           value={
             trend30?.topAntiPattern
-              ? formatAntiPatternName(trend30.topAntiPattern)
+              ? titleCase(trend30.topAntiPattern)
               : "—"
           }
           tone="neutral"
@@ -186,7 +187,7 @@ function RepoDetailContent() {
                   </TableHeader>
                   <TableBody>
                     {prs.content.map((pr) => (
-                      <TableRow key={pr.id} className="cursor-pointer">
+                      <TableRow key={pr.id}>
                         <TableCell className="font-mono text-xs text-muted-foreground">
                           #{pr.githubPrNumber}
                         </TableCell>
@@ -228,7 +229,6 @@ function RepoDetailContent() {
                               title={`Open PR #${pr.githubPrNumber} on GitHub`}
                               aria-label={`Open PR #${pr.githubPrNumber} on GitHub`}
                               className="text-muted-foreground hover:text-foreground"
-                              onClick={(e) => e.stopPropagation()}
                             >
                               <ExternalLink className="h-3.5 w-3.5" />
                             </a>
@@ -280,7 +280,7 @@ function RepoDetailContent() {
         </section>
 
         <aside className="lg:col-span-1">
-          <QualityChart repoId={repoId} initialPeriod="30d" compact />
+          <QualityChart repoId={repoId} compact />
         </aside>
       </div>
     </div>
@@ -340,57 +340,32 @@ function StatusBadge({ status }: { status: string }) {
           Failed
         </Badge>
       );
-    case "pending":
     default:
       return <Badge variant="outline">{titleCase(status)}</Badge>;
   }
 }
 
 /**
- * Compares the average of the first half of the trend window with the
- * average of the second half. Returns a formatted "+X.X" / "-X.X" delta.
- * Returns null if there's not enough data.
+ * Average score of the later half of the days with data minus the average
+ * of the earlier half. Null when there are fewer than 4 scored days.
  */
-function formatTrendDelta(trend: QualityTrendResponse): string | null {
-  const points = trend.trend.filter((p) => p.avgQuality != null);
-  if (points.length < 4) return null;
-  const half = Math.floor(points.length / 2);
-  const earlier = points.slice(0, half);
-  const later = points.slice(-half);
-  if (earlier.length === 0 || later.length === 0) return null;
-  const avg = (xs: typeof points) =>
-    xs.reduce((s, p) => s + (p.avgQuality ?? 0), 0) / xs.length;
-  const delta = avg(later) - avg(earlier);
-  const sign = delta >= 0 ? "+" : "−";
-  return `${sign}${Math.abs(delta).toFixed(1)}`;
+function trendDelta(trend: QualityTrendResponse): number | null {
+  const scores = trend.trend
+    .map((p) => p.avgQuality)
+    .filter((s): s is number => s != null);
+  if (scores.length < 4) return null;
+  const half = Math.floor(scores.length / 2);
+  const avg = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
+  return avg(scores.slice(-half)) - avg(scores.slice(0, half));
 }
 
-function trendIcon(trend: QualityTrendResponse | undefined) {
-  if (!trend) return null;
-  const points = trend.trend.filter((p) => p.avgQuality != null);
-  if (points.length < 4) return null;
-  const half = Math.floor(points.length / 2);
-  const avg = (xs: typeof points) =>
-    xs.reduce((s, p) => s + (p.avgQuality ?? 0), 0) / xs.length;
-  const delta = avg(points.slice(-half)) - avg(points.slice(0, half));
+function trendIcon(delta: number | null) {
+  if (delta == null) return null;
   if (delta > 1)
     return <TrendingUp className="inline h-5 w-5 text-green-600" />;
   if (delta < -1)
     return <TrendingDown className="inline h-5 w-5 text-red-600" />;
   return <Minus className="inline h-5 w-5 text-muted-foreground" />;
-}
-
-function formatAntiPatternName(id: string): string {
-  return id
-    .toLowerCase()
-    .split("_")
-    .map((w, i) =>
-      i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w,
-    )
-    .join(" ")
-    .replace(/\bn\b/g, "N")
-    .replace(/\b1\b/g, "1")
-    .replace(/\bn plus 1\b/g, "N+1");
 }
 
 export default function RepoDetailPage() {

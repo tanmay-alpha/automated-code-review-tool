@@ -16,21 +16,6 @@ const nextConfig = {
       },
     ];
   },
-  webpack: (config, { isServer }) => {
-    // react-diff-viewer-continued and other browser-only deps occasionally
-    // reference Node globals (process.platform, Buffer) when bundled for
-    // the client. Tell webpack they don't exist so the bundle compiles.
-    if (!isServer) {
-      config.resolve = config.resolve || {};
-      config.resolve.fallback = {
-        ...(config.resolve.fallback || {}),
-        process: false,
-        buffer: false,
-        stream: false,
-      };
-    }
-    return config;
-  },
 };
 
 export default nextConfig;

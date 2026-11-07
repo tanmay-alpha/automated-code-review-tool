@@ -58,18 +58,3 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
-
-/* Highlight lines that the DiffViewer flagged inline — react-diff-viewer-continued
- * renders each line as a `<td>`; we paint a coloured stripe using `data-line`. */
-.automated-code-review-tool-finding-critical {
-  background-color: rgba(239, 68, 68, 0.18) !important;
-  border-left: 4px solid rgb(239, 68, 68);
-}
-.automated-code-review-tool-finding-major {
-  background-color: rgba(249, 115, 22, 0.18) !important;
-  border-left: 4px solid rgb(249, 115, 22);
-}
-.automated-code-review-tool-finding-minor {
-  background-color: rgba(234, 179, 8, 0.18) !important;
-  border-left: 4px solid rgb(234, 179, 8);
-}

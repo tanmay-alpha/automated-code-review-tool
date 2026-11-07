@@ -18,7 +18,7 @@ export function qualityScoreColor(score: number | null | undefined): string {
   return "bg-red-100 text-red-800 border-red-300";
 }
 
-/** Convert an API enum like CRITICAL into a UI-friendly "Critical". */
+/** Convert an API enum like CRITICAL or PERFORMANCE_N_PLUS_ONE into "Critical" / "Performance N Plus One". */
 export function titleCase(s: string | null | undefined): string {
   if (!s) return "";
   return s
@@ -29,33 +29,15 @@ export function titleCase(s: string | null | undefined): string {
 }
 
 /**
- * Formats PERF_N_PLUS_ONE → "N+1 Query Performance" (display-friendly
- * rendering of an anti-pattern id).
- */
-export function formatAntiPattern(id: string | null | undefined): string {
-  if (!id) return "Unknown";
-  return id
-    .toLowerCase()
-    .split("_")
-    .map((w, i) => (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))
-    .join(" ")
-    .replace(/\bn\b/g, "N")
-    .replace(/\b1\b/g, "1")
-    .replace(/\b1 plus 1\b/g, "N+1")
-    .replace(/\bn plus 1\b/g, "N+1")
-    .replace(/\bquery\b/gi, "Query");
-}
-
-/**
- * Render an ISO instant as a short human-readable relative-time string
- * (e.g. "2h ago", "3 days ago"). Returns "—" for null/undefined.
+ * Render an ISO instant as a short relative-time string (e.g. "2h ago",
+ * "3d ago"). Returns "—" for null/undefined/unparseable input.
  */
 export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return "—";
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return "—";
-  const diffMs = Date.now() - t;
-  const sec = Math.round(diffMs / 1000);
+  // Clamp so a slightly-ahead server clock doesn't render "-3s ago".
+  const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
   if (sec < 60) return `${sec}s ago`;
   const min = Math.round(sec / 60);
   if (min < 60) return `${min}m ago`;

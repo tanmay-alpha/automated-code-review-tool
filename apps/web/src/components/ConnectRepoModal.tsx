@@ -1,16 +1,16 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { X, ExternalLink } from "lucide-react";
+import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { connectRepo } from "@/lib/api";
-import type { RepoSummaryResponse } from "@/lib/types";
+import type { RepoResponse } from "@/lib/types";
 
 export interface ConnectRepoModalProps {
   open: boolean;
   onClose: () => void;
-  onSuccess: (repo: RepoSummaryResponse) => void;
+  onSuccess: (repo: RepoResponse) => void;
 }
 
 /**
@@ -104,16 +104,8 @@ export function ConnectRepoModal({
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <p className="mt-1 text-xs text-muted-foreground">
-              e.g.{" "}
-              <a
-                href="https://github.com/vercel/next.js"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 underline"
-              >
-                vercel/next.js
-                <ExternalLink className="h-3 w-3" />
-              </a>
+              Format: owner/repo. Creating the webhook needs admin access to
+              the repository.
             </p>
           </div>
 

@@ -14,18 +14,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { QualitySparkline } from "@/components/QualitySparkline";
 import { qualityScoreColor, timeAgo } from "@/lib/utils";
-import type {
-  QualityTrendDataPoint,
-  RepoSummaryResponse,
-} from "@/lib/types";
+import type { QualityTrendPoint, RepoResponse } from "@/lib/types";
 
 export interface RepoCardProps {
-  repo: RepoSummaryResponse;
+  repo: RepoResponse;
   /**
    * Optional 7-day sparkline data. When present, a tiny area chart
    * is rendered between the stats and the CTA.
    */
-  sparklineData?: QualityTrendDataPoint[];
+  sparklineData?: QualityTrendPoint[];
 }
 
 /**

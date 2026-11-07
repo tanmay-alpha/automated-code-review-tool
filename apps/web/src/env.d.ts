@@ -6,10 +6,9 @@
 declare namespace NodeJS {
   interface ProcessEnv {
     /**
-     * Base URL of the Spring Boot backend. Used by `lib/api.ts` so the
-     * frontend can call `/api/auth/me`, `/api/repos`, etc. without
-     * knowing the absolute origin.
+     * Base URL of the Spring Boot backend, inlined at build time.
+     * `lib/api.ts` falls back to http://localhost:8080 when unset.
      */
-    NEXT_PUBLIC_API_BASE_URL: string;
+    NEXT_PUBLIC_API_BASE_URL?: string;
   }
 }

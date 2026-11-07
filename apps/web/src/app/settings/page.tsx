@@ -1,50 +1,81 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, type FormEvent } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import {
   Key,
   Trash2,
   Copy,
   AlertTriangle,
-  RefreshCw,
+  Plus,
   Github,
   FolderGit2,
 } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getMe, getRepos, disconnectRepo, regenerateApiKey } from "@/lib/api";
+import {
+  createApiKey,
+  disconnectRepo,
+  getMe,
+  getRepos,
+  listApiKeys,
+  revokeApiKey,
+} from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
 
 function SettingsContent() {
   const { data: user, isLoading: userLoading } = useSWR("me", getMe);
-  const { data: repos, mutate } = useSWR("repos", getRepos);
+  const { data: repos, error: reposError, mutate: mutateRepos } = useSWR(
+    "repos",
+    getRepos,
+  );
+  const {
+    data: keys,
+    error: keysError,
+    mutate: mutateKeys,
+  } = useSWR("api-keys", listApiKeys);
 
-  const [regenerated, setRegenerated] = useState<string | null>(null);
-  const [regenLoading, setRegenLoading] = useState(false);
-  const [regenError, setRegenError] = useState<string | null>(null);
+  const [newKey, setNewKey] = useState<string | null>(null);
+  const [label, setLabel] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [keyActionError, setKeyActionError] = useState<string | null>(null);
 
-  const handleRegenerate = async () => {
-    setRegenLoading(true);
-    setRegenError(null);
+  const handleCreate = async (e: FormEvent) => {
+    e.preventDefault();
+    setCreating(true);
+    setKeyActionError(null);
     try {
-      const { apiKey } = await regenerateApiKey();
-      setRegenerated(apiKey);
-    } catch (e) {
-      setRegenError(e instanceof Error ? e.message : "Unknown error");
+      const created = await createApiKey(label.trim());
+      setNewKey(created.key);
+      setLabel("");
+      mutateKeys();
+    } catch (err) {
+      setKeyActionError(err instanceof Error ? err.message : "Unknown error");
     } finally {
-      setRegenLoading(false);
+      setCreating(false);
+    }
+  };
+
+  const handleRevoke = async (id: string, keyLabel: string) => {
+    if (!confirm(`Revoke the key "${keyLabel}"? Clients using it will stop working.`)) {
+      return;
+    }
+    setKeyActionError(null);
+    try {
+      await revokeApiKey(id);
+      mutateKeys();
+    } catch (err) {
+      setKeyActionError(err instanceof Error ? err.message : "Unknown error");
     }
   };
 
@@ -54,7 +85,7 @@ function SettingsContent() {
     }
     try {
       await disconnectRepo(id);
-      mutate();
+      mutateRepos();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to disconnect");
     }
@@ -65,7 +96,7 @@ function SettingsContent() {
       <header>
         <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
         <p className="mt-1 text-muted-foreground">
-          Manage connected repositories, your API key, and your account.
+          Manage connected repositories, your API keys, and your account.
         </p>
       </header>
 
@@ -77,7 +108,12 @@ function SettingsContent() {
           <FolderGit2 className="h-5 w-5 text-muted-foreground" />
           <h2 className="text-xl font-semibold">Connected repositories</h2>
         </div>
-        {!repos ? (
+        {reposError ? (
+          <Alert variant="destructive">
+            <AlertTitle>Couldn’t load repositories</AlertTitle>
+            <AlertDescription>{(reposError as Error).message}</AlertDescription>
+          </Alert>
+        ) : !repos ? (
           <div className="space-y-2">
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
@@ -86,9 +122,9 @@ function SettingsContent() {
           <Card>
             <CardContent className="p-6 text-sm text-muted-foreground">
               No repositories connected yet.{" "}
-              <a href="/dashboard" className="underline">
+              <Link href="/dashboard" className="underline">
                 Connect one from the dashboard.
-              </a>
+              </Link>
             </CardContent>
           </Card>
         ) : (
@@ -121,50 +157,81 @@ function SettingsContent() {
 
       <Separator />
 
-      {/* Section 2: API key */}
+      {/* Section 2: API keys */}
       <section>
         <div className="mb-3 flex items-center gap-2">
           <Key className="h-5 w-5 text-muted-foreground" />
-          <h2 className="text-xl font-semibold">API key</h2>
+          <h2 className="text-xl font-semibold">API keys</h2>
         </div>
         <Card>
           <CardHeader>
             <CardDescription>
-              Use this key in the VS Code extension (Command Palette →{" "}
-              <span className="font-mono">automated-code-review-tool: Set API Key</span>). It
-              authenticates requests as your account.
+              API keys authenticate the VS Code extension (run the command{" "}
+              <span className="font-mono">automated-code-review-tool: Set API Key</span>;
+              the key is kept in VS Code&apos;s SecretStorage) and the GitHub
+              Action as your account. Treat them like passwords.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center gap-3">
-              <code className="flex-1 truncate rounded-md bg-muted px-3 py-2 font-mono text-sm">
-                {user?.apiKeyPrefix ?? "No key generated"}
-              </code>
-              <Button
-                variant="default"
-                onClick={handleRegenerate}
-                disabled={regenLoading}
-              >
-                <RefreshCw
-                  className={`mr-2 h-4 w-4 ${regenLoading ? "animate-spin" : ""}`}
-                />
-                Regenerate
+            <form onSubmit={handleCreate} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Label, e.g. work laptop"
+                maxLength={60}
+                aria-label="New key label"
+                className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <Button type="submit" disabled={creating || !label.trim()}>
+                <Plus className="mr-2 h-4 w-4" />
+                {creating ? "Creating…" : "Create key"}
               </Button>
-            </div>
-            <Alert>
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Keep it secret</AlertTitle>
-              <AlertDescription>
-                Treat your API key like a password. Anyone with it can
-                impersonate you to the automated-code-review-tool API.
-              </AlertDescription>
-            </Alert>
-            {regenError ? (
+            </form>
+
+            {keyActionError ? (
               <Alert variant="destructive">
-                <AlertTitle>Regenerate failed</AlertTitle>
-                <AlertDescription>{regenError}</AlertDescription>
+                <AlertTitle>API key request failed</AlertTitle>
+                <AlertDescription>{keyActionError}</AlertDescription>
               </Alert>
             ) : null}
+
+            {keysError ? (
+              <Alert variant="destructive">
+                <AlertTitle>Couldn’t load API keys</AlertTitle>
+                <AlertDescription>{(keysError as Error).message}</AlertDescription>
+              </Alert>
+            ) : !keys ? (
+              <Skeleton className="h-12 w-full" />
+            ) : keys.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No API keys yet.</p>
+            ) : (
+              <div className="divide-y rounded-lg border">
+                {keys.map((k) => (
+                  <div
+                    key={k.id}
+                    className="flex items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-medium">{k.label}</div>
+                      <div className="text-xs text-muted-foreground">
+                        <span className="font-mono">{k.prefix}…</span> · created{" "}
+                        {timeAgo(k.createdAt)} · last used{" "}
+                        {k.lastUsedAt ? timeAgo(k.lastUsedAt) : "never"}
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleRevoke(k.id, k.label)}
+                    >
+                      <Trash2 className="mr-1 h-3.5 w-3.5" />
+                      Revoke
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </section>
@@ -202,23 +269,11 @@ function SettingsContent() {
                 <span>{timeAgo(user?.createdAt)}</span>
               )}
             </Row>
-            <Row label="API key prefix">
-              {userLoading ? (
-                <Skeleton className="h-4 w-40" />
-              ) : (
-                <Badge variant="outline" className="font-mono">
-                  {user?.apiKeyPrefix ?? "—"}
-                </Badge>
-              )}
-            </Row>
           </CardContent>
         </Card>
       </section>
 
-      <ApiKeyModal
-        apiKey={regenerated}
-        onClose={() => setRegenerated(null)}
-      />
+      <ApiKeyModal apiKey={newKey} onClose={() => setNewKey(null)} />
     </div>
   );
 }
@@ -238,6 +293,7 @@ function Row({
   );
 }
 
+/** Shows a freshly created key once, then masks it after 30 seconds. */
 function ApiKeyModal({
   apiKey,
   onClose,
@@ -276,7 +332,7 @@ function ApiKeyModal({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // ignore — UI will just not flash the checkmark.
+      // Clipboard access denied; the key is still visible to copy by hand.
     }
   };
   return (
@@ -291,8 +347,10 @@ function ApiKeyModal({
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>This key will not be shown again.</AlertTitle>
           <AlertDescription>
-            Copy it now and paste it into your VS Code settings or CI
-            secret store. {countdown > 0 ? `Key will be hidden in ${countdown}s...` : "Key hidden for security."}
+            Copy it now, then run{" "}
+            <span className="font-mono">automated-code-review-tool: Set API Key</span>{" "}
+            in VS Code or paste it into your CI secret store.{" "}
+            {countdown > 0 ? `Key will be hidden in ${countdown}s...` : "Key hidden."}
           </AlertDescription>
         </Alert>
         <div className="flex items-center gap-2">

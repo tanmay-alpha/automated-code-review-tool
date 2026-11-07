@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -12,10 +11,8 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
-import { DiffViewer } from "@/components/DiffViewer";
 import { FindingCard } from "@/components/FindingCard";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -37,7 +34,6 @@ function PRReviewContent() {
     () => getPRReview(prId),
     { revalidateOnFocus: false },
   );
-  const [activeLine, setActiveLine] = useState<number | null>(null);
 
   const findings = data?.findings ?? [];
   const grouped = groupBySeverity(findings);
@@ -131,79 +127,56 @@ function PRReviewContent() {
 
       <Separator />
 
-      {/* Split layout: 60% diff | 40% findings */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-5">
-        <section className="lg:col-span-3">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            Diff
-          </h2>
-          {isLoading || !data ? (
-            <Skeleton className="h-96 w-full" />
-          ) : (
-            <DiffViewer
-              diff={(data as { diff?: string }).diff ?? null}
-              findings={findings}
-              scrollToLine={activeLine}
-            />
-          )}
-        </section>
-
-        <aside className="lg:col-span-2">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            Findings ({findings.length})
-          </h2>
-          {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-24 w-full" />
-              ))}
-            </div>
-          ) : findings.length === 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">No findings</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm text-muted-foreground">
-                automated-code-review-tool didn’t flag anything on this PR. Nice work.
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {(["critical", "major", "minor"] as const).map((sev) => {
-                const list = grouped[sev] ?? [];
-                if (list.length === 0) return null;
-                return (
-                  <div key={sev}>
-                    <div className="mb-2 flex items-center gap-2">
-                      <Badge
-                        variant="outline"
-                        className={`border ${severityClasses(sev)}`}
-                      >
-                        {sev.toUpperCase()}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {list.length}
-                      </span>
-                    </div>
-                    <div className="space-y-2">
-                      {list.map((f) => (
-                        <FindingCard
-                          key={f.id}
-                          finding={f}
-                          scrollToLine={setActiveLine}
-                          active={
-                            f.lineStart != null && f.lineStart === activeLine
-                          }
-                        />
-                      ))}
-                    </div>
+      <section className="mt-6">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          Findings ({findings.length})
+        </h2>
+        {isLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-24 w-full" />
+            ))}
+          </div>
+        ) : !data ? null : findings.length === 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">No findings</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              {data.status === "reviewed"
+                ? "The review didn’t flag anything on this PR."
+                : `No findings recorded yet (status: ${data.status}).`}
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {(["critical", "major", "minor"] as const).map((sev) => {
+              const list = grouped[sev];
+              if (list.length === 0) return null;
+              return (
+                <div key={sev}>
+                  <div className="mb-2 flex items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={`border ${severityClasses(sev)}`}
+                    >
+                      {sev.toUpperCase()}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {list.length}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </aside>
-      </div>
+                  <div className="space-y-2">
+                    {list.map((f) => (
+                      <FindingCard key={f.id} finding={f} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

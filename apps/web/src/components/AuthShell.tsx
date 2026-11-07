@@ -1,20 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getMe, logout } from "@/lib/api";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ApiError, getMe, logout } from "@/lib/api";
 import type { UserResponse } from "@/lib/types";
 
 /**
- * Wraps every authenticated page. Behaviour:
- *   1. Hit /api/auth/me on mount via SWR-free direct call.
- *   2. Show a full-bleed skeleton (no sidebar) while loading.
- *   3. On 401 → push to / (landing page hosts the "Login with GitHub" button).
- *   4. On 200 → render Sidebar + children, passing the user down.
- *
- * The landing route `/` skips this shell entirely (see app/page.tsx).
+ * Wraps every authenticated page:
+ *   1. Calls /api/auth/me on mount and shows a skeleton while waiting.
+ *   2. On 401 → redirects to `/`, which hosts the "Login with GitHub" button.
+ *   3. On any other failure (API down, 5xx) → shows the error instead of
+ *      pretending the user is logged out.
+ *   4. On success → renders Sidebar + children.
  */
 export interface AuthShellProps {
   children: React.ReactNode;
@@ -22,33 +22,40 @@ export interface AuthShellProps {
 
 export function AuthShell({ children }: AuthShellProps) {
   const router = useRouter();
-  const pathname = usePathname();
   const [user, setUser] = useState<UserResponse | null>(null);
-  const [state, setState] = useState<"loading" | "authed" | "unauthed">(
-    "loading",
-  );
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setState("loading");
     getMe()
       .then((u) => {
-        if (cancelled) return;
-        setUser(u);
-        setState("authed");
+        if (!cancelled) setUser(u);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        // 401/unauthenticated -> bounce to landing page
-        setState("unauthed");
-        router.replace("/");
+        if (err instanceof ApiError && err.status === 401) {
+          router.replace("/");
+        } else {
+          setError(err instanceof Error ? err.message : "Unknown error");
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [pathname]);
+  }, [router]);
 
-  if (state !== "authed") {
+  if (error) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background p-8">
+        <Alert variant="destructive" className="max-w-lg">
+          <AlertTitle>Couldn’t reach the API</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  if (!user) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
         <div className="space-y-3">

@@ -19,9 +19,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --chown=node:node --from=build /app/.next ./.next
+# `next start` reads next.config.mjs at runtime (security headers live there).
+COPY --from=build /app/next.config.mjs ./
 USER node
 EXPOSE 3000
-# Security hardening
+# Build output is read-only for the runtime user.
 RUN chmod -R 500 /app/.next
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 \
     CMD node -e "require('http').get('http://localhost:3000', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" || exit 1
