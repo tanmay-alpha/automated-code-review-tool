@@ -17,13 +17,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, cast
 
-try:
-    import yaml
-except ImportError:  # pragma: no cover - yaml is in requirements-test.txt
-    yaml = None
+import yaml
 
 
 def _find_default_taxonomy_path() -> Path:
@@ -76,6 +74,12 @@ class AntiPattern:
     description: str
     trainable: bool = False
 
+    @property
+    def explanation(self) -> str:
+        """User-facing finding text: the description folded onto one line."""
+        text = " ".join(self.description.split())
+        return text or f"{self.display_name} detected."
+
 
 @dataclass(frozen=True)
 class Taxonomy:
@@ -84,27 +88,12 @@ class Taxonomy:
     entries: tuple[AntiPattern, ...]
     version: str
 
-    def by_id(self, anti_pattern_id: str) -> AntiPattern | None:
-        for entry in self.entries:
-            if entry.id == anti_pattern_id:
-                return entry
-        return None
-
     def ids(self) -> list[str]:
         return [e.id for e in self.entries]
 
     def trainable_ids(self) -> list[str]:
         """Return the IDs of entries with ``trainable: true`` in taxonomy order."""
         return [e.id for e in self.entries if e.trainable]
-
-
-def _default_yaml_parser():
-    if yaml is None:
-        raise TaxonomyError(
-            "PyYAML is required to load the taxonomy. "
-            "Install it with `pip install pyyaml`."
-        )
-    return yaml.safe_load
 
 
 def load_taxonomy(path: Path | str | None = None) -> Taxonomy:
@@ -125,6 +114,10 @@ def load_taxonomy(path: Path | str | None = None) -> Taxonomy:
     * At least one entry must have ``trainable: true``.
     * Trainable entries must appear in deterministic order (i.e., the YAML order).
 
+    The parsed result is cached per resolved path (the file ships with the
+    image and does not change at runtime), so request handlers can call this
+    freely. ``Taxonomy`` is frozen, so sharing one instance is safe.
+
     Args:
         path: Optional override path. Defaults to
             ``<repo-root>/taxonomy/anti_patterns.yaml``.
@@ -134,12 +127,16 @@ def load_taxonomy(path: Path | str | None = None) -> Taxonomy:
         TaxonomyError: If the YAML is malformed or violates the contract.
     """
     yaml_path = Path(path) if path else DEFAULT_TAXONOMY_PATH
+    return _load_taxonomy_file(yaml_path.resolve())
+
+
+@lru_cache(maxsize=8)
+def _load_taxonomy_file(yaml_path: Path) -> Taxonomy:
     if not yaml_path.exists():
         raise FileNotFoundError(f"Taxonomy file not found: {yaml_path}")
 
-    parser = _default_yaml_parser()
     with yaml_path.open("r", encoding="utf-8") as f:
-        data = parser(f)
+        data = yaml.safe_load(f)
 
     if not isinstance(data, dict):
         raise TaxonomyError("Taxonomy YAML must be a top-level mapping")
@@ -231,31 +228,3 @@ def load_taxonomy(path: Path | str | None = None) -> Taxonomy:
         )
 
     return Taxonomy(entries=tuple(entries), version=raw_version)
-
-
-def load_canonical_taxonomy(path: Path | str | None = None) -> dict:
-    """Convenience wrapper returning the canonical taxonomy as a plain dict.
-
-    Equivalent to ``{**{"version": t.version}, "entries": [...]}`` but
-    the shape matches what training/eval tests expect.
-    """
-    tax = load_taxonomy(path)
-    return {
-        "version": tax.version,
-        "entries": [
-            {
-                "id": e.id,
-                "display_name": e.display_name,
-                "category": e.category,
-                "default_severity": e.default_severity,
-                "trainable": e.trainable,
-                "description": e.description,
-            }
-            for e in tax.entries
-        ],
-    }
-
-
-def trainable_ids(path: Path | str | None = None) -> tuple[str, ...]:
-    """Return the deterministic tuple of trainable label IDs, in YAML order."""
-    return tuple(e.id for e in load_taxonomy(path).entries if e.trainable)

@@ -10,11 +10,11 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.diff_parser import hunk_added_line_range, parse_diff
+from app.diff_parser import code_hunks, hunk_added_line_range
 from app.fallback_scanner import fallback_scan
 from app.model import AutomatedCodeReviewToolModel, compute_quality_score
 from app.schemas import Finding, HealthResponse, ReviewRequest, ReviewResponse
@@ -23,7 +23,6 @@ from app.taxonomy import load_taxonomy
 AUTH_HEADER = "x-ml-worker-secret"
 HEALTH_PATH = "/ml/health"
 INFERENCE_TIMEOUT_S = settings.ML_INFERENCE_TIMEOUT_S
-_SUPPORTED_MODEL_LANGUAGES = {"python", "javascript", "java", "unknown"}
 logger = logging.getLogger(__name__)
 
 
@@ -33,7 +32,7 @@ async def lifespan(app: FastAPI):
     app.state.model = None
     app.state.model_load_error = None
     model_name = settings.MODEL_NAME.strip()
-    if model_name.lower() not in {"", "none", "test"}:
+    if model_name.lower() not in {"", "none"}:
         try:
             model = AutomatedCodeReviewToolModel()
             app.state.model = model
@@ -49,19 +48,6 @@ app = FastAPI(
     title="automated-code-review-tool ML Worker",
     version="1.0.0",
     lifespan=lifespan,
-)
-
-cors_origins = [
-    origin.strip()
-    for origin in settings.ML_CORS_ORIGINS.split(",")
-    if origin.strip()
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-ML-Worker-Secret"],
 )
 
 
@@ -124,16 +110,11 @@ def _predict_hunks(
 
     findings: list[Finding] = []
     windows_processed = 0
-    for hunk in parse_diff(request.diff):
+    for hunk in code_hunks(request.diff):
         line_start, line_end = hunk_added_line_range(hunk)
-        language = (
-            hunk.language
-            if hunk.language in _SUPPORTED_MODEL_LANGUAGES
-            else "unknown"
-        )
         prediction = model.predict_hunk(
             hunk.raw_hunk,
-            language,
+            hunk.language,
             mode="diff",
             file_path=hunk.file_path,
             hunk_hash=hunk.hunk_sha256,
@@ -190,6 +171,16 @@ async def review(req: ReviewRequest) -> ReviewResponse:
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_request: Request, exc: RequestValidationError):
+    """Return 422 without echoing request input (diffs may contain secrets)."""
+    errors = [
+        {"loc": list(err.get("loc", ())), "msg": err.get("msg", ""), "type": err.get("type", "")}
+        for err in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 @app.exception_handler(Exception)

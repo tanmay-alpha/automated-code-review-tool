@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from app.diff_parser import DiffLine, FileHunk, parse_diff
+from app.diff_parser import DiffLine, FileHunk, code_hunks
 from app.model import compute_quality_score
 from app.schemas import Finding, ReviewResponse
 from app.taxonomy import AntiPattern, Taxonomy, load_taxonomy
@@ -15,19 +15,57 @@ _SECRET_RE = re.compile(
     r"auth_token|password)\s*[=:]\s*['\"][A-Za-z0-9_+/=\-]{16,}['\"]"
 )
 _SQL_CONCAT_RE = re.compile(r"(?:execute|query)\s*\(.*(?:\+|f['\"])", re.I)
-_BROAD_EXC_RE = re.compile(r"^\s*except\s*(?:Exception\s*)?(?::|$)", re.I)
-_JAVA_CATCH_RE = re.compile(r"catch\s*\(\s*(?:Exception|Throwable)\b", re.I)
+# Bare ``except:``, ``except Exception[ as e]:`` and ``except BaseException``.
+_BROAD_EXC_RE = re.compile(
+    r"^\s*except\s*(?:\(?\s*(?:Base)?Exception\s*\)?(?:\s+as\s+\w+)?\s*)?:"
+)
+_JAVA_CATCH_RE = re.compile(r"catch\s*\(\s*(?:Exception|Throwable)\b")
 _WEAK_CRYPTO_RE = re.compile(
     r"\b(?:md5|sha1|des|rc4)\s*\(|MessageDigest\.getInstance\s*\(\s*['\"]SHA-?1",
     re.I,
 )
 _PRINT_RE = re.compile(r"(?:^\s*print\s*\(|console\.log\s*\()", re.I)
 _MAGIC_NUMBER_RE = re.compile(r"(?<![\w.'\"])(?:[2-9]\d|[1-9]\d{2,})(?![\w.'\"])")
+# ``MAX_RETRIES = 50`` / ``static final int LIMIT = 100`` is the remedy, not the smell.
+_CONSTANT_DEF_RE = re.compile(r"\b[A-Z][A-Z0-9_]*\s*(?::[^=]+)?=(?!=)")
 _LOOP_RE = re.compile(r"^\s*(?:for|while)\b")
-_QUERY_RE = re.compile(r"\b(?:query|execute|findBy|fetch|request|get)\s*\(", re.I)
-_COMMENTED_CODE_RE = re.compile(
-    r"(?m)^(?:\s*#|\s*//)\s*\S.+\n(?:^(?:\s*#|\s*//)\s*\S.+\n?){2,}"
+# Per-iteration DB/HTTP calls. ``.get(`` only counts on an HTTP client or ORM
+# manager receiver, so a plain ``dict.get(key)`` inside a loop is not flagged.
+_QUERY_RE = re.compile(
+    r"\b(?:query|execute|findBy\w*|fetch|request)\s*\("
+    r"|\b(?:requests|httpx|session|client|http|axios|objects)\.get\s*\(",
+    re.I,
 )
+_COMMENTED_CODE_RE = re.compile(
+    r"(?m)^[ \t]*(?:#|//)[ \t]*\S.*\n(?:^[ \t]*(?:#|//)[ \t]*\S.*\n?){2,}"
+)
+_COMMENT_PREFIX_RE = re.compile(r"^[ \t]*(?:#|//)[ \t]*")
+# A comment line "looks like code" when it ends in statement/block punctuation,
+# contains an assignment, or opens with a common statement keyword.
+_CODE_ENDING_RE = re.compile(r"[;{}):]$")
+_ASSIGNMENT_RE = re.compile(r"[\w\]\)]\s*(?:[-+*/%|&^]|//|<<|>>)?=(?![=>])")
+_CODE_KEYWORD_RE = re.compile(
+    r"^(?:def|class|return|if|elif|else|for|while|try|except|catch|import|from"
+    r"|const|let|var|function|public|private|protected|static)\b"
+)
+
+
+def _looks_like_code(comment_body: str) -> bool:
+    return bool(
+        _CODE_ENDING_RE.search(comment_body)
+        or _ASSIGNMENT_RE.search(comment_body)
+        or _CODE_KEYWORD_RE.match(comment_body)
+    )
+
+
+def _is_commented_code(comment_block: str) -> bool:
+    bodies = [
+        _COMMENT_PREFIX_RE.sub("", line).rstrip()
+        for line in comment_block.splitlines()
+        if line.strip()
+    ]
+    code_like = sum(1 for body in bodies if _looks_like_code(body))
+    return code_like * 2 > len(bodies)
 
 
 @dataclass(frozen=True)
@@ -35,9 +73,9 @@ class RuleHit:
     anti_pattern_id: str
     line_start: int
     line_end: int
-    confidence: float
 
 
+# Fixed per-rule confidence. These are hand-set priors, not measured precision.
 _CONFIDENCE: dict[str, float] = {
     "SECURITY_HARDCODED_SECRET": 0.70,
     "SECURITY_SQL_INJECTION": 0.65,
@@ -72,28 +110,28 @@ def _scan_hunk(hunk: FileHunk) -> list[RuleHit]:
         text = diff_line.text
         line_no = _line_number(diff_line, hunk.new_start)
         if _SECRET_RE.search(text):
-            hits.append(RuleHit("SECURITY_HARDCODED_SECRET", line_no, line_no, 0.70))
+            hits.append(RuleHit("SECURITY_HARDCODED_SECRET", line_no, line_no))
         if _SQL_CONCAT_RE.search(text):
-            hits.append(RuleHit("SECURITY_SQL_INJECTION", line_no, line_no, 0.65))
+            hits.append(RuleHit("SECURITY_SQL_INJECTION", line_no, line_no))
         if _WEAK_CRYPTO_RE.search(text):
-            hits.append(RuleHit("SECURITY_WEAK_CRYPTO", line_no, line_no, 0.65))
+            hits.append(RuleHit("SECURITY_WEAK_CRYPTO", line_no, line_no))
         if _BROAD_EXC_RE.search(text) or (
-            hunk.language == "java" and _JAVA_CATCH_RE.search(text)
+            hunk.language in {"java", "csharp"} and _JAVA_CATCH_RE.search(text)
         ):
-            hits.append(RuleHit("RELIABILITY_BROAD_EXCEPTION", line_no, line_no, 0.75))
+            hits.append(RuleHit("RELIABILITY_BROAD_EXCEPTION", line_no, line_no))
         if _PRINT_RE.search(text):
-            hits.append(RuleHit("MAINTAINABILITY_PRINT_STATEMENT", line_no, line_no, 0.65))
+            hits.append(RuleHit("MAINTAINABILITY_PRINT_STATEMENT", line_no, line_no))
         if len(text.rstrip()) > 200:
-            hits.append(RuleHit("READABILITY_LONG_METHOD", line_no, line_no, 0.40))
-        if _MAGIC_NUMBER_RE.search(text):
-            hits.append(RuleHit("READABILITY_MAGIC_NUMBER", line_no, line_no, 0.55))
+            hits.append(RuleHit("READABILITY_LONG_METHOD", line_no, line_no))
+        if _MAGIC_NUMBER_RE.search(text) and not _CONSTANT_DEF_RE.search(text):
+            hits.append(RuleHit("READABILITY_MAGIC_NUMBER", line_no, line_no))
 
         if _QUERY_RE.search(text):
             recent = lines[max(0, index - 5) : index]
             loop_line = next((item for item in reversed(recent) if _LOOP_RE.match(item.text)), None)
             if loop_line is not None:
                 start = _line_number(loop_line, line_no)
-                hits.append(RuleHit("PERFORMANCE_N_PLUS_ONE", start, line_no, 0.60))
+                hits.append(RuleHit("PERFORMANCE_N_PLUS_ONE", start, line_no))
 
     for index, line in enumerate(lines):
         if not _LOOP_RE.match(line.text):
@@ -108,29 +146,27 @@ def _scan_hunk(hunk: FileHunk) -> list[RuleHit]:
             if _LOOP_RE.match(nested.text):
                 start = _line_number(line, hunk.new_start)
                 end = _line_number(nested, start)
-                hits.append(RuleHit("PERFORMANCE_QUADRATIC_LOOP", start, end, 0.60))
+                hits.append(RuleHit("PERFORMANCE_QUADRATIC_LOOP", start, end))
                 break
 
     block = "\n".join(line.text for line in lines)
     for match in _COMMENTED_CODE_RE.finditer(block):
+        if not _is_commented_code(match.group(0)):
+            continue
         start_index = block[: match.start()].count("\n")
         end_index = min(
             len(lines) - 1,
             start_index + max(0, match.group(0).rstrip("\n").count("\n")),
         )
-        if lines:
-            hits.append(
-                RuleHit(
-                    "MAINTAINABILITY_COMMENTED_CODE",
-                    _line_number(lines[start_index], hunk.new_start),
-                    _line_number(lines[end_index], hunk.new_start),
-                    0.60,
-                )
+        hits.append(
+            RuleHit(
+                "MAINTAINABILITY_COMMENTED_CODE",
+                _line_number(lines[start_index], hunk.new_start),
+                _line_number(lines[end_index], hunk.new_start),
             )
+        )
 
-    unique: dict[tuple[str, int, int], RuleHit] = {}
-    for hit in hits:
-        unique[(hit.anti_pattern_id, hit.line_start, hit.line_end)] = hit
+    unique = {(hit.anti_pattern_id, hit.line_start, hit.line_end): hit for hit in hits}
     return list(unique.values())
 
 
@@ -154,7 +190,6 @@ def _file_mode_hunk(content: str, language: str, file_path: str | None) -> FileH
         removed_lines=(),
         context_lines=(),
         raw_hunk=raw_hunk,
-        is_new_file=True,
     )
 
 
@@ -171,13 +206,11 @@ def fallback_findings(
     hunks = (
         [_file_mode_hunk(diff, language, file_path)]
         if mode == "file"
-        else parse_diff(diff)
+        else code_hunks(diff)
     )
     findings: list[Finding] = []
 
     for hunk in hunks:
-        if not hunk.added_lines:
-            continue
         for hit in _scan_hunk(hunk):
             anti_pattern = metadata[hit.anti_pattern_id]
             findings.append(
@@ -189,12 +222,8 @@ def fallback_findings(
                     antiPattern=anti_pattern.id,
                     category=anti_pattern.category,
                     severity=anti_pattern.default_severity,
-                    confidence=hit.confidence,
-                    explanation=(
-                        anti_pattern.description.strip().splitlines()[0]
-                        if anti_pattern.description
-                        else f"{anti_pattern.display_name} detected."
-                    ),
+                    confidence=_CONFIDENCE[hit.anti_pattern_id],
+                    explanation=anti_pattern.explanation,
                 )
             )
     return findings, max(1, len(hunks)), taxonomy.version

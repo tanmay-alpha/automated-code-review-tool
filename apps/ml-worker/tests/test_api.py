@@ -2,19 +2,22 @@
 FastAPI ML worker endpoint contract tests.
 
 Uses FastAPI's TestClient and a fake `app.state.model` so the tests
-run without loading the real CodeBERT checkpoint (~500 MB).
+run without loading a transformer checkpoint.
 
 Run from the repo root:
     cd apps/ml-worker && python -m pytest tests/test_api.py -v
 """
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.model import ModelPrediction
+from app.model import ModelPrediction, compute_quality_score
 from app.schemas import Finding
 
 
@@ -79,6 +82,24 @@ def test_review_rejects_empty_diff(client: TestClient):
     )
     # Pydantic enforces min_length=1 → 422 from FastAPI.
     assert r.status_code == 422
+
+
+def test_review_validation_error_does_not_echo_input(client: TestClient):
+    fake_secret = "AKIAIOSFODNN7EXAMPLE"
+    diff = f'+aws_key = "{fake_secret}"\n' + "+" + "x" * 200_001
+    r = client.post(
+        "/ml/review",
+        headers=SECRET_HEADER,
+        json={"diff": diff, "language": "python"},
+    )
+    assert r.status_code == 422
+    assert fake_secret not in r.text
+    errors = r.json()["detail"]
+    assert errors
+    for err in errors:
+        assert set(err) == {"loc", "msg", "type"}
+    assert errors[0]["loc"] == ["body", "diff"]
+    assert errors[0]["type"] == "string_too_long"
 
 
 def test_review_rejects_invalid_language(client: TestClient):
@@ -207,46 +228,22 @@ def test_file_mode_remains_functional_in_fallback(client: TestClient):
     assert body["findings"][0]["lineStart"] == 2
 
 
-def test_quality_score_decreases_with_findings():
-    """Pure unit test of compute_quality_score — no FastAPI needed.
+def test_quality_score_matches_shared_contract_fixture():
+    """Every case the Java QualityScoreParityTest reads, nulls included.
 
-    Scoring contract:
-      * critical: 20-point penalty × confidence
-      * major:    10-point penalty × confidence
-      * minor:     3-point penalty × confidence
-      * score = max(0, min(100, 100 - sum(penalty * conf)))
-      * rounded to 2 decimals.
+    The scorer is called with plain attribute objects so null severity and
+    confidence reach it the way they can reach the Java implementation.
     """
-    from app.model import compute_quality_score
+    fixture = Path(__file__).resolve().parents[3] / "contracts" / "quality_score_cases.json"
+    cases = json.loads(fixture.read_text(encoding="utf-8"))["cases"]
+    assert cases
+    for case in cases:
+        findings = [SimpleNamespace(**f) for f in case["findings"]]
+        assert compute_quality_score(findings) == case["expectedScore"], case["name"]
 
-    assert compute_quality_score([]) == 100.0
-    one_minor = [Finding(
-        antiPattern="READ_MAGIC_NUMBER",
-        category="READABILITY",
-        severity="minor",
-        confidence=0.5,
-        explanation="x",
-    )]
-    # 100 - 3.0*0.5 = 98.5
-    assert compute_quality_score(one_minor) == 98.5
-    one_major = [Finding(
-        antiPattern="PERFORMANCE_N_PLUS_1",
-        category="PERFORMANCE",
-        severity="major",
-        confidence=0.5,
-        explanation="x",
-    )]
-    # 100 - 10.0*0.5 = 95.0
-    assert compute_quality_score(one_major) == 95.0
-    one_critical = [Finding(
-        antiPattern="SECURITY_HARDCODED_SECRET",
-        category="SECURITY",
-        severity="critical",
-        confidence=0.5,
-        explanation="x",
-    )]
-    # 100 - 20.0*0.5 = 90.0
-    assert compute_quality_score(one_critical) == 90.0
-    # Floors at 0.
-    many = [one_critical[0]] * 10
-    assert compute_quality_score(many) == 0.0
+
+def test_quality_score_rounds_half_up_and_defaults_unknown_severity_to_minor():
+    # 100 - 3 * 0.005 = 99.985: HALF_UP gives 99.99; float round() gives 99.98.
+    assert compute_quality_score([SimpleNamespace(severity="minor", confidence=0.005)]) == 99.99
+    assert compute_quality_score([SimpleNamespace(severity="blocker", confidence=1.0)]) == 97.0
+    assert compute_quality_score([SimpleNamespace(severity="CRITICAL", confidence=1.5)]) == 80.0

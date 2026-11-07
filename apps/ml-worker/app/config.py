@@ -7,9 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Service-wide settings.
 
-    All fields are env-driven. Default values are the development
-    fallbacks (no real HF_TOKEN, no real secret) — production deploys
-    MUST set ML_WORKER_SECRET and HF_TOKEN in the environment.
+    All fields are env-driven. Deployments MUST set ML_WORKER_SECRET;
+    every non-health request is rejected with 503 until it is set.
+    HF_TOKEN is only needed to download a private checkpoint.
     """
 
     model_config = SettingsConfigDict(
@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # A checkpoint is opt-in. A clean checkout always boots the rule engine.
     MODEL_NAME: str = "none"
-    # Optional HF token (only needed for private models / first-time push).
+    # Optional HF token, only needed to download a private checkpoint.
     HF_TOKEN: str = ""
     # Shared secret the API gateway uses to authenticate calls.
     ML_WORKER_SECRET: str = ""
@@ -34,9 +34,6 @@ class Settings(BaseSettings):
     MODEL_STRIDE: int = 64
     # Max seconds before the request degrades to the fallback engine.
     ML_INFERENCE_TIMEOUT_S: float = 30.0
-    # Comma-separated list of CORS origins allowed to call this service
-    # from a browser. Empty list disables CORS entirely.
-    ML_CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
 
 
 settings = Settings()

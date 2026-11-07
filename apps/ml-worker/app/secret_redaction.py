@@ -51,9 +51,10 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("stripe_test", re.compile(r"\bsk_test_[0-9A-Za-z]{20,}\b")),
     # JWT (3-segment base64url)
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")),
-    # Generic password / token assignment: 'password = "..."', 'api_key: "..."'
+    # Generic password / token assignment: 'password = "..."', 'api_key: "..."'.
+    # The key may carry a prefix such as DB_PASSWORD or client_secret.
     ("generic", re.compile(
-        r"(?i)\b(password|passwd|pwd|secret|api[_\-]?key|access[_\-]?key|auth[_\-]?token|token|bearer)\s*[:=]\s*([\"'])([^\"'\n]{4,})\2"
+        r"(?i)(?<![A-Za-z0-9])(password|passwd|pwd|secret|api[_\-]?key|access[_\-]?key|auth[_\-]?token|token|bearer)(\s*[:=]\s*)([\"'])([^\"'\n]{4,})\3"
     )),
     # Cookie: session=...
     ("cookie", re.compile(r"(?i)\b(session|sess|auth)_?(?:id|token)?\s*=\s*[A-Za-z0-9_\-=]{12,}")),
@@ -101,11 +102,11 @@ def redact_secrets(text: str) -> RedactionResult:
         elif name == "generic":
             def repl_gen(m: re.Match[str]) -> str:
                 nonlocal count
-                key_part, quote, val = m.group(1), m.group(2), m.group(3)
+                key_part, separator, quote, val = m.group(1), m.group(2), m.group(3), m.group(4)
                 if _is_placeholder_or_doc(val):
                     return m.group(0)
                 count += 1
-                return f"{key_part} = {quote}{REDACTED}{quote}"
+                return f"{key_part}{separator}{quote}{REDACTED}{quote}"
             out = pattern.sub(repl_gen, out)
         else:
             def repl_std(m: re.Match[str]) -> str:
@@ -118,10 +119,3 @@ def redact_secrets(text: str) -> RedactionResult:
             out = pattern.sub(repl_std, out)
 
     return RedactionResult(text=out, redaction_count=count, redaction_version=REDACTION_VERSION)
-
-
-def looks_like_secret_line(line: str) -> bool:
-    """Quick heuristic used by ingestion paths to flag suspicious lines."""
-    if not line:
-        return False
-    return any(pattern.search(line) for _name, pattern in _PATTERNS)

@@ -11,8 +11,7 @@ def test_empty_diff_after_filtering(client: TestClient):
         json={"diff": header_only_diff, "language": "python", "mode": "diff"}, 
         headers=SECRET_HEADER
     )
-    # The API will call the fake model's predict which returns []
-    # If the app doesn't crash on parsing/filtering, it should return 200
+    # No parseable hunk carries added lines, so nothing reaches the model.
     assert response.status_code == 200
 
 def test_unicode_in_diff(client: TestClient):

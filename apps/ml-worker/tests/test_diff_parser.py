@@ -11,9 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from app.diff_parser import FileHunk, hunks_to_text, parse_diff
+from app.diff_parser import FileHunk, parse_diff
+from app.preprocessing import hunk_sha256
 
 
 # ----------------------------------------------------------------------
@@ -97,10 +96,8 @@ def test_parses_single_file_diff():
     h = hunks[0]
     assert h.file_path == "src/auth/service.py"
     assert h.language == "python"
-    # 1 line removed, 4 lines added. The fixture expands the
-    # single-line f-string query into a 4-line parameterized block, so
-    # the diff hunk shows net +3 lines (1 removed → 4 added = 3 added
-    # per hunk-header, but parse_diff counts the actual `+` lines).
+    # The hand-written header counts are not used: parse_diff counts the
+    # actual "+" and "-" lines.
     assert len(h.removed_lines) == 1
     assert len(h.added_lines) == 4
     assert "db.query" in h.removed_lines[0].text
@@ -126,14 +123,42 @@ def test_skips_binary_files():
     assert hunks[0].file_path == "src/auth/service.py"
 
 
-def test_raises_on_empty_diff():
-    # Empty input is a valid diff with no hunks, so callers can handle it
-    # without a parser exception.
+def test_empty_diff_has_no_hunks():
     assert parse_diff("") == []
     assert parse_diff("   \n\n  \n") == []
-    # None still raises (the type contract is non-null input).
-    with pytest.raises(Exception):
-        parse_diff(None)  # type: ignore[arg-type]
+
+
+def test_malformed_hunk_header_is_skipped_like_java():
+    diff = (
+        "diff --git a/x.py b/x.py\n@@ nonsense @@\n+x = 1\n"
+        "@@ -0,0 +1 @@\n+y = 2\n"
+    )
+    [hunk] = parse_diff(diff)
+    assert [line.text for line in hunk.added_lines] == ["y = 2"]
+
+
+def test_header_lookalikes_inside_a_hunk_body_are_content():
+    # Counts in "@@ -1,2 +1,2 @@" say both lines below belong to the body.
+    diff = "diff --git a/a.py b/a.py\n@@ -1,2 +1,2 @@\n--- y\n+++ x\n"
+    [hunk] = parse_diff(diff)
+    assert hunk.file_path == "a.py"
+    assert [line.text for line in hunk.removed_lines] == ["-- y"]
+    assert [line.text for line in hunk.added_lines] == ["++ x"]
+
+
+def test_hunk_body_stops_at_header_counts():
+    diff = (
+        "diff --git a/a.py b/a.py\n@@ -1 +1,2 @@\n x = 1\n+y = 2\n"
+        "\\ No newline at end of file\n"
+        "trailing junk that is not part of the hunk\n"
+    )
+    [hunk] = parse_diff(diff)
+    assert hunk.raw_hunk == "@@ -1 +1,2 @@\n x = 1\n+y = 2\n\\ No newline at end of file"
+
+
+def test_git_header_path_uses_first_b_slash_like_java():
+    [hunk] = parse_diff("diff --git a/x b/y b/z.py\n@@ -0,0 +1 @@\n+v = 1\n")
+    assert hunk.file_path == "y b/z.py"
 
 
 def test_infers_python_language():
@@ -144,25 +169,29 @@ def test_infers_python_language():
     assert parse_diff(diff)[0].language == "python"
 
 
-def test_infers_javascript_language():
-    # Both .js and .ts should map to javascript per the plan.
-    js_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "web/foo.js")
-    assert parse_diff(js_diff)[0].language == "javascript"
-    ts_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "web/foo.ts")
-    assert parse_diff(ts_diff)[0].language == "javascript"
-
-
-def test_infers_extended_languages():
-    cpp_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "native/engine.cpp")
-    assert parse_diff(cpp_diff)[0].language == "c_cpp"
-    sql_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "db/migrations/V1__init.sql")
-    assert parse_diff(sql_diff)[0].language == "sql"
-    sh_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "scripts/deploy.sh")
-    assert parse_diff(sh_diff)[0].language == "shell"
-    docker_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "Dockerfile")
-    assert parse_diff(docker_diff)[0].language == "dockerfile"
-    make_diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", "Makefile")
-    assert parse_diff(make_diff)[0].language == "makefile"
+def test_language_detection_matches_java_hunk_parser():
+    # Same extension table as HunkParser.detectLanguage in apps/api, so the
+    # model sees the same [LANGUAGE=...] tag at training and serving time.
+    expected = {
+        "web/foo.js": "javascript",
+        "web/foo.jsx": "javascript",
+        "web/foo.ts": "typescript",
+        "web/foo.tsx": "typescript",
+        "src/App.java": "java",
+        "cmd/main.go": "go",
+        "src/lib.rs": "rust",
+        "native/engine.c": "c",
+        "native/engine.h": "c",
+        "native/engine.cpp": "cpp",
+        "src/Program.cs": "csharp",
+        "app/models/user.rb": "ruby",
+        "index.php": "php",
+        "db/V1__init.sql": "unknown",
+        "Dockerfile": "unknown",
+    }
+    for path, language in expected.items():
+        diff = SINGLE_FILE_DIFF.replace("src/auth/service.py", path)
+        assert parse_diff(diff)[0].language == language, path
 
 
 def test_added_and_removed_lines_separated():
@@ -199,18 +228,57 @@ def test_n_plus_1_diff_structure():
     assert "WHERE user_id = ?" in added_blob
     assert "f\"" not in added_blob
 
-    # hunks_to_text should preserve both sides via raw_hunk.
-    text = hunks_to_text(hunks)
-    assert "db.execute(" in text
-    assert "+        )" in text
+    assert "db.execute(" in h.raw_hunk
+    assert "+        )" in h.raw_hunk
 
 
-def test_hunks_to_text_includes_added_and_removed():
-    hunks = parse_diff(SINGLE_FILE_DIFF)
-    text = hunks_to_text(hunks)
-    # The raw_hunk of the FileHunk preserves the original +/- prefixes.
-    assert "-    return db.query" in text
-    assert "+    user_row = db.query" in text
+def test_raw_hunk_keeps_both_sides():
+    raw = parse_diff(SINGLE_FILE_DIFF)[0].raw_hunk
+    assert raw.startswith("@@ -10,6 +10,9 @@")
+    assert "-    return db.query" in raw
+    assert "+    user_row = db.query" in raw
+
+
+def test_trailing_blank_lines_do_not_change_hunk_identity():
+    # Java canonicalizes trailing newlines away before hashing; so must we.
+    with_gap = SINGLE_FILE_DIFF + "\n\n" + MULTI_FILE_DIFF
+    first = parse_diff(with_gap)[0]
+    assert not first.raw_hunk.endswith("\n")
+    assert first.hunk_sha256 == parse_diff(SINGLE_FILE_DIFF)[0].hunk_sha256
+    assert first.hunk_sha256 == hunk_sha256(first.raw_hunk)
+
+
+def test_whitespace_stripped_context_lines_keep_line_numbers():
+    # Some tools strip the single space that marks an empty context line.
+    diff = (
+        "diff --git a/a.py b/a.py\n"
+        "@@ -1,3 +1,4 @@\n"
+        " def f():\n"
+        "\n"
+        "+    x = 1\n"
+        "     return 2\n"
+    )
+    hunk = parse_diff(diff)[0]
+    assert hunk.added_lines[0].new_line == 3
+
+
+def test_form_feed_is_not_a_line_break():
+    diff = "diff --git a/a.py b/a.py\n@@ -0,0 +1,2 @@\n+a = 1\x0c\n+b = 2\n"
+    hunk = parse_diff(diff)[0]
+    assert [line.new_line for line in hunk.added_lines] == [1, 2]
+
+
+def test_plain_unified_diff_without_git_headers():
+    diff = (
+        "--- a/one.py\n+++ b/one.py\n@@ -1 +1,2 @@\n x = 1\n+y = 2\n"
+        "--- a/two.js\n+++ b/two.js\n@@ -1 +1,2 @@\n let a;\n+let b;\n"
+    )
+    hunks = parse_diff(diff)
+    assert [(h.file_path, h.language) for h in hunks] == [
+        ("one.py", "python"),
+        ("two.js", "javascript"),
+    ]
+    assert [len(h.added_lines) for h in hunks] == [1, 1]
 
 
 def test_returns_list_of_filehunks():
@@ -235,4 +303,3 @@ def test_shared_hunk_identity_contract() -> None:
     hunk = parse_diff(diff)[0]
     assert hunk.raw_hunk == case["rawHunk"]
     assert hunk.hunk_sha256 == case["hunkSha256"]
-    assert len(hunk.content_sha256) == 64

@@ -18,20 +18,16 @@ os.environ.setdefault("MODEL_NAME", "none")
 
 
 class _FakeModel:
-    """Minimal stub used by tests that don't need real inference.
+    """Minimal stand-in for AutomatedCodeReviewToolModel.
 
-    ``predict`` is a MagicMock so tests can assign
-    ``.return_value`` (e.g. ``model.predict.return_value = [...]``).
+    ``predict_hunk`` is a MagicMock so tests can set ``return_value`` or
+    ``side_effect``.
     """
 
     def __init__(self) -> None:
         self.model_name = "none"
         self.device = "cpu"
-        self.model_loaded = True
         self.taxonomy_version = "1.0.0"
-        self.last_windows_processed = 1
-        self.labels: list[str] = []
-        self.predict = MagicMock(return_value=[])
         self.predict_hunk = MagicMock(
             return_value=SimpleNamespace(findings=(), windows_processed=1)
         )
@@ -46,14 +42,14 @@ class _FakeModel:
 
 
 @asynccontextmanager
-async def _noop_lifespan(_app):  # noqa: ANN001
+async def _noop_lifespan(_app):
     yield
 
 
 @pytest.fixture
 def client():
     """FastAPI TestClient wired with a fake model and the test secret."""
-    from app.main import app  # noqa: WPS433
+    from app.main import app
 
     # Override the lifespan so it never runs — we set state.model directly.
     app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]

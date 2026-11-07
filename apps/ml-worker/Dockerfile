@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libyaml-0-2 \
     && rm -rf /var/lib/apt/lists/*
 
-# CPU-only PyTorch to keep the image ~500MB instead of ~5GB.
+# CPU-only PyTorch wheel; the default CUDA build is several times larger.
 RUN pip install --no-cache-dir \
       --retries 10 --timeout 120 \
       --index-url https://download.pytorch.org/whl/cpu \

@@ -3,13 +3,8 @@
 
 -r requirements.txt
 
-# PostgreSQL dataset/annotation lifecycle
+# PostgreSQL dataset/annotation lifecycle (training/annotate_dataset.py, training/build_dataset.py)
 psycopg[binary]==3.3.4
 
-# Training accelerators and utilities
-accelerate==0.30.0
-evaluate==0.4.2
-datasets==2.19.0
-pandas==2.2.2
+# TF-IDF + logistic-regression baseline (training/baselines.py)
 scikit-learn==1.5.0
-tensorboard==2.16.2

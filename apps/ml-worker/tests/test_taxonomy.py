@@ -85,17 +85,6 @@ def test_all_fallback_rule_ids_are_in_taxonomy(taxonomy_ids):
     )
 
 
-def test_no_unknown_ids_in_fallback_scanner(taxonomy_ids):
-    """Symmetric guard: no unknown IDs in the fallback scanner (alias of above)."""
-    taxonomy_set = set(taxonomy_ids)
-    fallback_ids = set(_CONFIDENCE)
-
-    unknown = sorted(fallback_ids - taxonomy_set)
-    assert not unknown, (
-        f"Fallback scanner has {len(unknown)} unknown IDs: {unknown}"
-    )
-
-
 # ----------------------------------------------------------------------
 # Per-entry invariants
 # ----------------------------------------------------------------------
@@ -147,3 +136,14 @@ def test_taxonomy_id_format(taxonomy_ids):
         f"Taxonomy IDs that violate the format rule "
         f"{_ID_PATTERN.pattern!r}: {bad}"
     )
+
+
+def test_load_taxonomy_is_cached_per_path(tmp_path):
+    """The default file is parsed once; an explicit path gets its own entry."""
+    assert load_taxonomy() is load_taxonomy()
+    copy = tmp_path / "anti_patterns.yaml"
+    copy.write_text(TAXONOMY_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    other = load_taxonomy(copy)
+    assert other is not load_taxonomy()
+    assert other == load_taxonomy()
+    assert load_taxonomy(str(copy)) is other

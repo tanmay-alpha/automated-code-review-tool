@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any, Iterable, Protocol
 
 import torch
 
@@ -17,22 +18,41 @@ from app.tokenizer_utils import windowed_model_logits
 
 logger = logging.getLogger(__name__)
 
-SEVERITY_PENALTY: dict[str, float] = {
-    "critical": 20.0,
-    "major": 10.0,
-    "minor": 3.0,
+_SEVERITY_WEIGHT: dict[str, Decimal] = {
+    "critical": Decimal(20),
+    "major": Decimal(10),
+    "minor": Decimal(3),
 }
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-def compute_quality_score(findings: list[Finding]) -> float:
-    """Apply the shared confidence-weighted severity contract."""
-    raw = 100.0
+class ScoredFinding(Protocol):
+    @property
+    def severity(self) -> str | None: ...
+
+    @property
+    def confidence(self) -> float | None: ...
+
+
+def compute_quality_score(findings: Iterable[ScoredFinding]) -> float:
+    """Score = clamp(100 - sum(weight * confidence), 0, 100), rounded half-up to 2 dp.
+
+    Same decimal arithmetic as ``MlWorkerService.computeQualityScore`` in the
+    Java API (fixture: ``contracts/quality_score_cases.json``): a missing or
+    unknown severity weighs as minor, a missing confidence counts as 0, and
+    confidence is clamped to [0, 1].
+    """
+    penalty = Decimal(0)
     for finding in findings:
-        raw -= SEVERITY_PENALTY.get(finding.severity, 0.0) * float(
-            finding.confidence
+        confidence = (
+            Decimal(0)
+            if finding.confidence is None
+            else min(max(Decimal(str(finding.confidence)), Decimal(0)), Decimal(1))
         )
-    return round(max(0.0, min(100.0, raw)), 2)
+        severity = (finding.severity or "minor").lower()
+        penalty += _SEVERITY_WEIGHT.get(severity, _SEVERITY_WEIGHT["minor"]) * confidence
+    score = min(max(Decimal(100) - penalty, Decimal(0)), Decimal(100))
+    return float(score.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 @dataclass(frozen=True)
@@ -57,19 +77,11 @@ def build_label_config(taxonomy: Taxonomy | None = None) -> tuple[LabelMetadata,
             anti_pattern_id=entry.id,
             category=entry.category,
             severity=entry.default_severity,
-            explanation=(
-                entry.description.strip().splitlines()[0]
-                if entry.description
-                else f"{entry.display_name} detected."
-            ),
+            explanation=entry.explanation,
         )
         for entry in loaded.entries
         if entry.trainable
     )
-
-
-# Retained as a read-only compatibility export. Its values are derived from YAML.
-LABEL_CONFIG = build_label_config()
 
 
 def _degraded(reason: str, **details: Any) -> dict[str, Any]:
@@ -269,7 +281,6 @@ class AutomatedCodeReviewToolModel:
             raise ValueError("MODEL_THRESHOLD_OVERRIDE must be in [0, 1]")
         self.max_seq_length = max_seq_length or settings.MAX_SEQ_LENGTH
         self.stride = stride if stride is not None else settings.MODEL_STRIDE
-        self.last_windows_processed = 0
         self.taxonomy = load_taxonomy()
         self.label_config = build_label_config(self.taxonomy)
 
@@ -338,7 +349,6 @@ class AutomatedCodeReviewToolModel:
             max_length=self.max_seq_length,
             stride=self.stride,
         )
-        self.last_windows_processed = window_count
         probabilities = torch.sigmoid(aggregated_logits)
         configured_thresholds: dict[str, float] = self.compatibility["thresholds"]
 
@@ -369,26 +379,3 @@ class AutomatedCodeReviewToolModel:
                 )
             )
         return ModelPrediction(tuple(findings), window_count)
-
-    def predict(
-        self,
-        text: str,
-        language: str,
-        *,
-        mode: str = "diff",
-        file_path: str | None = None,
-        hunk_hash: str | None = None,
-        line_start: int | None = None,
-        line_end: int | None = None,
-    ) -> list[Finding]:
-        """Compatibility API returning only findings for one hunk."""
-        prediction = self.predict_hunk(
-            text,
-            language,
-            mode=mode,
-            file_path=file_path,
-            hunk_hash=hunk_hash,
-            line_start=line_start,
-            line_end=line_end,
-        )
-        return list(prediction.findings)

@@ -24,7 +24,10 @@ def rule_scores(
     index = {label: position for position, label in enumerate(label_order)}
     scores = np.zeros((len(records), len(label_order)), dtype=np.float32)
     for row_index, record in enumerate(records):
-        findings, _, _ = fallback_findings(record.raw_hunk)
+        # Stored hunks start at "@@"; the git header gives the parser the path,
+        # and therefore the language, exactly as at serving time.
+        diff = f"diff --git a/{record.file_path} b/{record.file_path}\n{record.raw_hunk}"
+        findings, _, _ = fallback_findings(diff)
         for finding in findings:
             position = index.get(finding.antiPattern)
             if position is not None:

@@ -18,7 +18,7 @@ are not unnecessarily destroyed.
 from __future__ import annotations
 
 
-from app.secret_redaction import REDACTED, redact_secrets, looks_like_secret_line
+from app.secret_redaction import REDACTED, redact_secrets
 
 
 # ---------------------------------------------------------------
@@ -59,8 +59,8 @@ MIIBOQIBAAJBALRErTkMG1IQ3M7w0E6rOqf0ISeH3HYHX3WxK+HqhYA3m3MNnTB
 qNjBC9Z/hT1+0M0M3sNE0q5TqOmTlBRiOf8CAwEAAQJASFyaGZ5VEZ1BWCWGH1YA
 -----END RSA PRIVATE KEY-----"""
     result = redact_secrets(key)
-    # At minimum the key content should not remain verbatim.
-    assert "BEGIN RSA PRIVATE KEY" not in result.text or REDACTED in result.text
+    assert "MIIBOQ" not in result.text
+    assert REDACTED in result.text
 
 
 def test_database_url_with_password():
@@ -98,15 +98,37 @@ def test_example_documentation_key():
     """Keys that look like example/documentation placeholders must not be
     aggressively redacted."""
     doc_key = "sk_test_xxx"
-    result = redact_secrets(f'# Example: api_key = "{doc_key}"')
+    line = f'# Example: api_key = "{doc_key}"'
+    result = redact_secrets(line)
     # The key should remain because it is clearly a documentation example.
-    assert doc_key in result.text or result.redaction_count == 0
+    assert result.text == line
+    assert result.redaction_count == 0
 
 
-def test_no_secret_line_detection():
-    assert not looks_like_secret_line("x = 42")
-    assert not looks_like_secret_line("return True")
-    assert not looks_like_secret_line("# This is a comment")
+def test_ordinary_code_is_untouched():
+    for line in ("x = 42", "return True", "# This is a comment"):
+        result = redact_secrets(line)
+        assert result.text == line
+        assert result.redaction_count == 0
+
+
+def test_prefixed_secret_keys_are_redacted():
+    for line, value in (
+        ('DB_PASSWORD="s3cr3tvalue"', "s3cr3tvalue"),
+        ('client_secret = "abcd1234efgh5678"', "abcd1234efgh5678"),
+        ('aws_secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"', "wJalrXUtnFEMI"),
+    ):
+        result = redact_secrets(line)
+        assert value not in result.text, line
+        assert REDACTED in result.text
+
+
+def test_generic_redaction_keeps_assignment_syntax():
+    # YAML/JSON-style "key: value" must stay "key: value" after redaction.
+    result = redact_secrets('password: "hunter2-hunter2"')
+    assert result.text == f'password: "{REDACTED}"'
+    result = redact_secrets("token='abcd1234efgh'")
+    assert result.text == f"token='{REDACTED}'"
 
 
 def test_redaction_version_consistency():
@@ -123,4 +145,5 @@ def test_empty_input():
 
 def test_none_input():
     result = redact_secrets(None)
-    assert result.text is None or result.text == ""
+    assert result.text is None
+    assert result.redaction_count == 0

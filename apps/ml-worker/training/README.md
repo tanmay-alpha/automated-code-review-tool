@@ -12,7 +12,7 @@ PostgreSQL, scikit-learn, and training utilities stay in
 python -m pip install -r requirements-train.txt -r requirements-test.txt
 ruff check app training tests
 mypy app training
-pytest -m "not slow" -q
+pytest -q
 ```
 
 ## Annotation

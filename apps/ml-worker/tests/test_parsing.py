@@ -1,12 +1,9 @@
-"""Tests for real hunk parsing, preprocessing parity and taxonomy
-loader behaviour."""
+"""Tests for hunk parsing edge cases and model-input preprocessing."""
 
 from __future__ import annotations
 
-
 from app.diff_parser import parse_diff
 from app.preprocessing import build_model_text
-from app.taxonomy import load_canonical_taxonomy, trainable_ids
 
 
 SIMPLE_DIFF = """\
@@ -56,9 +53,9 @@ diff --git a/b.py b/b.py
 + hello
 + world
 """
-        files = parse_diff(diff)
-        assert len({f.file_path for f in files}) == 2
-        assert all(len(f.hunks) if hasattr(f, 'hunks') else True for f in files)
+        hunks = parse_diff(diff)
+        assert [h.file_path for h in hunks] == ["a.py", "b.py"]
+        assert [len(h.added_lines) for h in hunks] == [3, 2]
 
     def test_new_file(self):
         diff = """\
@@ -70,8 +67,9 @@ new file mode 100644
 +print(1)
 """
         hunks = parse_diff(diff)
-        assert len(hunks) >= 1
-        assert any(h.is_new_file for h in hunks)
+        assert len(hunks) == 1
+        assert hunks[0].file_path == "new.py"
+        assert hunks[0].added_lines[0].new_line == 1
 
     def test_renamed_file(self):
         diff = """\
@@ -116,34 +114,5 @@ deleted file mode 100644
 -line1
 -line2
 """
-        hunks = parse_diff(diff)
-        # Deleted files produce hunks but with no added lines
-        for h in hunks:
-            assert len(h.added_lines) == 0
-
-
-class TestTaxonomy:
-    def test_trainable_ids_sorted_and_deterministic(self):
-        ids = trainable_ids()
-        # Deterministic: same input → same output, twice
-        assert ids == trainable_ids()
-        # And unique
-        assert len(set(ids)) == len(ids)
-
-    def test_at_least_one_trainable_label(self):
-        tax = load_canonical_taxonomy()
-        trainable = [e for e in tax["entries"] if e.get("trainable")]
-        assert len(trainable) >= 1
-
-    def test_no_invalid_category(self):
-        tax = load_canonical_taxonomy()
-        valid = {"SECURITY", "PERFORMANCE", "ARCHITECTURE", "RELIABILITY",
-                 "READABILITY", "MAINTAINABILITY"}
-        for entry in tax["entries"]:
-            assert entry["category"] in valid
-
-    def test_print_mapped_to_maintainability(self):
-        tax = load_canonical_taxonomy()
-        ids = {e["id"] for e in tax["entries"]}
-        assert "PERFORMANCE_N_PLUS_ONE" in ids
-        assert "PERFORMANCE_N_PLUS_1" not in ids
+        # Only removed lines: nothing new to review.
+        assert parse_diff(diff) == []

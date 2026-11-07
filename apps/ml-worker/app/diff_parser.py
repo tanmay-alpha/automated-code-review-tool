@@ -2,65 +2,47 @@
 
 ``hunk_sha256`` is the lowercase SHA-256 hex digest of the UTF-8 bytes of
 ``raw_hunk``: the hunk header and body with line endings normalized to ``\n``
-and no trailing newline. The path is excluded; line ranges are included in the
-header. ``content_sha256`` identifies the added content separately.
-The structural hash is computed before persistence redaction; dataset records
-must use their separate hash of redacted content for data identity.
+and no trailing newline (see ``app.preprocessing.canonicalize_hunk``). The path
+is excluded; line ranges are included in the header. For a well-formed
+``git diff`` the Java API's ``HunkParser`` produces the same ``raw_hunk`` and
+digest (``contracts/hunk_identity_cases.json``), so a finding's ``hunkHash``
+identifies the hunk on both sides.
 """
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Literal, Sequence
+
+from app.preprocessing import canonicalize_hunk, hunk_sha256
 
 DiffLineKind = Literal["added", "removed", "context"]
 
-_BINARY_PATH_TOKENS = (
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".svg",
-    ".pdf", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-    ".exe", ".dll", ".so", ".dylib", ".class", ".jar",
-    ".woff", ".woff2", ".ttf", ".otf",
-    ".mp3", ".mp4", ".mov", ".avi", ".wav", ".flac",
-)
-
+# Mirrors HunkParser.detectLanguage in the Java API so the language tag in the
+# model input is identical at training time (Java-ingested samples) and at
+# serving time (hunks parsed here).
 _LANGUAGE_BY_EXT: dict[str, str] = {
     ".py": "python",
-    ".pyi": "python",
     ".js": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
     ".jsx": "javascript",
-    ".ts": "javascript",
-    ".tsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
     ".java": "java",
-    ".kt": "java",
-    ".kts": "java",
-    ".scala": "java",
-    ".groovy": "java",
-    ".cs": "java",
-    ".rs": "rust",
     ".go": "go",
+    ".rs": "rust",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".cs": "csharp",
     ".rb": "ruby",
     ".php": "php",
-    ".c": "c_cpp",
-    ".cpp": "c_cpp",
-    ".cc": "c_cpp",
-    ".cxx": "c_cpp",
-    ".h": "c_cpp",
-    ".hpp": "c_cpp",
-    ".sql": "sql",
-    ".sh": "shell",
-    ".bash": "shell",
 }
 
-
+_GIT_HEADER_PREFIX = "diff --git "
 _HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-_FILE_HEADER_RE = re.compile(r"^diff --git a/(?P<src>.+) b/(?P<dst>.+)$")
-_NEW_FILE_RE = re.compile(r"^new file mode")
-_DELETED_FILE_RE = re.compile(r"^deleted file mode")
-_BINARY_RE = re.compile(r"^Binary files")
 
 
 @dataclass(frozen=True)
@@ -83,195 +65,136 @@ class FileHunk:
     removed_lines: tuple[DiffLine, ...]
     context_lines: tuple[DiffLine, ...]
     raw_hunk: str
-    is_new_file: bool = False
-    is_deleted_file: bool = False
     hunk_sha256: str = ""
-    content_sha256: str = ""
 
     def __post_init__(self) -> None:
-        # Compute deterministic hashes if not provided.
         if not self.hunk_sha256:
-            object.__setattr__(self, "hunk_sha256", _hash_text(self.raw_hunk))
-        if not self.content_sha256:
-            object.__setattr__(
-                self, "content_sha256", _hash_text(self.added_code())
-            )
-
-    def added_code(self) -> str:
-        return "\n".join(line.text for line in self.added_lines)
-
-    def context_code(self) -> str:
-        return "\n".join(line.text for line in self.context_lines)
-
-
-def _hash_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+            object.__setattr__(self, "hunk_sha256", hunk_sha256(self.raw_hunk))
 
 
 def detect_language(file_path: str) -> str:
-    path = Path(file_path)
-    name = path.name.lower()
-    if name in {"dockerfile", "containerfile"}:
-        return "dockerfile"
-    if name in {"makefile", "gnumakefile"}:
-        return "makefile"
-    ext = path.suffix.lower()
-    return _LANGUAGE_BY_EXT.get(ext, "unknown")
+    return _LANGUAGE_BY_EXT.get(PurePosixPath(file_path).suffix.lower(), "unknown")
 
 
-def is_binary_path(file_path: str) -> bool:
-    lower = file_path.lower()
-    return any(lower.endswith(token) for token in _BINARY_PATH_TOKENS)
+def _path_from_git_header(line: str) -> str:
+    """Return the path after the first `` b/`` of a ``diff --git`` line, or ``""``."""
+    marker = line.find(" b/")
+    return line[marker + 3 :] if marker >= 0 else ""
 
 
-def parse_diff(
-    diff_text: str,
-    *,
-    include_removed_only: bool = False,
-) -> list[FileHunk]:
-    """Parse a unified diff into a flat list of :class:`FileHunk`.
+def _path_from_file_header(line: str) -> str:
+    """Return the path of a ``+++ b/x`` line; ``""`` for ``/dev/null``."""
+    path = line[4:].split("\t", 1)[0].strip()
+    if path == "/dev/null":
+        return ""
+    return path[2:] if path.startswith(("a/", "b/")) else path
 
-    The list is in document order (file order × hunk order).
 
-    Args:
-        diff_text: A unified diff payload (the body of a GitHub ``patch`` URL,
-            a raw ``git format-patch``, etc.).
-        include_removed_only: If ``False``, hunks that contain only removed
-            lines (no added code) are skipped — they cannot represent a new
-            defect in the changed code.
+def parse_diff(diff_text: str) -> list[FileHunk]:
+    """Parse a unified diff into a flat list of :class:`FileHunk` in document order.
 
-    Returns:
-        A list of :class:`FileHunk` records.
-
-    Raises:
-        ValueError: If a hunk header is malformed.
+    Hunk bodies are bounded by the line counts in the ``@@`` header, as in the
+    Java ``HunkParser``, so an added line such as ``+++ x`` is content, not a
+    file header. Malformed hunk headers are skipped, as in Java. Binary files
+    and hunks without added lines are skipped: only added code can contain a
+    new defect. Unlike the Java parser, plain ``diff -u`` output (no
+    ``diff --git`` line) is also accepted.
     """
+    lines = diff_text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     hunks: list[FileHunk] = []
-    lines = diff_text.splitlines()
-    n = len(lines)
-    i = 0
-    current_src = ""
-    current_dst = ""
-    is_new = False
-    is_deleted = False
-    is_binary = False
+    file_path = ""
     skip_file = False
+    i = 0
+    n = len(lines)
 
     while i < n:
         line = lines[i]
-        m = _FILE_HEADER_RE.match(line)
-        if m:
-            current_src = m.group("src")
-            current_dst = m.group("dst")
-            is_new = False
-            is_deleted = False
-            is_binary = False
-            skip_file = False
-            i += 1
-            # Look ahead for mode / rename / binary markers
-            while i < n and lines[i].startswith(("index ", "new file", "deleted file", "rename ", "copy ", "similarity ", "old mode", "new mode", "Binary files")):
-                if _NEW_FILE_RE.match(lines[i]):
-                    is_new = True
-                elif _DELETED_FILE_RE.match(lines[i]):
-                    is_deleted = True
-                elif _BINARY_RE.match(lines[i]):
-                    is_binary = True
-                    skip_file = True
-                # Detect pure renames (no content) — treat as skipped
-                if lines[i].startswith("rename ") and "100%" in lines[i]:
-                    skip_file = True
-                i += 1
-            # Detect "Binary files ... differ" lines already handled
-            continue
-
-        if line.startswith("@@"):
-            h = _HUNK_HEADER_RE.match(line)
-            if not h:
-                raise ValueError(f"Malformed hunk header: {line!r}")
-            old_start = int(h.group(1))
-            old_count = int(h.group(2) or 1)
-            new_start = int(h.group(3))
-            new_count = int(h.group(4) or 1)
-            # collect hunk body until next "@@" or "diff --git"
-            j = i + 1
-            body: list[str] = []
-            while j < n and not lines[j].startswith("@@") and not _FILE_HEADER_RE.match(lines[j]):
-                # Stop at the next "diff --git"
-                body.append(lines[j])
-                j += 1
-            i = j
-            if skip_file or is_binary:
-                continue
-            file_path = current_dst or current_src
-            hunk = _build_hunk(
-                file_path=file_path,
-                is_new=is_new,
-                is_deleted=is_deleted,
-                old_start=old_start,
-                old_count=old_count,
-                new_start=new_start,
-                new_count=new_count,
-                body=body,
-                header=line,
-            )
-            if not include_removed_only and not hunk.added_lines:
-                # hunk has no added code → cannot represent a new defect
-                continue
-            hunks.append(hunk)
-            continue
-
-        # any other line — skip
         i += 1
+        if line.startswith(_GIT_HEADER_PREFIX):
+            file_path = _path_from_git_header(line)
+            skip_file = False
+            continue
+        if line.startswith("Binary files"):
+            skip_file = True
+            continue
+        if line.startswith("+++ "):
+            file_path = _path_from_file_header(line) or file_path
+            continue
+        match = _HUNK_HEADER_RE.match(line)
+        if not match:
+            continue
+
+        old_start, new_start = int(match.group(1)), int(match.group(3))
+        old_count, new_count = int(match.group(2) or 1), int(match.group(4) or 1)
+        old_left, new_left = old_count, new_count
+        body: list[str] = []
+        while i < n and (old_left > 0 or new_left > 0) and not lines[i].startswith(_GIT_HEADER_PREFIX):
+            marker = lines[i][:1]
+            if marker == "+":
+                new_left -= 1
+            elif marker == "-":
+                old_left -= 1
+            elif marker != "\\":
+                old_left -= 1
+                new_left -= 1
+            body.append(lines[i])
+            i += 1
+        # "\ No newline at end of file" may follow the last counted line.
+        while i < n and lines[i].startswith("\\"):
+            body.append(lines[i])
+            i += 1
+        if skip_file:
+            continue
+        hunk = _build_hunk(file_path, (old_start, old_count, new_start, new_count), body, line)
+        if hunk.added_lines:
+            hunks.append(hunk)
 
     return hunks
 
 
+def code_hunks(diff_text: str) -> list[FileHunk]:
+    """Hunks of files in a recognised code language.
+
+    Docs, config and other ``unknown``-language files are not reviewed: the
+    rules and the model target source code, and running them on prose turns
+    ``Set timeout to 300 seconds.`` into a magic-number finding.
+    """
+    return [hunk for hunk in parse_diff(diff_text) if hunk.language != "unknown"]
+
+
 def _build_hunk(
-    *,
     file_path: str,
-    is_new: bool,
-    is_deleted: bool,
-    old_start: int,
-    old_count: int,
-    new_start: int,
-    new_count: int,
+    header: tuple[int, int, int, int],
     body: Sequence[str],
-    header: str,
+    header_line: str,
 ) -> FileHunk:
+    old_start, old_count, new_start, new_count = header
     added: list[DiffLine] = []
     removed: list[DiffLine] = []
     context: list[DiffLine] = []
     old_l = old_start
     new_l = new_start
     for raw in body:
-        if not raw:
-            # diff often ends each hunk with a blank line; ignore.
-            continue
-        marker = raw[0]
-        text = raw[1:]
+        marker = raw[:1]
         if marker == "+":
-            added.append(DiffLine(kind="added", text=text, old_line=None, new_line=new_l))
+            added.append(DiffLine("added", raw[1:], None, new_l))
             new_l += 1
         elif marker == "-":
-            removed.append(DiffLine(kind="removed", text=text, old_line=old_l, new_line=None))
+            removed.append(DiffLine("removed", raw[1:], old_l, None))
             old_l += 1
-        elif marker == " ":
-            context.append(DiffLine(kind="context", text=text, old_line=old_l, new_line=new_l))
-            old_l += 1
-            new_l += 1
         elif marker == "\\":
-            # "\ No newline at end of file" — metadata, skip.
+            # "\ No newline at end of file" — metadata, not a source line.
             continue
         else:
-            # Unknown marker — treat as context for resilience.
-            context.append(DiffLine(kind="context", text=text, old_line=old_l, new_line=new_l))
+            # " " context, or an empty line from a diff whose trailing
+            # whitespace was stripped. Same rule as the Java parser.
+            text = raw[1:] if marker == " " else raw
+            context.append(DiffLine("context", text, old_l, new_l))
             old_l += 1
             new_l += 1
-    raw_hunk = header + "\n" + "\n".join(body)
-    language = detect_language(file_path)
     return FileHunk(
         file_path=file_path,
-        language=language,
+        language=detect_language(file_path),
         old_start=old_start,
         old_count=old_count,
         new_start=new_start,
@@ -279,28 +202,14 @@ def _build_hunk(
         added_lines=tuple(added),
         removed_lines=tuple(removed),
         context_lines=tuple(context),
-        raw_hunk=raw_hunk,
-        is_new_file=is_new,
-        is_deleted_file=is_deleted,
+        raw_hunk=canonicalize_hunk("\n".join([header_line, *body])),
     )
 
 
-def hunks_to_text(hunks: Sequence[FileHunk]) -> str:
-    """Re-serialise a list of hunks to a pseudo-unified-diff text.
-
-    Used by the model to turn multiple hunks into one model-input string.
-    """
-    parts: list[str] = []
-    for h in hunks:
-        parts.append(h.raw_hunk)
-    return "\n\n".join(parts)
-
-
 def hunk_added_line_range(hunk: FileHunk) -> tuple[int, int]:
-    """Return (line_start, line_end) for the classifier finding default.
+    """Return (line_start, line_end) for a hunk-level model finding.
 
-    Uses the new-file start as the anchor, and the last added line's new
-    number as the end (or ``new_start`` if there are no added lines).
+    Starts at the hunk's new-file start and ends at the last added line.
     """
     if hunk.added_lines:
         end = hunk.added_lines[-1].new_line or hunk.new_start
