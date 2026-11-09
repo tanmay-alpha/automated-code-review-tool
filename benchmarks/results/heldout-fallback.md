@@ -18,7 +18,7 @@
 | Unsupported defects (never counted) | 5 |
 | Unsupported-file rate | 0.250 |
 | Findings with all guidance fields | 1.000 |
-| Latency p50 / p95 (ms) | 0.324 / 0.507 |
+| Latency p50 / p95 (ms) | 0.301 / 0.391 |
 | Peak Python heap (KiB) | 14.700 |
 
 ## Confusion by anti-pattern

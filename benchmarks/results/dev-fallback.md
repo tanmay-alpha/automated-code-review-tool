@@ -4,36 +4,36 @@
 
 | Metric | Value |
 | --- | --- |
-| Precision | 0.389 |
-| Recall (supported) | 0.583 |
-| F1 | 0.467 |
-| TP / FP / FN | 14 / 22 / 10 |
+| Precision | 0.421 |
+| Recall (supported) | 0.667 |
+| F1 | 0.516 |
+| TP / FP / FN | 16 / 22 / 8 |
 | False positives per PR | 1.692 |
 | FPs on labeled decoys | 22 |
-| Severity accuracy (matched) | 0.857 |
+| Severity accuracy (matched) | 0.875 |
 | Line localization accuracy | 1.000 |
 | Hunk localization accuracy | 1.000 |
 | Near misses (right hunk, wrong lines) | 0 |
-| Coverage of all labeled defects | 0.452 |
+| Coverage of all labeled defects | 0.516 |
 | Unsupported defects (never counted) | 7 |
-| Unsupported-file rate | 0.296 |
+| Unsupported-file rate | 0.259 |
 | Findings with all guidance fields | 1.000 |
-| Latency p50 / p95 (ms) | 0.379 / 0.568 |
-| Peak Python heap (KiB) | 19.900 |
+| Latency p50 / p95 (ms) | 0.366 / 0.508 |
+| Peak Python heap (KiB) | 20.200 |
 
 ## Confusion by anti-pattern
 
 | antiPattern | TP | FP | FN | Precision | Recall | F1 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `MAINTAINABILITY_COMMENTED_CODE` | 1 | 0 | 0 | 1.000 | 1.000 | 1.000 |
-| `MAINTAINABILITY_PRINT_STATEMENT` | 1 | 5 | 1 | 0.167 | 0.500 | 0.250 |
+| `MAINTAINABILITY_PRINT_STATEMENT` | 2 | 5 | 0 | 0.286 | 1.000 | 0.444 |
 | `PERFORMANCE_N_PLUS_ONE` | 2 | 0 | 1 | 1.000 | 0.667 | 0.800 |
 | `PERFORMANCE_QUADRATIC_LOOP` | 1 | 0 | 0 | 1.000 | 1.000 | 1.000 |
 | `READABILITY_LONG_METHOD` | 1 | 1 | 0 | 0.500 | 1.000 | 0.667 |
 | `READABILITY_MAGIC_NUMBER` | 1 | 9 | 0 | 0.100 | 1.000 | 0.182 |
 | `RELIABILITY_BROAD_EXCEPTION` | 3 | 1 | 0 | 0.750 | 1.000 | 0.857 |
 | `RELIABILITY_MISSING_TIMEOUT` | 0 | 0 | 4 | n/a | 0.000 | 0.000 |
-| `SECURITY_HARDCODED_SECRET` | 1 | 2 | 1 | 0.333 | 0.500 | 0.400 |
+| `SECURITY_HARDCODED_SECRET` | 2 | 2 | 0 | 0.500 | 1.000 | 0.667 |
 | `SECURITY_SQL_INJECTION` | 2 | 1 | 2 | 0.667 | 0.500 | 0.571 |
 | `SECURITY_WEAK_CRYPTO` | 1 | 3 | 1 | 0.250 | 0.500 | 0.333 |
 
@@ -41,11 +41,11 @@
 
 | Category | TP | FP | FN | Precision | Recall | F1 |
 | --- | --- | --- | --- | --- | --- | --- |
-| MAINTAINABILITY | 2 | 5 | 1 | 0.286 | 0.667 | 0.400 |
+| MAINTAINABILITY | 3 | 5 | 0 | 0.375 | 1.000 | 0.545 |
 | PERFORMANCE | 3 | 0 | 1 | 1.000 | 0.750 | 0.857 |
 | READABILITY | 2 | 10 | 0 | 0.167 | 1.000 | 0.286 |
 | RELIABILITY | 3 | 1 | 4 | 0.750 | 0.429 | 0.545 |
-| SECURITY | 4 | 6 | 4 | 0.400 | 0.500 | 0.444 |
+| SECURITY | 5 | 6 | 3 | 0.455 | 0.625 | 0.526 |
 
 ## Per PR
 
@@ -63,7 +63,7 @@
 | dev-10-mixed-unsupported-files | 1 | 0 | 1 | 2 | 0 |
 | dev-11-js-order-service | 3 | 0 | 1 | 0 | 2 |
 | dev-12-py-cli-and-long-statement | 1 | 0 | 1 | 2 | 0 |
-| dev-13-py-unicode-path | 2 | 0 | 0 | 0 | 2 |
+| dev-13-py-unicode-path | 2 | 0 | 2 | 0 | 0 |
 
 ## Errors
 
@@ -97,8 +97,6 @@
 - dev-11-js-order-service FN: RELIABILITY_MISSING_TIMEOUT src/services/orders.js:19-19
 - dev-12-py-cli-and-long-statement FP: MAINTAINABILITY_PRINT_STATEMENT scripts/export_users.py:14-14
 - dev-12-py-cli-and-long-statement FP: READABILITY_LONG_METHOD app/notifications.py:8-8
-- dev-13-py-unicode-path FN: SECURITY_HARDCODED_SECRET app/services/café.py:4-4
-- dev-13-py-unicode-path FN: MAINTAINABILITY_PRINT_STATEMENT app/services/café.py:8-8
 
 ## Unsupported defects
 

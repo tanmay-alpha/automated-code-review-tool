@@ -5,14 +5,14 @@
   "status": "ok",
   "report": {
     "overall": {
-      "tp": 14,
+      "tp": 16,
       "fp": 22,
-      "fn": 10,
-      "precision": 0.3889,
-      "recall": 0.5833,
-      "f1": 0.4667,
+      "fn": 8,
+      "precision": 0.4211,
+      "recall": 0.6667,
+      "f1": 0.5161,
       "supported_expected": 24,
-      "predictions": 36
+      "predictions": 38
     },
     "by_anti_pattern": {
       "MAINTAINABILITY_COMMENTED_CODE": {
@@ -24,12 +24,12 @@
         "f1": 1.0
       },
       "MAINTAINABILITY_PRINT_STATEMENT": {
-        "tp": 1,
+        "tp": 2,
         "fp": 5,
-        "fn": 1,
-        "precision": 0.1667,
-        "recall": 0.5,
-        "f1": 0.25
+        "fn": 0,
+        "precision": 0.2857,
+        "recall": 1.0,
+        "f1": 0.4444
       },
       "PERFORMANCE_N_PLUS_ONE": {
         "tp": 2,
@@ -80,12 +80,12 @@
         "f1": 0.0
       },
       "SECURITY_HARDCODED_SECRET": {
-        "tp": 1,
+        "tp": 2,
         "fp": 2,
-        "fn": 1,
-        "precision": 0.3333,
-        "recall": 0.5,
-        "f1": 0.4
+        "fn": 0,
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667
       },
       "SECURITY_SQL_INJECTION": {
         "tp": 2,
@@ -106,12 +106,12 @@
     },
     "by_category": {
       "MAINTAINABILITY": {
-        "tp": 2,
+        "tp": 3,
         "fp": 5,
-        "fn": 1,
-        "precision": 0.2857,
-        "recall": 0.6667,
-        "f1": 0.4
+        "fn": 0,
+        "precision": 0.375,
+        "recall": 1.0,
+        "f1": 0.5455
       },
       "PERFORMANCE": {
         "tp": 3,
@@ -138,12 +138,12 @@
         "f1": 0.5455
       },
       "SECURITY": {
-        "tp": 4,
+        "tp": 5,
         "fp": 6,
-        "fn": 4,
-        "precision": 0.4,
-        "recall": 0.5,
-        "f1": 0.4444
+        "fn": 3,
+        "precision": 0.4545,
+        "recall": 0.625,
+        "f1": 0.5263
       }
     },
     "label_confusion": {},
@@ -152,35 +152,35 @@
       "false_positives_per_pr": 1.6923,
       "prs_with_false_positives": 8,
       "prs_with_supported_defects": 12,
-      "prs_fully_detected": 6,
-      "prs_clean": 1
+      "prs_fully_detected": 7,
+      "prs_clean": 2
     },
     "decoys": {
       "negatives": 33,
       "false_positives_on_decoys": 22
     },
     "severity": {
-      "matched": 14,
-      "correct": 12,
-      "accuracy": 0.8571,
+      "matched": 16,
+      "correct": 14,
+      "accuracy": 0.875,
       "confusion_expected_to_predicted": {
         "critical": {
-          "critical": 1,
+          "critical": 2,
           "major": 2
         },
         "major": {
           "major": 7
         },
         "minor": {
-          "minor": 4
+          "minor": 5
         }
       }
     },
     "localization": {
       "tolerance_lines": 3,
-      "line_exact": 14,
+      "line_exact": 16,
       "line_accuracy": 1.0,
-      "same_hunk": 14,
+      "same_hunk": 16,
       "hunk_accuracy": 1.0,
       "near_misses_same_hunk": 0
     },
@@ -194,23 +194,23 @@
         "resource_leak": 1
       },
       "predictions_overlapping": 0,
-      "coverage_of_all_labeled_defects": 0.4516,
+      "coverage_of_all_labeled_defects": 0.5161,
       "note": "Never counted as detected; listed so recall is not overstated."
     },
     "files": {
       "changed_files": 27,
-      "analyzed_files": 19,
-      "unsupported_files": 8,
-      "unsupported_file_rate": 0.2963,
+      "analyzed_files": 20,
+      "unsupported_files": 7,
+      "unsupported_file_rate": 0.2593,
       "unsupported_by_reason": {
         "binary": 1,
-        "language_not_reviewed": 5,
+        "language_not_reviewed": 4,
         "no_added_lines": 2
       }
     },
     "explainability": {
-      "predictions": 36,
-      "complete": 36,
+      "predictions": 38,
+      "complete": 38,
       "rate": 1.0,
       "fields": [
         "explanation",
@@ -221,9 +221,9 @@
     },
     "performance": {
       "runs_per_pr": 5,
-      "latency_ms_p50": 0.379,
-      "latency_ms_p95": 0.568,
-      "peak_python_heap_kib": 19.9,
+      "latency_ms_p50": 0.366,
+      "latency_ms_p95": 0.508,
+      "peak_python_heap_kib": 20.2,
       "note": "Wall-clock on the benchmark host; heap is tracemalloc peak per PR, not RSS."
     },
     "cases": [
@@ -407,14 +407,11 @@
         "title": "Python file with a non-ASCII path (git C-quoted header): committed key and debug print",
         "supported_expected": 2,
         "unsupported_defects": 0,
-        "tp": 0,
+        "tp": 2,
         "fp": 0,
-        "fn": 2,
+        "fn": 0,
         "false_positives": [],
-        "false_negatives": [
-          "SECURITY_HARDCODED_SECRET app/services/caf\u00e9.py:4-4",
-          "MAINTAINABILITY_PRINT_STATEMENT app/services/caf\u00e9.py:8-8"
-        ]
+        "false_negatives": []
       }
     ]
   },
