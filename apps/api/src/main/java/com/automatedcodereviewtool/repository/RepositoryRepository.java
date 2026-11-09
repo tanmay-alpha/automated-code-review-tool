@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -23,5 +25,27 @@ public interface RepositoryRepository extends JpaRepository<Repository, UUID> {
     @Query("select r from Repository r join fetch r.owner where r.id = :id")
     Optional<Repository> findWithOwnerById(@Param("id") UUID id);
 
-    List<Repository> findAllByOwnerAndIsActiveTrue(User owner);
+    /** The caller's connected repositories in a stable order (the dashboard list). */
+    List<Repository> findAllByOwnerAndIsActiveTrueOrderByFullNameAsc(User owner);
+
+    /**
+     * PR aggregates for several repositories in one query: the number of
+     * reviewed PRs and the latest review time. {@code MAX} ignores PRs that
+     * were never reviewed, whatever the database's NULL ordering.
+     */
+    @Query("""
+            SELECT p.repo.id AS repoId,
+                   SUM(CASE WHEN p.status = 'reviewed' THEN 1 ELSE 0 END) AS reviewedCount,
+                   MAX(p.reviewedAt) AS lastReviewedAt
+            FROM PullRequestEntity p
+            WHERE p.repo IN :repos
+            GROUP BY p.repo.id
+            """)
+    List<PullRequestStats> summarizePullRequests(@Param("repos") Collection<Repository> repos);
+
+    interface PullRequestStats {
+        UUID getRepoId();
+        Long getReviewedCount();
+        Instant getLastReviewedAt();
+    }
 }

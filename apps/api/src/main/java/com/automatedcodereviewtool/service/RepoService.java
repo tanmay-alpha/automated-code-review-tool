@@ -1,17 +1,20 @@
 package com.automatedcodereviewtool.service;
 
+import com.automatedcodereviewtool.config.WebhookConfig;
+import com.automatedcodereviewtool.dto.request.RepoSettingsRequest;
+import com.automatedcodereviewtool.dto.response.FindingSummaryResponse;
 import com.automatedcodereviewtool.entity.PullRequestEntity;
 import com.automatedcodereviewtool.entity.QualityMetric;
 import com.automatedcodereviewtool.entity.Repository;
 import com.automatedcodereviewtool.entity.User;
 import com.automatedcodereviewtool.exception.ConnectRepoException;
+import com.automatedcodereviewtool.exception.InvalidRequestException;
 import com.automatedcodereviewtool.repository.FindingRepository;
 import com.automatedcodereviewtool.repository.PullRequestRepository;
 import com.automatedcodereviewtool.repository.QualityMetricRepository;
 import com.automatedcodereviewtool.repository.RepositoryRepository;
 import com.automatedcodereviewtool.repository.UserRepository;
 import com.automatedcodereviewtool.security.EncryptionService;
-import com.automatedcodereviewtool.config.WebhookConfig;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +23,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -27,13 +31,17 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeSet;
 import java.util.UUID;
 
 /**
  * Business logic for repo connect / disconnect / list / PR history /
- * quality trend.
+ * quality trend / finding summary / review settings.
  *
  * <p>Every read of a single repo goes through {@link #requireOwned}, which
  * returns 404 (not 403) for repos the caller does not own so their
@@ -55,6 +63,7 @@ public class RepoService {
     private final FindingRepository findingRepository;
     private final GitHubService gitHubService;
     private final EncryptionService encryptionService;
+    private final TaxonomyService taxonomyService;
     private final String webhookCallbackUrl;
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -65,6 +74,7 @@ public class RepoService {
                        FindingRepository findingRepository,
                        GitHubService gitHubService,
                        EncryptionService encryptionService,
+                       TaxonomyService taxonomyService,
                        WebhookConfig webhookConfig) {
         this.repositoryRepository = repositoryRepository;
         this.userRepository = userRepository;
@@ -73,6 +83,7 @@ public class RepoService {
         this.findingRepository = findingRepository;
         this.gitHubService = gitHubService;
         this.encryptionService = encryptionService;
+        this.taxonomyService = taxonomyService;
         this.webhookCallbackUrl = webhookConfig.getCallbackUrl();
     }
 
@@ -140,8 +151,12 @@ public class RepoService {
             webhookId = gitHubService.installWebhook(
                     githubToken, fullName, webhookCallbackUrl, plaintextSecret);
         } catch (RuntimeException ex) {
-            throw new ConnectRepoException(
-                    "Failed to install webhook on GitHub: " + ex.getMessage(), ex);
+            // The WebClient message embeds the GitHub request URL; the caller
+            // only needs the upstream status.
+            log.warn("Webhook install on GitHub failed for {}: {}", fullName, ex.getMessage());
+            String status = ex instanceof WebClientResponseException wcre
+                    ? " (HTTP " + wcre.getStatusCode().value() + ")" : "";
+            throw new ConnectRepoException("Failed to install webhook on GitHub" + status, ex);
         }
         if (webhookId == null) {
             throw new ConnectRepoException("GitHub did not return a webhook id");
@@ -153,6 +168,8 @@ public class RepoService {
         if (repo.getOwner() != null && !repo.getOwner().getId().equals(caller.getId())) {
             log.info("Reassigning inactive repo {} from user {} to {}",
                     fullName, repo.getOwner().getId(), caller.getId());
+            // The new owner starts from the defaults, not the previous owner's policy.
+            applySettings(repo, DEFAULT_SETTINGS);
         }
         repo.setOwner(caller);
         repo.setFullName(fullName);
@@ -203,21 +220,19 @@ public class RepoService {
     // -------------------------------------------------------------------
 
     /**
-     * Returns the caller's active repos with their dashboard aggregates.
-     * Issues three small queries per repo (PR count, latest review, 30-day
-     * metrics) — fine for the handful of repos a user connects.
+     * Returns the caller's active repos with their dashboard aggregates,
+     * ordered by full name. Uses a constant number of queries (repos, PR
+     * aggregates, 30-day metrics) however many repos the caller has.
      */
     @Transactional(readOnly = true)
     public List<RepoSummary> listForOwner(User caller) {
-        return repositoryRepository.findAllByOwnerAndIsActiveTrue(caller).stream()
-                .map(this::summarize)
-                .toList();
+        return summarize(repositoryRepository.findAllByOwnerAndIsActiveTrueOrderByFullNameAsc(caller));
     }
 
     /** Same aggregates as {@link #listForOwner} for a single owned repo. */
     @Transactional(readOnly = true)
     public RepoSummary getForOwner(User caller, UUID repoId) {
-        return summarize(requireOwned(caller, repoId));
+        return summarize(List.of(requireOwned(caller, repoId))).get(0);
     }
 
     /**
@@ -228,38 +243,96 @@ public class RepoService {
     public Repository requireOwned(User caller, UUID repoId) {
         Repository repo = repositoryRepository.findById(repoId)
                 .orElseThrow(() -> new EntityNotFoundException("Repo " + repoId + " not found"));
-        if (!repo.getOwner().getId().equals(caller.getId())) {
+        if (caller == null || !repo.getOwner().getId().equals(caller.getId())) {
             throw new EntityNotFoundException("Repo " + repoId + " not found");
         }
         return repo;
     }
 
-    private RepoSummary summarize(Repository repo) {
-        return new RepoSummary(
-                repo,
-                pullRequestRepository.countByRepoAndStatus(repo, "reviewed"),
-                latestReviewAt(repo),
-                averageScore(repo));
-    }
-
-    private Instant latestReviewAt(Repository repo) {
-        return pullRequestRepository.findFirstByRepoOrderByReviewedAtDesc(repo)
-                .map(PullRequestEntity::getReviewedAt)
-                .orElse(null);
-    }
-
-    /** Mean of the daily averages over the last 30 days (null when no reviews). */
-    private BigDecimal averageScore(Repository repo) {
+    /**
+     * Reviewed-PR count, latest review time, and the mean of the daily
+     * averages over the last 30 days (null when there are none) per repo.
+     */
+    private List<RepoSummary> summarize(List<Repository> repos) {
+        if (repos.isEmpty()) return List.of();
+        Map<UUID, RepositoryRepository.PullRequestStats> prStats = new HashMap<>();
+        for (var row : repositoryRepository.summarizePullRequests(repos)) {
+            prStats.put(row.getRepoId(), row);
+        }
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        LocalDate from = today.minusDays(30);
-        List<QualityMetric> window = qualityMetricRepository.findRange(repo, from, today);
-        if (window.isEmpty()) return null;
-        return window.stream()
-                .map(qm -> qm.getAvgQuality() == null
-                        ? BigDecimal.ZERO : qm.getAvgQuality())
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .divide(BigDecimal.valueOf(window.size()),
-                        2, RoundingMode.HALF_UP);
+        Map<UUID, BigDecimal> averages = new HashMap<>();
+        for (var row : qualityMetricRepository.summarizeRange(repos, today.minusDays(30), today)) {
+            if (row.getDayCount() == 0) continue;
+            BigDecimal sum = row.getQualitySum() == null ? BigDecimal.ZERO : row.getQualitySum();
+            averages.put(row.getRepoId(),
+                    sum.divide(BigDecimal.valueOf(row.getDayCount()), 2, RoundingMode.HALF_UP));
+        }
+        return repos.stream().map(repo -> {
+            var stats = prStats.get(repo.getId());
+            return new RepoSummary(
+                    repo,
+                    stats == null || stats.getReviewedCount() == null ? 0 : stats.getReviewedCount(),
+                    stats == null ? null : stats.getLastReviewedAt(),
+                    averages.get(repo.getId()));
+        }).toList();
+    }
+
+    // -------------------------------------------------------------------
+    // review settings
+    // -------------------------------------------------------------------
+
+    /** The defaults every repository starts with (V20 column defaults). */
+    static final RepoSettingsRequest DEFAULT_SETTINGS = new RepoSettingsRequest(
+            List.of(), "minor", BigDecimal.ZERO, true, false, Repository.REVIEW_LANGUAGES);
+
+    @Transactional(readOnly = true)
+    public Repository getSettings(User caller, UUID repoId) {
+        return requireOwned(caller, repoId);
+    }
+
+    /**
+     * Replace the repository's review settings. Rule ids must exist in the
+     * taxonomy and languages must be supported; otherwise
+     * {@link InvalidRequestException} (→ 400) and nothing is written.
+     * Lists are de-duplicated and stored in canonical order.
+     */
+    @Transactional
+    public Repository updateSettings(User caller, UUID repoId, RepoSettingsRequest request) {
+        Repository repo = requireOwned(caller, repoId);
+
+        List<String> unknownRules = request.enabledRules().stream()
+                .filter(id -> taxonomyService.find(id).isEmpty())
+                .distinct()
+                .toList();
+        if (!unknownRules.isEmpty()) {
+            throw new InvalidRequestException("enabledRules: unknown rule id(s) " + unknownRules);
+        }
+        List<String> unknownLanguages = request.languages().stream()
+                .filter(lang -> !Repository.REVIEW_LANGUAGES.contains(lang))
+                .distinct()
+                .toList();
+        if (!unknownLanguages.isEmpty()) {
+            throw new InvalidRequestException("languages: unsupported language(s) " + unknownLanguages
+                    + "; expected a subset of " + Repository.REVIEW_LANGUAGES);
+        }
+
+        applySettings(repo, request);
+        Repository saved = repositoryRepository.save(repo);
+        log.info("Updated review settings for repo {} (rules={}, minSeverity={}, minConfidence={}, languages={})",
+                saved.getId(), saved.getReviewEnabledRules().size(), saved.getReviewMinSeverity(),
+                saved.getReviewMinConfidence(), saved.getReviewLanguages());
+        return saved;
+    }
+
+    private static void applySettings(Repository repo, RepoSettingsRequest settings) {
+        repo.setReviewEnabledRules(new TreeSet<>(settings.enabledRules()).stream().toList());
+        repo.setReviewMinSeverity(settings.minSeverity());
+        repo.setReviewMinConfidence(settings.minConfidence().setScale(3, RoundingMode.HALF_UP));
+        repo.setReviewPostComments(settings.postComments());
+        repo.setReviewInlineComments(settings.inlineComments());
+        repo.setReviewLanguages(Repository.REVIEW_LANGUAGES.stream()
+                .filter(settings.languages()::contains)
+                .toList());
     }
 
     // -------------------------------------------------------------------
@@ -292,6 +365,25 @@ public class RepoService {
                 .findFirst()
                 .map(FindingRepository.AntiPatternCount::getPattern)
                 .orElse(null);
+    }
+
+    /** Triage outcome per rule and volume per engine for findings in the same window as {@link #qualityTrend}. */
+    @Transactional(readOnly = true)
+    public FindingSummaryResponse findingSummary(Repository repo, int days) {
+        Instant since = windowStart(days).atStartOfDay(ZoneOffset.UTC).toInstant();
+        List<FindingSummaryResponse.RuleSummary> byRule = findingRepository.summarizeByRule(repo, since).stream()
+                .map(r -> new FindingSummaryResponse.RuleSummary(
+                        r.getAntiPattern(), r.getTotal(), r.getOpenCount(), r.getAcceptedCount(),
+                        r.getDismissedCount(), r.getFixedCount(), r.getFalsePositiveCount()))
+                .toList();
+        Map<String, Long> engines = new LinkedHashMap<>();
+        for (var row : findingRepository.summarizeByEngine(repo, since)) {
+            engines.merge(row.getEngine() == null ? "unknown" : row.getEngine(), row.getTotal(), Long::sum);
+        }
+        List<FindingSummaryResponse.EngineSummary> byEngine = engines.entrySet().stream()
+                .map(e -> new FindingSummaryResponse.EngineSummary(e.getKey(), e.getValue()))
+                .toList();
+        return new FindingSummaryResponse(repo.getId(), days, byRule, byEngine);
     }
 
     private static LocalDate windowStart(int days) {

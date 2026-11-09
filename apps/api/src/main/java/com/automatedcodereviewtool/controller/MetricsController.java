@@ -1,5 +1,6 @@
 package com.automatedcodereviewtool.controller;
 
+import com.automatedcodereviewtool.dto.response.FindingSummaryResponse;
 import com.automatedcodereviewtool.dto.response.QualityTrendResponse;
 import com.automatedcodereviewtool.entity.QualityMetric;
 import com.automatedcodereviewtool.entity.Repository;
@@ -18,12 +19,17 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Read-only metrics for the dashboard.
+ * Read-only metrics for the dashboard. Both endpoints are owner-scoped
+ * (404 for a repo the caller does not own) and accept {@code days} in 1..365.
  *
- * <p>{@code GET /api/metrics/quality-trend?repo=…&days=30} —
- * daily quality scores plus the single most-frequent anti-pattern
- * found in that window. Powers the line chart in
- * {@code apps/web/src/app/dashboard/page.tsx}.</p>
+ * <ul>
+ *   <li>{@code GET /api/metrics/quality-trend?repo=…&days=30} — daily
+ *       quality scores plus the single most-frequent anti-pattern found in
+ *       that window. Powers the line chart in
+ *       {@code apps/web/src/app/dashboard/page.tsx}.</li>
+ *   <li>{@code GET /api/metrics/finding-summary?repo=…&days=30} — triage
+ *       outcome per rule and finding count per detector engine.</li>
+ * </ul>
  */
 @RestController
 @RequestMapping("/api/metrics")
@@ -59,5 +65,12 @@ public class MetricsController {
                 repoEntity.getFullName(),
                 points,
                 topPattern);
+    }
+
+    @GetMapping("/finding-summary")
+    public FindingSummaryResponse findingSummary(@AuthenticationPrincipal User user,
+                                                 @RequestParam UUID repo,
+                                                 @RequestParam(defaultValue = "30") @Min(1) @Max(365) int days) {
+        return repoService.findingSummary(repoService.requireOwned(user, repo), days);
     }
 }
