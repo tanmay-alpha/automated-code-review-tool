@@ -141,6 +141,21 @@ def _is_placeholder_or_doc(val: str) -> bool:
     return False
 
 
+_PROVIDER_PATTERNS = tuple(
+    pattern for name, pattern in _PATTERNS if name not in {"generic", "cookie"}
+)
+
+
+def is_provider_credential(value: str) -> bool:
+    """True when ``value`` has a recognisable provider token format (AWS, GitHub,
+    Slack, Google, Stripe, JWT), as opposed to an arbitrary assigned string."""
+    return any(
+        not _is_placeholder_or_doc(match.group(0))
+        for pattern in _PROVIDER_PATTERNS
+        for match in pattern.finditer(value)
+    )
+
+
 def redact_secrets(text: str) -> RedactionResult:
     """Replace detected secrets with ``<REDACTED_SECRET>``.
 

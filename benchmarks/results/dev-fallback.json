@@ -5,14 +5,14 @@
   "status": "ok",
   "report": {
     "overall": {
-      "tp": 16,
-      "fp": 22,
-      "fn": 8,
-      "precision": 0.4211,
-      "recall": 0.6667,
-      "f1": 0.5161,
+      "tp": 24,
+      "fp": 1,
+      "fn": 0,
+      "precision": 0.96,
+      "recall": 1.0,
+      "f1": 0.9796,
       "supported_expected": 24,
-      "predictions": 38
+      "predictions": 25
     },
     "by_anti_pattern": {
       "MAINTAINABILITY_COMMENTED_CODE": {
@@ -25,19 +25,19 @@
       },
       "MAINTAINABILITY_PRINT_STATEMENT": {
         "tp": 2,
-        "fp": 5,
+        "fp": 0,
         "fn": 0,
-        "precision": 0.2857,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.4444
+        "f1": 1.0
       },
       "PERFORMANCE_N_PLUS_ONE": {
-        "tp": 2,
+        "tp": 3,
         "fp": 0,
-        "fn": 1,
+        "fn": 0,
         "precision": 1.0,
-        "recall": 0.6667,
-        "f1": 0.8
+        "recall": 1.0,
+        "f1": 1.0
       },
       "PERFORMANCE_QUADRATIC_LOOP": {
         "tp": 1,
@@ -49,138 +49,138 @@
       },
       "READABILITY_LONG_METHOD": {
         "tp": 1,
-        "fp": 1,
+        "fp": 0,
         "fn": 0,
-        "precision": 0.5,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.6667
+        "f1": 1.0
       },
       "READABILITY_MAGIC_NUMBER": {
         "tp": 1,
-        "fp": 9,
+        "fp": 0,
         "fn": 0,
-        "precision": 0.1,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.1818
+        "f1": 1.0
       },
       "RELIABILITY_BROAD_EXCEPTION": {
         "tp": 3,
-        "fp": 1,
+        "fp": 0,
         "fn": 0,
-        "precision": 0.75,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.8571
+        "f1": 1.0
       },
       "RELIABILITY_MISSING_TIMEOUT": {
-        "tp": 0,
+        "tp": 4,
         "fp": 0,
-        "fn": 4,
-        "precision": null,
-        "recall": 0.0,
-        "f1": 0.0
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
       },
       "SECURITY_HARDCODED_SECRET": {
         "tp": 2,
-        "fp": 2,
+        "fp": 0,
         "fn": 0,
-        "precision": 0.5,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.6667
+        "f1": 1.0
       },
       "SECURITY_SQL_INJECTION": {
-        "tp": 2,
-        "fp": 1,
-        "fn": 2,
-        "precision": 0.6667,
-        "recall": 0.5,
-        "f1": 0.5714
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
       },
       "SECURITY_WEAK_CRYPTO": {
-        "tp": 1,
-        "fp": 3,
-        "fn": 1,
-        "precision": 0.25,
-        "recall": 0.5,
-        "f1": 0.3333
+        "tp": 2,
+        "fp": 1,
+        "fn": 0,
+        "precision": 0.6667,
+        "recall": 1.0,
+        "f1": 0.8
       }
     },
     "by_category": {
       "MAINTAINABILITY": {
         "tp": 3,
-        "fp": 5,
+        "fp": 0,
         "fn": 0,
-        "precision": 0.375,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.5455
+        "f1": 1.0
       },
       "PERFORMANCE": {
-        "tp": 3,
+        "tp": 4,
         "fp": 0,
-        "fn": 1,
+        "fn": 0,
         "precision": 1.0,
-        "recall": 0.75,
-        "f1": 0.8571
+        "recall": 1.0,
+        "f1": 1.0
       },
       "READABILITY": {
         "tp": 2,
-        "fp": 10,
+        "fp": 0,
         "fn": 0,
-        "precision": 0.1667,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.2857
+        "f1": 1.0
       },
       "RELIABILITY": {
-        "tp": 3,
-        "fp": 1,
-        "fn": 4,
-        "precision": 0.75,
-        "recall": 0.4286,
-        "f1": 0.5455
+        "tp": 7,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
       },
       "SECURITY": {
-        "tp": 5,
-        "fp": 6,
-        "fn": 3,
-        "precision": 0.4545,
-        "recall": 0.625,
-        "f1": 0.5263
+        "tp": 8,
+        "fp": 1,
+        "fn": 0,
+        "precision": 0.8889,
+        "recall": 1.0,
+        "f1": 0.9412
       }
     },
     "label_confusion": {},
     "pr_level": {
       "prs": 13,
-      "false_positives_per_pr": 1.6923,
-      "prs_with_false_positives": 8,
+      "false_positives_per_pr": 0.0769,
+      "prs_with_false_positives": 1,
       "prs_with_supported_defects": 12,
-      "prs_fully_detected": 7,
-      "prs_clean": 2
+      "prs_fully_detected": 12,
+      "prs_clean": 12
     },
     "decoys": {
       "negatives": 33,
-      "false_positives_on_decoys": 22
+      "false_positives_on_decoys": 1
     },
     "severity": {
-      "matched": 16,
-      "correct": 14,
-      "accuracy": 0.875,
+      "matched": 24,
+      "correct": 22,
+      "accuracy": 0.9167,
       "confusion_expected_to_predicted": {
         "critical": {
           "critical": 2,
           "major": 2
         },
         "major": {
-          "major": 7
+          "major": 11
         },
         "minor": {
-          "minor": 5
+          "minor": 9
         }
       }
     },
     "localization": {
       "tolerance_lines": 3,
-      "line_exact": 16,
+      "line_exact": 24,
       "line_accuracy": 1.0,
-      "same_hunk": 16,
+      "same_hunk": 24,
       "hunk_accuracy": 1.0,
       "near_misses_same_hunk": 0
     },
@@ -194,23 +194,23 @@
         "resource_leak": 1
       },
       "predictions_overlapping": 0,
-      "coverage_of_all_labeled_defects": 0.5161,
+      "coverage_of_all_labeled_defects": 0.7742,
       "note": "Never counted as detected; listed so recall is not overstated."
     },
     "files": {
       "changed_files": 27,
-      "analyzed_files": 20,
-      "unsupported_files": 7,
-      "unsupported_file_rate": 0.2593,
+      "analyzed_files": 19,
+      "unsupported_files": 8,
+      "unsupported_file_rate": 0.2963,
       "unsupported_by_reason": {
         "binary": 1,
-        "language_not_reviewed": 4,
+        "language_not_reviewed": 5,
         "no_added_lines": 2
       }
     },
     "explainability": {
-      "predictions": 38,
-      "complete": 38,
+      "predictions": 25,
+      "complete": 25,
       "rate": 1.0,
       "fields": [
         "explanation",
@@ -221,9 +221,9 @@
     },
     "performance": {
       "runs_per_pr": 5,
-      "latency_ms_p50": 0.366,
-      "latency_ms_p95": 0.508,
-      "peak_python_heap_kib": 20.2,
+      "latency_ms_p50": 0.499,
+      "latency_ms_p95": 0.697,
+      "peak_python_heap_kib": 22.6,
       "note": "Wall-clock on the benchmark host; heap is tracemalloc peak per PR, not RSS."
     },
     "cases": [
@@ -233,12 +233,9 @@
         "supported_expected": 1,
         "unsupported_defects": 0,
         "tp": 1,
-        "fp": 2,
+        "fp": 0,
         "fn": 0,
-        "false_positives": [
-          "SECURITY_SQL_INJECTION app/users/repository.py:14-14",
-          "READABILITY_MAGIC_NUMBER app/api/users.py:9-9"
-        ],
+        "false_positives": [],
         "false_negatives": []
       },
       {
@@ -246,46 +243,33 @@
         "title": "TypeScript profile client: real console.log next to comment/string decoys, fetch without timeout",
         "supported_expected": 2,
         "unsupported_defects": 1,
-        "tp": 1,
-        "fp": 2,
-        "fn": 1,
-        "false_positives": [
-          "MAINTAINABILITY_PRINT_STATEMENT src/api/profile.ts:3-3",
-          "MAINTAINABILITY_PRINT_STATEMENT src/api/profile.ts:4-4"
-        ],
-        "false_negatives": [
-          "RELIABILITY_MISSING_TIMEOUT src/api/profile.ts:7-9"
-        ]
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "false_positives": [],
+        "false_negatives": []
       },
       {
         "id": "dev-03-java-payment-service",
         "title": "Java payment service: swallowed exception, MD5 signature, client without timeout, stream leak",
         "supported_expected": 3,
         "unsupported_defects": 1,
-        "tp": 1,
+        "tp": 3,
         "fp": 0,
-        "fn": 2,
+        "fn": 0,
         "false_positives": [],
-        "false_negatives": [
-          "RELIABILITY_MISSING_TIMEOUT src/main/java/com/example/payments/PaymentService.java:12-12",
-          "SECURITY_WEAK_CRYPTO src/main/java/com/example/payments/PaymentService.java:28-28"
-        ]
+        "false_negatives": []
       },
       {
         "id": "dev-04-py-customer-sync",
         "title": "Python sync job: per-order ORM and HTTP calls, no timeout, unlocked cache",
         "supported_expected": 4,
         "unsupported_defects": 1,
-        "tp": 2,
-        "fp": 1,
-        "fn": 2,
-        "false_positives": [
-          "READABILITY_MAGIC_NUMBER app/sync/customers.py:15-15"
-        ],
-        "false_negatives": [
-          "PERFORMANCE_N_PLUS_ONE app/sync/customers.py:12-14",
-          "RELIABILITY_MISSING_TIMEOUT app/sync/customers.py:14-14"
-        ]
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "false_positives": [],
+        "false_negatives": []
       },
       {
         "id": "dev-05-js-format-decoys",
@@ -293,18 +277,9 @@
         "supported_expected": 0,
         "unsupported_defects": 0,
         "tp": 0,
-        "fp": 8,
+        "fp": 0,
         "fn": 0,
-        "false_positives": [
-          "MAINTAINABILITY_PRINT_STATEMENT src/utils/format.js:3-3",
-          "READABILITY_MAGIC_NUMBER src/utils/format.js:3-3",
-          "READABILITY_MAGIC_NUMBER src/utils/format.js:19-19",
-          "SECURITY_WEAK_CRYPTO src/utils/format.js:22-22",
-          "SECURITY_WEAK_CRYPTO src/utils/format.js:23-23",
-          "MAINTAINABILITY_PRINT_STATEMENT tests/format.test.js:4-4",
-          "READABILITY_MAGIC_NUMBER tests/format.test.js:5-5",
-          "READABILITY_MAGIC_NUMBER tests/format.test.js:6-6"
-        ],
+        "false_positives": [],
         "false_negatives": []
       },
       {
@@ -313,13 +288,10 @@
         "supported_expected": 2,
         "unsupported_defects": 0,
         "tp": 2,
-        "fp": 4,
+        "fp": 1,
         "fn": 0,
         "false_positives": [
-          "SECURITY_WEAK_CRYPTO config/settings.py:15-15",
-          "SECURITY_HARDCODED_SECRET tests/test_settings.py:3-3",
-          "SECURITY_HARDCODED_SECRET tests/test_settings.py:7-7",
-          "READABILITY_MAGIC_NUMBER tests/test_settings.py:9-9"
+          "SECURITY_WEAK_CRYPTO config/settings.py:15-15"
         ],
         "false_negatives": []
       },
@@ -328,13 +300,11 @@
         "title": "Java repository: concatenated JDBC queries; controller dereferences a now-nullable result (cross-file)",
         "supported_expected": 2,
         "unsupported_defects": 1,
-        "tp": 1,
+        "tp": 2,
         "fp": 0,
-        "fn": 1,
+        "fn": 0,
         "false_positives": [],
-        "false_negatives": [
-          "SECURITY_SQL_INJECTION src/main/java/com/example/users/UserRepository.java:34-36"
-        ]
+        "false_negatives": []
       },
       {
         "id": "dev-08-ts-report-pagination",
@@ -353,11 +323,9 @@
         "supported_expected": 2,
         "unsupported_defects": 1,
         "tp": 2,
-        "fp": 1,
+        "fp": 0,
         "fn": 0,
-        "false_positives": [
-          "RELIABILITY_BROAD_EXCEPTION app/importer.py:29-29"
-        ],
+        "false_positives": [],
         "false_negatives": []
       },
       {
@@ -366,12 +334,9 @@
         "supported_expected": 1,
         "unsupported_defects": 0,
         "tp": 1,
-        "fp": 2,
+        "fp": 0,
         "fn": 0,
-        "false_positives": [
-          "READABILITY_MAGIC_NUMBER cmd/server/main.go:10-10",
-          "READABILITY_MAGIC_NUMBER cmd/server/main.go:11-11"
-        ],
+        "false_positives": [],
         "false_negatives": []
       },
       {
@@ -379,14 +344,11 @@
         "title": "JavaScript order service: per-id query loop, template-literal SQL, axios without timeout",
         "supported_expected": 3,
         "unsupported_defects": 0,
-        "tp": 1,
+        "tp": 3,
         "fp": 0,
-        "fn": 2,
+        "fn": 0,
         "false_positives": [],
-        "false_negatives": [
-          "SECURITY_SQL_INJECTION src/services/orders.js:14-14",
-          "RELIABILITY_MISSING_TIMEOUT src/services/orders.js:19-19"
-        ]
+        "false_negatives": []
       },
       {
         "id": "dev-12-py-cli-and-long-statement",
@@ -394,12 +356,9 @@
         "supported_expected": 1,
         "unsupported_defects": 0,
         "tp": 1,
-        "fp": 2,
+        "fp": 0,
         "fn": 0,
-        "false_positives": [
-          "MAINTAINABILITY_PRINT_STATEMENT scripts/export_users.py:14-14",
-          "READABILITY_LONG_METHOD app/notifications.py:8-8"
-        ],
+        "false_positives": [],
         "false_negatives": []
       },
       {

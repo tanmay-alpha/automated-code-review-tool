@@ -5,12 +5,12 @@
   "status": "ok",
   "report": {
     "overall": {
-      "tp": 9,
-      "fp": 6,
-      "fn": 7,
-      "precision": 0.6,
-      "recall": 0.5625,
-      "f1": 0.5806,
+      "tp": 14,
+      "fp": 1,
+      "fn": 2,
+      "precision": 0.9333,
+      "recall": 0.875,
+      "f1": 0.9032,
       "supported_expected": 16,
       "predictions": 15
     },
@@ -25,11 +25,11 @@
       },
       "MAINTAINABILITY_PRINT_STATEMENT": {
         "tp": 1,
-        "fp": 2,
+        "fp": 0,
         "fn": 0,
-        "precision": 0.3333,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.5
+        "f1": 1.0
       },
       "PERFORMANCE_N_PLUS_ONE": {
         "tp": 1,
@@ -49,11 +49,11 @@
       },
       "READABILITY_MAGIC_NUMBER": {
         "tp": 1,
-        "fp": 2,
+        "fp": 0,
         "fn": 1,
-        "precision": 0.3333,
+        "precision": 1.0,
         "recall": 0.5,
-        "f1": 0.4
+        "f1": 0.6667
       },
       "RELIABILITY_BROAD_EXCEPTION": {
         "tp": 2,
@@ -64,46 +64,46 @@
         "f1": 1.0
       },
       "RELIABILITY_MISSING_TIMEOUT": {
-        "tp": 0,
+        "tp": 2,
         "fp": 0,
-        "fn": 2,
-        "precision": null,
-        "recall": 0.0,
-        "f1": 0.0
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
       },
       "SECURITY_HARDCODED_SECRET": {
         "tp": 1,
-        "fp": 1,
+        "fp": 0,
         "fn": 0,
-        "precision": 0.5,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.6667
+        "f1": 1.0
       },
       "SECURITY_SQL_INJECTION": {
-        "tp": 0,
-        "fp": 1,
-        "fn": 2,
-        "precision": 0.0,
-        "recall": 0.0,
-        "f1": 0.0
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
       },
       "SECURITY_WEAK_CRYPTO": {
-        "tp": 1,
-        "fp": 0,
-        "fn": 2,
-        "precision": 1.0,
-        "recall": 0.3333,
-        "f1": 0.5
+        "tp": 2,
+        "fp": 1,
+        "fn": 1,
+        "precision": 0.6667,
+        "recall": 0.6667,
+        "f1": 0.6667
       }
     },
     "by_category": {
       "MAINTAINABILITY": {
         "tp": 2,
-        "fp": 2,
+        "fp": 0,
         "fn": 0,
-        "precision": 0.5,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.6667
+        "f1": 1.0
       },
       "PERFORMANCE": {
         "tp": 2,
@@ -115,63 +115,64 @@
       },
       "READABILITY": {
         "tp": 1,
-        "fp": 2,
-        "fn": 1,
-        "precision": 0.3333,
-        "recall": 0.5,
-        "f1": 0.4
-      },
-      "RELIABILITY": {
-        "tp": 2,
         "fp": 0,
-        "fn": 2,
+        "fn": 1,
         "precision": 1.0,
         "recall": 0.5,
         "f1": 0.6667
       },
+      "RELIABILITY": {
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
       "SECURITY": {
-        "tp": 2,
-        "fp": 2,
-        "fn": 4,
-        "precision": 0.5,
-        "recall": 0.3333,
-        "f1": 0.4
+        "tp": 5,
+        "fp": 1,
+        "fn": 1,
+        "precision": 0.8333,
+        "recall": 0.8333,
+        "f1": 0.8333
       }
     },
     "label_confusion": {},
     "pr_level": {
       "prs": 8,
-      "false_positives_per_pr": 0.75,
-      "prs_with_false_positives": 3,
+      "false_positives_per_pr": 0.125,
+      "prs_with_false_positives": 1,
       "prs_with_supported_defects": 7,
-      "prs_fully_detected": 1,
-      "prs_clean": 1
+      "prs_fully_detected": 5,
+      "prs_clean": 5
     },
     "decoys": {
       "negatives": 13,
-      "false_positives_on_decoys": 6
+      "false_positives_on_decoys": 1
     },
     "severity": {
-      "matched": 9,
-      "correct": 9,
-      "accuracy": 1.0,
+      "matched": 14,
+      "correct": 13,
+      "accuracy": 0.9286,
       "confusion_expected_to_predicted": {
         "critical": {
-          "critical": 1
+          "critical": 1,
+          "major": 1
         },
         "major": {
-          "major": 5
+          "major": 7
         },
         "minor": {
-          "minor": 3
+          "minor": 5
         }
       }
     },
     "localization": {
       "tolerance_lines": 3,
-      "line_exact": 9,
+      "line_exact": 14,
       "line_accuracy": 1.0,
-      "same_hunk": 9,
+      "same_hunk": 14,
       "hunk_accuracy": 1.0,
       "near_misses_same_hunk": 0
     },
@@ -185,16 +186,16 @@
         "wrong_comparison": 1
       },
       "predictions_overlapping": 0,
-      "coverage_of_all_labeled_defects": 0.4286,
+      "coverage_of_all_labeled_defects": 0.6667,
       "note": "Never counted as detected; listed so recall is not overstated."
     },
     "files": {
       "changed_files": 12,
-      "analyzed_files": 9,
-      "unsupported_files": 3,
-      "unsupported_file_rate": 0.25,
+      "analyzed_files": 8,
+      "unsupported_files": 4,
+      "unsupported_file_rate": 0.3333,
       "unsupported_by_reason": {
-        "language_not_reviewed": 3
+        "language_not_reviewed": 4
       }
     },
     "explainability": {
@@ -210,9 +211,9 @@
     },
     "performance": {
       "runs_per_pr": 5,
-      "latency_ms_p50": 0.301,
-      "latency_ms_p95": 0.391,
-      "peak_python_heap_kib": 14.7,
+      "latency_ms_p50": 0.499,
+      "latency_ms_p95": 0.692,
+      "peak_python_heap_kib": 19.3,
       "note": "Wall-clock on the benchmark host; heap is tracemalloc peak per PR, not RSS."
     },
     "cases": [
@@ -221,29 +222,22 @@
         "title": "Python search endpoint: %-formatted SQL, debug print, analytics call without timeout, MD5 passwords",
         "supported_expected": 5,
         "unsupported_defects": 0,
-        "tp": 3,
+        "tp": 5,
         "fp": 0,
-        "fn": 2,
+        "fn": 0,
         "false_positives": [],
-        "false_negatives": [
-          "SECURITY_SQL_INJECTION app/routes/search.py:12-12",
-          "RELIABILITY_MISSING_TIMEOUT app/routes/search.py:15-15"
-        ]
+        "false_negatives": []
       },
       {
         "id": "heldout-02-ts-billing-integration",
         "title": "TypeScript billing integration: live key in source, fetch without timeout, nested matching loops",
         "supported_expected": 3,
         "unsupported_defects": 1,
-        "tp": 2,
-        "fp": 1,
-        "fn": 1,
-        "false_positives": [
-          "MAINTAINABILITY_PRINT_STATEMENT src/integrations/billing.ts:5-5"
-        ],
-        "false_negatives": [
-          "RELIABILITY_MISSING_TIMEOUT src/integrations/billing.ts:7-9"
-        ]
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "false_positives": [],
+        "false_negatives": []
       },
       {
         "id": "heldout-03-java-order-service",
@@ -276,15 +270,13 @@
         "title": "JavaScript audit helpers: SQL-looking log text, SHA-1 object ids, MD5 password hash",
         "supported_expected": 1,
         "unsupported_defects": 0,
-        "tp": 0,
+        "tp": 1,
         "fp": 1,
-        "fn": 1,
+        "fn": 0,
         "false_positives": [
-          "SECURITY_SQL_INJECTION src/lib/audit.js:5-5"
+          "SECURITY_WEAK_CRYPTO src/lib/audit.js:10-10"
         ],
-        "false_negatives": [
-          "SECURITY_WEAK_CRYPTO src/lib/audit.js:14-14"
-        ]
+        "false_negatives": []
       },
       {
         "id": "heldout-06-mixed-unsupported-files",
@@ -302,13 +294,11 @@
         "title": "Java DAO: concatenated table name in prepareStatement, off-by-one bound, string identity comparison",
         "supported_expected": 1,
         "unsupported_defects": 2,
-        "tp": 0,
+        "tp": 1,
         "fp": 0,
-        "fn": 1,
+        "fn": 0,
         "false_positives": [],
-        "false_negatives": [
-          "SECURITY_SQL_INJECTION src/main/java/com/example/reports/ReportDao.java:17-17"
-        ]
+        "false_negatives": []
       },
       {
         "id": "heldout-08-py-tests-only",
@@ -316,14 +306,9 @@
         "supported_expected": 0,
         "unsupported_defects": 0,
         "tp": 0,
-        "fp": 4,
+        "fp": 0,
         "fn": 0,
-        "false_positives": [
-          "SECURITY_HARDCODED_SECRET tests/test_billing.py:5-5",
-          "READABILITY_MAGIC_NUMBER tests/test_billing.py:8-8",
-          "MAINTAINABILITY_PRINT_STATEMENT tests/test_billing.py:10-10",
-          "READABILITY_MAGIC_NUMBER tests/test_billing.py:16-16"
-        ],
+        "false_positives": [],
         "false_negatives": []
       }
     ]

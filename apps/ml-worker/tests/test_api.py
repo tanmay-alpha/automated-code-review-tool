@@ -197,7 +197,7 @@ def test_model_failure_degrades_to_localized_fallback(client: TestClient):
     assert response.status_code == 200
     body = response.json()
     assert body["engine"] == "fallback"
-    assert body["modelVersion"] == "rule-baseline-v1"
+    assert body["modelVersion"] == "rule-baseline-v2"
     assert body["findings"][0]["filePath"] == "demo.py"
     assert len(body["findings"][0]["hunkHash"]) == 64
     finding = body["findings"][0]

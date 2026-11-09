@@ -21,7 +21,7 @@
     "processingTimeMs": 4,
     "windowsProcessed": 1,
     "engine": "fallback",
-    "modelVersion": "rule-baseline-v1",
+    "modelVersion": "rule-baseline-v2",
     "taxonomyVersion": "1.0.0"
   }
 }
