@@ -67,14 +67,15 @@ public class GitHubService {
 
     /**
      * Build the URL the browser should be redirected to in order to start
-     * the OAuth flow. We request {@code read:user} (for the user's
-     * profile) and {@code repo} (to install webhooks + post PR comments).
+     * the OAuth flow with the scopes in {@code app.github.oauth-scopes}
+     * (default {@code read:user repo}: webhooks, diffs and PR comments on
+     * private repositories).
      */
     public String getOAuthRedirectUrl() {
         return UriComponentsBuilder.fromHttpUrl(OAUTH_AUTHORIZE_URL)
                 .queryParam("client_id", config.getClientId())
                 .queryParam("redirect_uri", URLEncoder.encode(config.getOauthRedirectUri(), StandardCharsets.UTF_8))
-                .queryParam("scope", URLEncoder.encode("read:user repo", StandardCharsets.UTF_8))
+                .queryParam("scope", URLEncoder.encode(config.getOauthScopes(), StandardCharsets.UTF_8))
                 .build()
                 .toUriString();
     }
