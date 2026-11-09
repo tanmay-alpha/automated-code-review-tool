@@ -39,7 +39,7 @@ class JwtServiceTest {
     @Test
     void testGenerateAndValidateAccessToken() {
         UUID userId = UUID.randomUUID();
-        String token = jwtService.generateAccessToken(userId, "tanmay-alpha");
+        String token = jwtService.generateAccessToken(userId, "tanmay-alpha", 0);
 
         Claims claims = jwtService.validateToken(token);
 
@@ -58,7 +58,7 @@ class JwtServiceTest {
         shortLived.setRefreshTokenExpiry(604_800);
         JwtService shortService = new JwtService(shortLived);
 
-        String token = shortService.generateAccessToken(UUID.randomUUID(), "u");
+        String token = shortService.generateAccessToken(UUID.randomUUID(), "u", 0);
 
         assertThatThrownBy(() -> shortService.validateToken(token))
                 .isInstanceOf(JwtException.class);
@@ -67,7 +67,7 @@ class JwtServiceTest {
     @Test
     void testSubjectIsUserId() {
         UUID userId = UUID.randomUUID();
-        String token = jwtService.generateAccessToken(userId, "u");
+        String token = jwtService.generateAccessToken(userId, "u", 0);
 
         assertThat(jwtService.validateToken(token).getSubject()).isEqualTo(userId.toString());
     }
@@ -75,8 +75,8 @@ class JwtServiceTest {
     @Test
     void testRefreshTokenDifferentFromAccessToken() {
         UUID userId = UUID.randomUUID();
-        String access = jwtService.generateAccessToken(userId, "u");
-        String refresh = jwtService.generateRefreshToken(userId);
+        String access = jwtService.generateAccessToken(userId, "u", 0);
+        String refresh = jwtService.generateRefreshToken(userId, 0);
 
         assertThat(access).isNotEqualTo(refresh);
 
@@ -87,5 +87,26 @@ class JwtServiceTest {
         // Access tokens carry the username claim; refresh tokens don't.
         assertThat(accessClaims.get(JwtService.CLAIM_USERNAME)).isEqualTo("u");
         assertThat(refreshClaims.get(JwtService.CLAIM_USERNAME)).isNull();
+    }
+
+    @Test
+    void tokensCarryTheUserTokenVersion() {
+        UUID userId = UUID.randomUUID();
+        Claims access = jwtService.validateToken(jwtService.generateAccessToken(userId, "u", 3));
+        Claims refresh = jwtService.validateToken(jwtService.generateRefreshToken(userId, 3));
+
+        assertThat(JwtService.isCurrentVersion(access, 3)).isTrue();
+        assertThat(JwtService.isCurrentVersion(refresh, 3)).isTrue();
+        // After "sign out everywhere" bumps the version, both are stale.
+        assertThat(JwtService.isCurrentVersion(access, 4)).isFalse();
+        assertThat(JwtService.isCurrentVersion(refresh, 4)).isFalse();
+    }
+
+    @Test
+    void tokensWithoutVersionClaimCountAsVersionZero() {
+        Claims legacy = io.jsonwebtoken.Jwts.claims().subject("x").build();
+
+        assertThat(JwtService.isCurrentVersion(legacy, 0)).isTrue();
+        assertThat(JwtService.isCurrentVersion(legacy, 1)).isFalse();
     }
 }

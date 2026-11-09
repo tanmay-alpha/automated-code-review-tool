@@ -100,7 +100,7 @@ class WebhookControllerTest {
     static class StubFilterConfig {
         @org.springframework.context.annotation.Bean
         JwtAuthFilter jwtAuthFilter() {
-            return new JwtAuthFilter(null, null, null) {
+            return new JwtAuthFilter(null, null, null, null) {
                 @Override
                 protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res,
                                                 FilterChain chain) throws java.io.IOException, jakarta.servlet.ServletException {

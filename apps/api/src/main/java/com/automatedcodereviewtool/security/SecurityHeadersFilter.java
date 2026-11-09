@@ -11,8 +11,9 @@ import java.io.IOException;
 
 /**
  * Adds security headers to every response and suppresses the
- * {@code Server} header. The API only serves JSON, so the CSP simply
- * forbids framing and plugin content.
+ * {@code Server} header. The API only serves JSON, so the CSP allows no
+ * content at all (ASVS 5.0 V3.4.3 asks for {@code object-src 'none'} and
+ * {@code base-uri 'none'}) and forbids framing (V3.4.6).
  */
 @Component
 public class SecurityHeadersFilter extends OncePerRequestFilter {
@@ -48,7 +49,7 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
 
     private void addSecurityHeaders(HttpServletResponse response) {
         response.setHeader("Content-Security-Policy",
-            "default-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
+            "default-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
 
         // Strict Transport Security
         response.setHeader("Strict-Transport-Security",

@@ -67,6 +67,7 @@ class SecurityIntegrationTest {
     @MockBean private StringRedisTemplate redis;
     @MockBean private HmacVerifier hmacVerifier;
     @MockBean private UserRepository userRepository;
+    @MockBean private GitHubAuthorizationVerifier gitHubAuthorizationVerifier;
 
     private final Set<String> redisKeys = ConcurrentHashMap.newKeySet();
 
@@ -74,6 +75,7 @@ class SecurityIntegrationTest {
     @SuppressWarnings("unchecked")
     void setUpRedisMock() {
         when(hmacVerifier.verify(any(), any(), any())).thenReturn(false);
+        when(gitHubAuthorizationVerifier.check(any())).thenReturn(GitHubAuthorizationVerifier.Status.VALID);
         when(userRepository.findById(any())).thenAnswer(inv -> Optional.of(
                 com.automatedcodereviewtool.entity.User.builder()
                         .id(inv.getArgument(0))
@@ -126,7 +128,8 @@ class SecurityIntegrationTest {
     void securityHeadersArePresent() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
-                .andExpect(header().string("Content-Security-Policy", containsString("default-src 'self'")))
+                .andExpect(header().string("Content-Security-Policy",
+                        "default-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"))
                 .andExpect(header().string("Strict-Transport-Security", containsString("max-age=31536000")))
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(header().string("X-Frame-Options", "DENY"))
@@ -136,7 +139,7 @@ class SecurityIntegrationTest {
     @Test
     void loggedOutAccessTokenIsRejected() throws Exception {
         UUID userId = UUID.randomUUID();
-        String token = jwtService.generateAccessToken(userId, "test-user");
+        String token = jwtService.generateAccessToken(userId, "test-user", 0);
 
         mockMvc.perform(get("/api/test/protected").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
@@ -152,7 +155,7 @@ class SecurityIntegrationTest {
 
     @Test
     void refreshTokenIsNotAcceptedAsAccessToken() throws Exception {
-        String refresh = jwtService.generateRefreshToken(UUID.randomUUID());
+        String refresh = jwtService.generateRefreshToken(UUID.randomUUID(), 0);
 
         mockMvc.perform(get("/api/test/protected").header("Authorization", "Bearer " + refresh))
                 .andExpect(status().isUnauthorized());
@@ -161,7 +164,7 @@ class SecurityIntegrationTest {
     @Test
     void accessTokenIsRejectedWith503WhenRevocationCheckIsUnavailable() throws Exception {
         doThrow(new RedisConnectionFailureException("redis down")).when(redis).hasKey(any());
-        String token = jwtService.generateAccessToken(UUID.randomUUID(), "test-user");
+        String token = jwtService.generateAccessToken(UUID.randomUUID(), "test-user", 0);
 
         mockMvc.perform(get("/api/test/protected").header("Authorization", "Bearer " + token))
                 .andExpect(status().isServiceUnavailable())
@@ -173,9 +176,10 @@ class SecurityIntegrationTest {
     void refreshFailsClosedWhenSessionStoreIsUnavailable() throws Exception {
         when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class)))
                 .thenThrow(new RedisConnectionFailureException("redis down"));
-        String refresh = jwtService.generateRefreshToken(UUID.randomUUID());
+        String refresh = jwtService.generateRefreshToken(UUID.randomUUID(), 0);
 
-        mockMvc.perform(post("/api/auth/refresh").cookie(new jakarta.servlet.http.Cookie("refreshToken", refresh)))
+        mockMvc.perform(post("/api/auth/refresh").cookie(new jakarta.servlet.http.Cookie("__Host-refreshToken", refresh))
+                        .header("Origin", "http://localhost:3000"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.error").value("SERVICE_UNAVAILABLE"))
                 .andExpect(jsonPath("$.status").value(503));
@@ -185,9 +189,10 @@ class SecurityIntegrationTest {
     void refreshWithTokenThatIsNotTheCurrentSessionIsRejected() throws Exception {
         // The compare-and-set script found a different token (and revoked the session).
         when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(0L);
-        String refresh = jwtService.generateRefreshToken(UUID.randomUUID());
+        String refresh = jwtService.generateRefreshToken(UUID.randomUUID(), 0);
 
-        mockMvc.perform(post("/api/auth/refresh").cookie(new jakarta.servlet.http.Cookie("refreshToken", refresh)))
+        mockMvc.perform(post("/api/auth/refresh").cookie(new jakarta.servlet.http.Cookie("__Host-refreshToken", refresh))
+                        .header("Origin", "http://localhost:3000"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().doesNotExist("Set-Cookie"));
     }
@@ -197,12 +202,13 @@ class SecurityIntegrationTest {
     void refreshRotatesSessionWithSingleCompareAndSet() throws Exception {
         UUID userId = UUID.randomUUID();
         when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
-        String refresh = jwtService.generateRefreshToken(userId);
+        String refresh = jwtService.generateRefreshToken(userId, 0);
 
-        mockMvc.perform(post("/api/auth/refresh").cookie(new jakarta.servlet.http.Cookie("refreshToken", refresh)))
+        mockMvc.perform(post("/api/auth/refresh").cookie(new jakarta.servlet.http.Cookie("__Host-refreshToken", refresh))
+                        .header("Origin", "http://localhost:3000"))
                 .andExpect(status().isOk())
                 .andExpect(header().stringValues("Set-Cookie",
-                        hasItem(startsWith("refreshToken="))));
+                        hasItem(startsWith("__Host-refreshToken="))));
 
         ArgumentCaptor<List<String>> keys = ArgumentCaptor.forClass(List.class);
         ArgumentCaptor<Object> rotatedTo = ArgumentCaptor.forClass(Object.class);
@@ -217,7 +223,7 @@ class SecurityIntegrationTest {
 
     @Test
     void logoutFailsClosedWhenBlacklistWriteFails() throws Exception {
-        String token = jwtService.generateAccessToken(UUID.randomUUID(), "test-user");
+        String token = jwtService.generateAccessToken(UUID.randomUUID(), "test-user", 0);
         ValueOperations<String, String> valueOps = redis.opsForValue();
         doThrow(new RedisConnectionFailureException("redis down"))
                 .when(valueOps).set(anyString(), anyString(), any(Duration.class));
@@ -230,7 +236,7 @@ class SecurityIntegrationTest {
 
     @Test
     void logoutFailsClosedWhenRefreshSessionDeleteFails() throws Exception {
-        String token = jwtService.generateAccessToken(UUID.randomUUID(), "test-user");
+        String token = jwtService.generateAccessToken(UUID.randomUUID(), "test-user", 0);
         when(redis.delete(any(String.class))).thenThrow(new RedisConnectionFailureException("redis down"));
 
         mockMvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + token))

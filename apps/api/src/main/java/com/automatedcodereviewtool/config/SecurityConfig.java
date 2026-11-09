@@ -3,6 +3,7 @@ package com.automatedcodereviewtool.config;
 import com.automatedcodereviewtool.security.ApiKeyAuthFilter;
 import com.automatedcodereviewtool.security.AuthRateLimitFilter;
 import com.automatedcodereviewtool.security.JwtAuthFilter;
+import com.automatedcodereviewtool.security.OriginVerificationFilter;
 import com.automatedcodereviewtool.security.RequestSizeLimitFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,6 +17,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.CorsFilter;
 
 import java.util.List;
 
@@ -37,12 +39,16 @@ import java.util.List;
  *   <li>{@link JwtAuthFilter} — validates the {@code accessToken} cookie
  *       (or a JWT bearer header) and binds the {@code User} entity as the
  *       request principal.</li>
+ *   <li>{@link OriginVerificationFilter} — runs before CORS and rejects
+ *       unsafe cookie-authenticated requests whose {@code Origin}
+ *       ({@code Sec-Fetch-Site}/{@code Referer} when Origin is absent) is
+ *       not an allowed frontend origin.</li>
  * </ul>
  *
- * <p>CSRF tokens are disabled. The dashboard authenticates with cookies,
- * so CSRF protection relies on those cookies being {@code SameSite=Lax}
- * (browsers do not attach them to cross-site POST/DELETE requests) and on
- * CORS allowing only the configured frontend origin.</p>
+ * <p>CSRF tokens are disabled. CSRF protection for the cookie-authenticated
+ * dashboard is the origin check above, backed by {@code SameSite=Lax}
+ * cookies and CORS allowing only {@code app.allowed-origins}. See
+ * docs/security-review.md for the browser-behaviour analysis.</p>
  */
 @Configuration
 @EnableWebSecurity
@@ -54,17 +60,20 @@ public class SecurityConfig {
     private final AuthRateLimitFilter authRateLimitFilter;
     private final AppConfig appConfig;
     private final RequestSizeLimitFilter requestSizeLimitFilter;
+    private final OriginVerificationFilter originVerificationFilter;
 
     public SecurityConfig(JwtAuthFilter jwtAuthFilter,
                           ApiKeyAuthFilter apiKeyAuthFilter,
                           AuthRateLimitFilter authRateLimitFilter,
                           AppConfig appConfig,
-                          RequestSizeLimitFilter requestSizeLimitFilter) {
+                          RequestSizeLimitFilter requestSizeLimitFilter,
+                          OriginVerificationFilter originVerificationFilter) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.apiKeyAuthFilter = apiKeyAuthFilter;
         this.authRateLimitFilter = authRateLimitFilter;
         this.appConfig = appConfig;
         this.requestSizeLimitFilter = requestSizeLimitFilter;
+        this.originVerificationFilter = originVerificationFilter;
     }
 
     @Bean
@@ -97,14 +106,17 @@ public class SecurityConfig {
                 // on /api/auth/* are shed before any token work.
                 .addFilterBefore(authRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(requestSizeLimitFilter, ApiKeyAuthFilter.class);
+                .addFilterBefore(requestSizeLimitFilter, ApiKeyAuthFilter.class)
+                // Origin check precedes CORS so a cross-site cookie request is
+                // refused by this filter regardless of the CORS settings.
+                .addFilterBefore(originVerificationFilter, CorsFilter.class);
         return http.build();
     }
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of(appConfig.getFrontendUrl()));
+        configuration.setAllowedOrigins(appConfig.getAllowedOrigins());
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept"));
         configuration.setAllowCredentials(true);
@@ -118,6 +130,27 @@ public class SecurityConfig {
     @Bean
     public org.springframework.boot.web.servlet.FilterRegistrationBean<RequestSizeLimitFilter> requestSizeLimitFilterRegistration(RequestSizeLimitFilter filter) {
         org.springframework.boot.web.servlet.FilterRegistrationBean<RequestSizeLimitFilter> registration = new org.springframework.boot.web.servlet.FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    /**
+     * Authentication is JWT/API-key only. Declaring a UserDetailsService that
+     * knows no users stops Spring Boot's UserDetailsServiceAutoConfiguration
+     * from creating an in-memory "user" and logging its generated password.
+     */
+    @Bean
+    public org.springframework.security.core.userdetails.UserDetailsService userDetailsService() {
+        return username -> {
+            throw new org.springframework.security.core.userdetails.UsernameNotFoundException(
+                    "Username/password authentication is not supported");
+        };
+    }
+
+    /** Registered inside the security chain only (before CORS). */
+    @Bean
+    public org.springframework.boot.web.servlet.FilterRegistrationBean<OriginVerificationFilter> originVerificationFilterRegistration(OriginVerificationFilter filter) {
+        org.springframework.boot.web.servlet.FilterRegistrationBean<OriginVerificationFilter> registration = new org.springframework.boot.web.servlet.FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
     }

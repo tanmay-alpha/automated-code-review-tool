@@ -47,6 +47,15 @@ public class UserService {
                         .build()));
     }
 
+    /**
+     * "Sign out everywhere": bumps the user's token version so every access
+     * and refresh token issued so far fails validation.
+     */
+    @Transactional
+    public void revokeAllSessions(UUID userId) {
+        userRepository.incrementTokenVersion(userId);
+    }
+
     @Transactional(readOnly = true)
     public Optional<User> findById(UUID id) {
         return userRepository.findById(id);
