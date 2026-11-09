@@ -13,11 +13,13 @@ import * as github from '@actions/github';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** @typedef {{antiPattern:string,severity:string,confidence:number,explanation:string,filePath?:string|null,lineStart?:number|null,lineEnd?:number|null,category?:string|null}} FindingDto */
+/** @typedef {{antiPattern:string,severity:string,confidence:number,explanation:string,filePath?:string|null,lineStart?:number|null,lineEnd?:number|null,category?:string|null,evidence?:string|null,remediation?:string|null,caveat?:string|null}} FindingDto */
 
 // Mirrors the @Size(max = 200_000) limit on ScanFileRequest.content in the API.
 const MAX_CONTENT_CHARS = 200_000;
 const SCAN_CONCURRENCY = 4;
+// GitHub displays at most this many annotations of each type per step.
+const ANNOTATIONS_PER_TYPE = 10;
 
 // File extensions mapped to the languages the ML worker accepts; its file-mode
 // `language` field accepts only python/javascript/java/unknown, so TypeScript
@@ -46,15 +48,9 @@ async function run(deps = {}) {
     const apiUrl = (coreApi.getInput('api-url') || '').trim().replace(/\/+$/, '');
     const apiKey = (coreApi.getInput('api-key') || '').trim();
     const githubToken = (coreApi.getInput('github-token') || '').trim();
-    const failThreshold = Number.parseInt(
-      coreApi.getInput('fail-threshold') || '60',
-      10,
-    );
-    const fetchTimeoutMs = Number.parseInt(
-      coreApi.getInput('fetch-timeout-ms') || '30000',
-      10,
-    );
-    const maxFiles = Number.parseInt(coreApi.getInput('max-files') || '50', 10);
+    const failThreshold = parseWholeNumber(coreApi.getInput('fail-threshold') || '60');
+    const fetchTimeoutMs = parseWholeNumber(coreApi.getInput('fetch-timeout-ms') || '30000');
+    const maxFiles = parseWholeNumber(coreApi.getInput('max-files') || '50');
 
     if (!apiUrl) return coreApi.setFailed('Missing required input: api-url');
     if (!apiKey) return coreApi.setFailed('Missing required input: api-key');
@@ -186,7 +182,11 @@ async function run(deps = {}) {
       });
       return findings
         .filter((finding) => touchesAddedLines(finding, file.added))
-        .map((finding) => ({ ...finding, filePath: file.filePath }));
+        .map((finding) => ({
+          ...finding,
+          filePath: file.filePath,
+          ...annotationRange(finding, file.added),
+        }));
     });
 
     /** @type {FindingDto[]} */
@@ -196,28 +196,31 @@ async function run(deps = {}) {
     let criticalCount = 0;
     let majorCount = 0;
     let minorCount = 0;
+    const annotationCounts = { error: 0, warning: 0, notice: 0 };
     for (const finding of findings) {
       const severity = (finding.severity || '').toLowerCase();
       if (severity === 'critical') criticalCount++;
       else if (severity === 'major') majorCount++;
       else if (severity === 'minor') minorCount++;
 
-      const body = [
-        finding.explanation || '',
-        `confidence: ${Math.round((finding.confidence || 0) * 100)}%`,
-      ]
-        .filter(Boolean)
-        .join('\n');
       const annotation = {
         file: finding.filePath,
-        startLine: finding.lineStart,
-        endLine: Math.max(finding.lineStart, finding.lineEnd || finding.lineStart),
+        startLine: finding.startLine,
+        endLine: finding.endLine,
         title: `${finding.antiPattern || 'Anti-pattern'} (${severity || 'unknown'})`,
       };
-      if (severity === 'critical') coreApi.error(body, annotation);
-      else if (severity === 'major') coreApi.warning(body, annotation);
-      else coreApi.notice(body, annotation);
+      const type = severity === 'critical' ? 'error' : severity === 'major' ? 'warning' : 'notice';
+      annotationCounts[type]++;
+      coreApi[type](annotationMessage(finding), annotation);
     }
+    for (const [type, count] of Object.entries(annotationCounts)) {
+      if (count > ANNOTATIONS_PER_TYPE) {
+        coreApi.warning(
+          `${count} ${type} annotations emitted; GitHub shows at most ${ANNOTATIONS_PER_TYPE} per type per step. See the job summary for all findings.`,
+        );
+      }
+    }
+    await writeSummary(coreApi, findings, score);
 
     coreApi.setOutput('quality-score', String(score));
     coreApi.setOutput('findings-count', String(findings.length));
@@ -268,6 +271,108 @@ function addedLineNumbers(patch) {
     }
   }
   return added;
+}
+
+/** Parses a non-negative decimal integer input; anything else becomes NaN. */
+function parseWholeNumber(raw) {
+  const text = String(raw).trim();
+  return /^\d+$/.test(text) ? Number(text) : Number.NaN;
+}
+
+/**
+ * Narrows a finding's range to the lines the PR added: first and last added
+ * line within lineStart..lineEnd, so annotations stay inside the diff.
+ */
+function annotationRange(finding, added) {
+  const start = finding.lineStart;
+  const end = Math.max(start, finding.lineEnd || start);
+  let first = null;
+  let last = null;
+  for (let line = start; line <= end; line++) {
+    if (added.has(line)) {
+      if (first === null) first = line;
+      last = line;
+    }
+  }
+  return first === null ? { startLine: start, endLine: end } : { startLine: first, endLine: last };
+}
+
+function trimmedText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** Annotation body: explanation, optional evidence/fix/caveat lines, confidence. */
+function annotationMessage(finding) {
+  const lines = [trimmedText(finding.explanation)];
+  for (const [label, value] of [
+    ['Evidence', finding.evidence],
+    ['Fix', finding.remediation],
+    ['Caveat', finding.caveat],
+  ]) {
+    const text = trimmedText(value);
+    if (text) lines.push(`${label}: ${text}`);
+  }
+  lines.push(`confidence: ${Math.round((finding.confidence || 0) * 100)}%`);
+  return lines.filter(Boolean).join('\n');
+}
+
+/**
+ * Makes untrusted text safe inside a markdown table cell: collapses newlines
+ * and encodes HTML and markdown metacharacters (including `|`) as entities.
+ */
+function summaryCell(value) {
+  return String(value ?? '')
+    .replace(/\r?\n|\r/g, ' ')
+    .replace(/[&<>"'|`*_~[\]()\\#!]/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
+/** Markdown job summary listing every finding (annotations are capped by GitHub). */
+function summaryMarkdown(findings, score) {
+  const lines = [
+    '## automated-code-review-tool',
+    '',
+    `Quality score (added lines): ${score}/100 — ${findings.length} finding(s).`,
+  ];
+  if (findings.length > 0) {
+    lines.push(
+      '',
+      '| Location | Severity | Rule | Confidence | Explanation | Remediation |',
+      '| --- | --- | --- | --- | --- | --- |',
+    );
+    for (const finding of findings) {
+      const cells = [
+        `${finding.filePath}:${finding.startLine ?? finding.lineStart}`,
+        finding.severity || 'unknown',
+        finding.antiPattern || 'Anti-pattern',
+        `${Math.round((finding.confidence || 0) * 100)}%`,
+        trimmedText(finding.explanation),
+        trimmedText(finding.remediation),
+      ];
+      lines.push(`| ${cells.map(summaryCell).join(' | ')} |`);
+    }
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/** Writes the job summary; failures (e.g. no GITHUB_STEP_SUMMARY locally) only warn. */
+async function writeSummary(coreApi, findings, score) {
+  if (!coreApi.summary || typeof coreApi.summary.addRaw !== 'function') return;
+  try {
+    await coreApi.summary.addRaw(summaryMarkdown(findings, score)).write();
+  } catch (err) {
+    coreApi.info(`Could not write job summary: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** Error text for a non-OK scan response; never includes the response body. */
+function httpErrorMessage(status, filePath) {
+  const prefix = `automated-code-review-tool API returned HTTP ${status} for ${filePath}`;
+  if (status === 401 || status === 403) return `${prefix}: API key rejected; check the api-key secret.`;
+  if (status === 429) {
+    return `${prefix}: rate limited; lower max-files or raise API_KEY_RPM on the server.`;
+  }
+  if (status === 413) return `${prefix}: request body too large for the API.`;
+  return prefix;
 }
 
 /** True when the finding's line range includes at least one added line. */
@@ -327,24 +432,27 @@ async function postScan(fetchApi, { apiUrl, apiKey, timeoutMs, body }) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchApi(`${apiUrl}/api/scan/file`, {
-      method: 'POST',
-      redirect: 'error',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(
-        `automated-code-review-tool API returned HTTP ${response.status} for ${body.filePath}`,
-      );
+    try {
+      const response = await fetchApi(`${apiUrl}/api/scan/file`, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(httpErrorMessage(response.status, body.filePath));
+      const result = await response.json();
+      return Array.isArray(result.findings) ? result.findings : [];
+    } catch (err) {
+      if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        throw new Error(`timed out after ${timeoutMs} ms scanning ${body.filePath}`);
+      }
+      throw err;
     }
-    const result = await response.json();
-    return Array.isArray(result.findings) ? result.findings : [];
   } finally {
     clearTimeout(timeoutId);
   }
@@ -392,9 +500,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
 
 export {
   addedLineNumbers,
+  annotationMessage,
+  annotationRange,
   dedupeFindings,
   languageForPath,
   qualityScore,
   run,
+  summaryCell,
+  summaryMarkdown,
   touchesAddedLines,
 };

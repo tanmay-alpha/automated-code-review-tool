@@ -19,7 +19,17 @@ threshold.
    a warning.
 3. Keeps only findings whose line range includes at least one line added by
    the PR, using the `@@ -a,b +c,d @@` hunk headers and `+` lines of the
-   file's patch, and annotates them on the real file and lines.
+   file's patch. Each annotation covers only the added lines inside the
+   finding's range (first to last added line), so it never lands outside the
+   PR diff. Critical findings are errors, major are warnings, others notices.
+4. The annotation message is the explanation, then `Evidence:`, `Fix:` and
+   `Caveat:` lines when the API provides them (older servers omit them), then
+   `confidence: NN%`. The title is `<antiPattern> (<severity>)`.
+5. Writes a job summary table of **all** findings (location, severity, rule,
+   confidence, explanation, remediation). Finding text is HTML-escaped and `|`
+   and newlines are neutralised so it cannot inject markdown or HTML. A summary
+   that cannot be written (e.g. no `GITHUB_STEP_SUMMARY` when run locally) is
+   logged and does not fail the action.
 
 ### Quality gate
 
@@ -40,6 +50,13 @@ count findings on unchanged lines.
 
 - Each scanned file is one API request; API keys are rate-limited (60
   requests per minute by default), so keep `max-files` below that.
+- GitHub shows at most 10 annotations of each type per step (50 per job);
+  extra findings are dropped from the diff view. The action logs a warning
+  when a type exceeds 10; read the job summary for the complete list.
+- API errors: 401/403 means the API key was rejected (check the secret);
+  429 means rate limited (lower `max-files` or raise `API_KEY_RPM` on the
+  server); 413 means the request body is too large. A request that exceeds
+  `fetch-timeout-ms` fails with `timed out after N ms scanning <file>`.
 - GitHub omits the `patch` for very large diffs and lists at most 3,000 files
   per pull request; such files are not scanned.
 
@@ -89,6 +106,9 @@ secret-bearing `pull_request_target` job.
 | `fail-threshold` | no | `60` | Minimum accepted quality score, from 0 to 100. |
 | `fetch-timeout-ms` | no | `30000` | Timeout for each GitHub and API request, from 1000 to 300000 ms. |
 | `max-files` | no | `50` | Maximum number of changed files to scan, from 1 to 3000. |
+
+Numeric inputs must be plain non-negative integers (`^\d+$`); values such as
+`60abc`, `1e3` or `6.5` are rejected.
 
 ## Outputs
 
