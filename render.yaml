@@ -78,12 +78,31 @@ services:
           type: web
           name: automated-code-review-tool-ml-worker
           envVarKey: ML_WORKER_SECRET
+      # The browser reaches the API only through the dashboard's same-origin
+      # proxy (onrender.com is a public suffix, so separate *.onrender.com
+      # services are cross-site and SameSite=Lax cookies would never be sent).
+      # Set both to the dashboard's public origin, e.g.
+      # https://automated-code-review-tool-web.onrender.com (or your custom
+      # domain), and set the GitHub OAuth App callback to
+      # <that origin>/api/auth/callback. Render offers no Blueprint reference
+      # to another service's public URL, so these are entered once by hand.
       - key: APP_BASE_URL
         sync: false
       - key: FRONTEND_URL
         sync: false
+      # Optional comma-separated extra dashboard origins (e.g. a custom domain
+      # plus the onrender.com host). Empty means FRONTEND_URL only.
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # GitHub webhooks (and API-key clients: VS Code, GitHub Action) call the
+      # API's own public URL, so webhook delivery does not depend on the
+      # dashboard: https://<api host>/api/webhook/github
       - key: WEBHOOK_CALLBACK_URL
         sync: false
+      # Default "read:user repo" keeps private repositories working; public-only
+      # deployments can narrow it to "public_repo admin:repo_hook".
+      - key: GITHUB_OAUTH_SCOPES
+        value: read:user repo
       - key: GITHUB_CLIENT_ID
         sync: false
       - key: GITHUB_CLIENT_SECRET
@@ -117,6 +136,10 @@ services:
       # `next start` honours PORT; keep it on the port the image exposes.
       - key: PORT
         value: "3000"
-      # NEXT_PUBLIC_* is embedded in the browser bundle during the Docker build.
-      - key: NEXT_PUBLIC_API_BASE_URL
-        sync: false
+      # Same-origin API proxy target (server-side, read per request): the API's
+      # private-network host:port. The browser never sees this address.
+      - key: API_INTERNAL_URL
+        fromService:
+          type: web
+          name: automated-code-review-tool-api
+          property: hostport
