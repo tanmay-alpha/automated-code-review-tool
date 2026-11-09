@@ -39,8 +39,27 @@ class Finding(BaseModel):
     antiPattern: str = Field(..., description="Machine-readable anti-pattern ID, e.g. PERFORMANCE_N_PLUS_1")
     category: str = Field(..., description="High-level category, e.g. PERFORMANCE")
     severity: Literal["critical", "major", "minor"]
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Model sigmoid confidence")
-    explanation: str = Field(..., description="Human-readable explanation of the issue")
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Model: max-over-windows sigmoid probability. Rules: a fixed per-rule "
+            "prior, not measured precision."
+        ),
+    )
+    explanation: str = Field(..., description="Why this anti-pattern matters")
+    evidence: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Triggering added line, secret-redacted (rule findings only)",
+    )
+    remediation: str | None = Field(
+        default=None, max_length=300, description="How to fix it"
+    )
+    caveat: str | None = Field(
+        default=None, max_length=300, description="When the finding may not apply"
+    )
 
 
 # ----------------------------------------------------------------------

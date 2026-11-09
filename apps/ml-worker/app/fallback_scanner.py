@@ -6,13 +6,16 @@ import re
 from dataclasses import dataclass
 
 from app.diff_parser import DiffLine, FileHunk, code_hunks
+from app.finding_guidance import evidence_from_line, guidance_for, validate_guidance
 from app.model import compute_quality_score
 from app.schemas import Finding, ReviewResponse
+from app.secret_redaction import REDACTED
 from app.taxonomy import AntiPattern, Taxonomy, load_taxonomy
 
+# Groups: 1 = name, separator and opening quote; 2 = value; 3 = closing quote.
 _SECRET_RE = re.compile(
-    r"(?i)(api_key|api_token|apikey|secret_key|private_key|access_key|"
-    r"auth_token|password)\s*[=:]\s*['\"][A-Za-z0-9_+/=\-]{16,}['\"]"
+    r"(?i)((?:api_key|api_token|apikey|secret_key|private_key|access_key|"
+    r"auth_token|password)\s*[=:]\s*['\"])([A-Za-z0-9_+/=\-]{16,})(['\"])"
 )
 # Match the call once, then inspect its suffix once; a trailing wildcard in an
 # unanchored search rescanned the whole line for every repeated query opener.
@@ -91,6 +94,8 @@ class RuleHit:
     anti_pattern_id: str
     line_start: int
     line_end: int
+    # The added line that triggered the rule (raw; redacted when reported).
+    evidence: str
 
 
 # Fixed per-rule confidence. These are hand-set priors, not measured precision.
@@ -113,7 +118,17 @@ def _taxonomy_rules(taxonomy: Taxonomy) -> dict[str, AntiPattern]:
     unknown = sorted(set(_CONFIDENCE) - set(by_id))
     if unknown:
         raise RuntimeError(f"Fallback rules reference unknown taxonomy IDs: {unknown}")
+    validate_guidance(taxonomy)
+    uncaveated = sorted(rule for rule in _CONFIDENCE if guidance_for(rule).rule_caveat is None)
+    if uncaveated:
+        raise RuntimeError(f"Fallback rules without a caveat: {uncaveated}")
     return by_id
+
+
+def _evidence(hit: RuleHit) -> str:
+    # The rule's own secret match is masked as well as the shared redaction,
+    # so the value that triggered a secret finding is never echoed back.
+    return evidence_from_line(_SECRET_RE.sub(rf"\1{REDACTED}\3", hit.evidence))
 
 
 def _line_number(line: DiffLine, default: int) -> int:
@@ -128,28 +143,28 @@ def _scan_hunk(hunk: FileHunk) -> list[RuleHit]:
         text = diff_line.text
         line_no = _line_number(diff_line, hunk.new_start)
         if _SECRET_RE.search(text):
-            hits.append(RuleHit("SECURITY_HARDCODED_SECRET", line_no, line_no))
+            hits.append(RuleHit("SECURITY_HARDCODED_SECRET", line_no, line_no, text))
         if _has_sql_concatenation(text):
-            hits.append(RuleHit("SECURITY_SQL_INJECTION", line_no, line_no))
+            hits.append(RuleHit("SECURITY_SQL_INJECTION", line_no, line_no, text))
         if _WEAK_CRYPTO_RE.search(text):
-            hits.append(RuleHit("SECURITY_WEAK_CRYPTO", line_no, line_no))
+            hits.append(RuleHit("SECURITY_WEAK_CRYPTO", line_no, line_no, text))
         if _BROAD_EXC_RE.search(text) or (
             hunk.language in {"java", "csharp"} and _JAVA_CATCH_RE.search(text)
         ):
-            hits.append(RuleHit("RELIABILITY_BROAD_EXCEPTION", line_no, line_no))
+            hits.append(RuleHit("RELIABILITY_BROAD_EXCEPTION", line_no, line_no, text))
         if _PRINT_RE.search(text):
-            hits.append(RuleHit("MAINTAINABILITY_PRINT_STATEMENT", line_no, line_no))
+            hits.append(RuleHit("MAINTAINABILITY_PRINT_STATEMENT", line_no, line_no, text))
         if len(text.rstrip()) > 200:
-            hits.append(RuleHit("READABILITY_LONG_METHOD", line_no, line_no))
+            hits.append(RuleHit("READABILITY_LONG_METHOD", line_no, line_no, text))
         if _MAGIC_NUMBER_RE.search(text) and not _is_constant_definition(text):
-            hits.append(RuleHit("READABILITY_MAGIC_NUMBER", line_no, line_no))
+            hits.append(RuleHit("READABILITY_MAGIC_NUMBER", line_no, line_no, text))
 
         if _QUERY_RE.search(text):
             recent = lines[max(0, index - 5) : index]
             loop_line = next((item for item in reversed(recent) if _LOOP_RE.match(item.text)), None)
             if loop_line is not None:
                 start = _line_number(loop_line, line_no)
-                hits.append(RuleHit("PERFORMANCE_N_PLUS_ONE", start, line_no))
+                hits.append(RuleHit("PERFORMANCE_N_PLUS_ONE", start, line_no, text))
 
     for index, line in enumerate(lines):
         if not _LOOP_RE.match(line.text):
@@ -165,7 +180,7 @@ def _scan_hunk(hunk: FileHunk) -> list[RuleHit]:
             if _LOOP_RE.match(nested.text):
                 start = _line_number(line, hunk.new_start)
                 end = _line_number(nested, start)
-                hits.append(RuleHit("PERFORMANCE_QUADRATIC_LOOP", start, end))
+                hits.append(RuleHit("PERFORMANCE_QUADRATIC_LOOP", start, end, nested.text))
                 break
 
     # Group comment lines directly instead of a nested repetition whose
@@ -185,6 +200,7 @@ def _scan_hunk(hunk: FileHunk) -> list[RuleHit]:
                         "MAINTAINABILITY_COMMENTED_CODE",
                         _line_number(lines[block_start], hunk.new_start),
                         _line_number(lines[index - 1], hunk.new_start),
+                        lines[block_start].text,
                     )
                 )
             block_start = None
@@ -236,6 +252,7 @@ def fallback_findings(
     for hunk in hunks:
         for hit in _scan_hunk(hunk):
             anti_pattern = metadata[hit.anti_pattern_id]
+            guidance = guidance_for(hit.anti_pattern_id)
             findings.append(
                 Finding(
                     filePath=hunk.file_path,
@@ -246,7 +263,10 @@ def fallback_findings(
                     category=anti_pattern.category,
                     severity=anti_pattern.default_severity,
                     confidence=_CONFIDENCE[hit.anti_pattern_id],
-                    explanation=anti_pattern.explanation,
+                    explanation=guidance.explanation,
+                    evidence=_evidence(hit),
+                    remediation=guidance.remediation,
+                    caveat=guidance.rule_caveat,
                 )
             )
     return findings, max(1, len(hunks)), taxonomy.version

@@ -1,0 +1,27 @@
+{
+  "description": "Example POST /ml/review response from the rule engine. Every rule finding carries explanation, evidence (triggering added line, secret-redacted, <=200 chars), remediation (<=300) and caveat (<=300). Model findings may omit evidence. Shared by the Python schema test and the Java MlFinding deserialization test.",
+  "response": {
+    "findings": [
+      {
+        "filePath": "app/settings.py",
+        "hunkHash": "4f0b5d2c1e8a7b6c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "antiPattern": "SECURITY_HARDCODED_SECRET",
+        "category": "SECURITY",
+        "severity": "critical",
+        "confidence": 0.7,
+        "explanation": "A credential in source code is readable by everyone with repository access, stays in Git history after it is deleted, and cannot be rotated without a code change.",
+        "evidence": "SECRET_KEY = \"<REDACTED_SECRET>\"",
+        "remediation": "Load the value from an environment variable or a secrets manager, rotate the exposed credential, and purge it from history if it was pushed.",
+        "caveat": "Matched on a credential-like name assigned a long quoted literal; fake test values and public identifiers can also match."
+      }
+    ],
+    "qualityScore": 86.0,
+    "processingTimeMs": 4,
+    "windowsProcessed": 1,
+    "engine": "fallback",
+    "modelVersion": "rule-baseline-v1",
+    "taxonomyVersion": "1.0.0"
+  }
+}

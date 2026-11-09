@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.fallback_scanner import fallback_findings
+from app.finding_guidance import EVIDENCE_MAX_CHARS, GUIDANCE, GUIDANCE_MAX_CHARS
 from app.taxonomy import load_taxonomy
 
 
@@ -39,7 +40,7 @@ def test_named_constant_is_not_a_magic_number() -> None:
     assert "READABILITY_MAGIC_NUMBER" in _ids(_diff("a.py", "if retries > 50:"))
 
 
-def test_findings_are_localized_and_use_full_taxonomy_text() -> None:
+def test_findings_are_localized_and_carry_reviewer_guidance() -> None:
     findings, hunks, version = fallback_findings(_diff("svc.py", "x = 1", "print(x)"))
     assert hunks == 1
     assert version == load_taxonomy().version
@@ -47,8 +48,93 @@ def test_findings_are_localized_and_use_full_taxonomy_text() -> None:
     assert finding.antiPattern == "MAINTAINABILITY_PRINT_STATEMENT"
     assert finding.filePath == "svc.py"
     assert (finding.lineStart, finding.lineEnd) == (2, 2)
-    expected = next(e for e in load_taxonomy().entries if e.id == finding.antiPattern)
-    assert finding.explanation == " ".join(expected.description.split())
+    guidance = GUIDANCE[finding.antiPattern]
+    assert finding.explanation == guidance.explanation
+    assert finding.remediation == guidance.remediation
+    assert finding.caveat == guidance.rule_caveat
+    assert finding.evidence == "print(x)"
+
+
+_EVERY_RULE_DIFF = (
+    _diff(
+        "svc.py",
+        'password = "Zx9vQ2mL7pR4tY8wK3nB"',
+        'cursor.execute("SELECT * FROM t WHERE id = " + uid)',
+        "digest = hashlib.md5(data).hexdigest()",
+        "for uid in ids:",
+        "    for other in ids:",
+        "        db.execute(sql, (uid,))",
+        "try:",
+        "    run()",
+        "except Exception:",
+        "    pass",
+        "if retries > 50:",
+        "    print(retries)",
+        "x = " + "a + " * 60 + "a",
+        "# def total(items):",
+        "#     subtotal = sum(items)",
+        "#     return subtotal",
+        "",
+    )
+    + _diff("Client.java", "HttpClient client = HttpClient.newHttpClient();")
+)
+
+
+def test_every_rule_finding_populates_all_guidance_fields() -> None:
+    findings, _, _ = fallback_findings(_EVERY_RULE_DIFF)
+    rule_ids = {finding.antiPattern for finding in findings}
+    # Every rule implemented by the scanner fires on the fixture above.
+    assert rule_ids == {
+        "SECURITY_HARDCODED_SECRET",
+        "SECURITY_SQL_INJECTION",
+        "SECURITY_WEAK_CRYPTO",
+        "PERFORMANCE_N_PLUS_ONE",
+        "PERFORMANCE_QUADRATIC_LOOP",
+        "RELIABILITY_BROAD_EXCEPTION",
+        "READABILITY_MAGIC_NUMBER",
+        "READABILITY_LONG_METHOD",
+        "MAINTAINABILITY_COMMENTED_CODE",
+        "MAINTAINABILITY_PRINT_STATEMENT",
+    }
+    for finding in findings:
+        payload = finding.model_dump()
+        for field in ("explanation", "evidence", "remediation", "caveat"):
+            value = payload[field]
+            assert isinstance(value, str) and value.strip(), (finding.antiPattern, field)
+        assert len(payload["evidence"]) <= EVIDENCE_MAX_CHARS
+        assert len(payload["remediation"]) <= GUIDANCE_MAX_CHARS
+        assert len(payload["caveat"]) <= GUIDANCE_MAX_CHARS
+
+
+def test_evidence_is_the_triggering_added_line() -> None:
+    findings, _, _ = fallback_findings(_EVERY_RULE_DIFF)
+    by_rule = {finding.antiPattern: finding for finding in findings}
+    assert by_rule["SECURITY_WEAK_CRYPTO"].evidence == "digest = hashlib.md5(data).hexdigest()"
+    assert by_rule["PERFORMANCE_N_PLUS_ONE"].evidence == "db.execute(sql, (uid,))"
+    assert by_rule["PERFORMANCE_QUADRATIC_LOOP"].evidence == "for other in ids:"
+    assert by_rule["MAINTAINABILITY_COMMENTED_CODE"].evidence == "# def total(items):"
+    long_line = by_rule["READABILITY_LONG_METHOD"].evidence
+    assert long_line is not None
+    assert len(long_line) == EVIDENCE_MAX_CHARS and long_line.endswith("…")
+
+
+def test_secret_evidence_never_echoes_the_value() -> None:
+    for name in ("password", "api_key", "secret_key", "private_key", "myapi_key", "auth_token"):
+        value = "Zx9vQ2mL7pR4tY8wK3nB"
+        findings, _, _ = fallback_findings(_diff("a.py", f'{name} = "{value}"'))
+        [finding] = [f for f in findings if f.antiPattern == "SECURITY_HARDCODED_SECRET"]
+        assert finding.evidence is not None
+        assert value not in finding.evidence, name
+        assert "<REDACTED_SECRET>" in finding.evidence
+
+
+def test_guidance_covers_the_whole_taxonomy() -> None:
+    assert set(GUIDANCE) == set(load_taxonomy().ids())
+    for anti_pattern, guidance in GUIDANCE.items():
+        assert guidance.explanation.strip(), anti_pattern
+        assert 0 < len(guidance.remediation) <= GUIDANCE_MAX_CHARS, anti_pattern
+        if guidance.rule_caveat is not None:
+            assert 0 < len(guidance.rule_caveat) <= GUIDANCE_MAX_CHARS, anti_pattern
 
 
 def test_dict_get_in_loop_is_not_n_plus_one() -> None:

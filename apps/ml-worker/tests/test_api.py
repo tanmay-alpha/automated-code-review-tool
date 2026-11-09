@@ -200,6 +200,10 @@ def test_model_failure_degrades_to_localized_fallback(client: TestClient):
     assert body["modelVersion"] == "rule-baseline-v1"
     assert body["findings"][0]["filePath"] == "demo.py"
     assert len(body["findings"][0]["hunkHash"]) == 64
+    finding = body["findings"][0]
+    assert finding["evidence"] == "print('debug')"
+    for field in ("explanation", "remediation", "caveat"):
+        assert isinstance(finding[field], str) and finding[field], field
 
 
 def test_model_timeout_degrades_to_fallback(
@@ -269,3 +273,32 @@ def test_quality_score_rounds_half_up_and_defaults_unknown_severity_to_minor():
     assert compute_quality_score([SimpleNamespace(severity="minor", confidence=0.005)]) == 99.99
     assert compute_quality_score([SimpleNamespace(severity="blocker", confidence=1.0)]) == 97.0
     assert compute_quality_score([SimpleNamespace(severity="CRITICAL", confidence=1.5)]) == 80.0
+
+
+def test_review_response_contract_example_matches_rule_output():
+    """The shared example the Java side deserializes is what the rules emit."""
+    from app.fallback_scanner import fallback_scan
+    from app.schemas import ReviewResponse
+
+    fixture = Path(__file__).resolve().parents[3] / "contracts" / "ml_review_response_example.json"
+    example = ReviewResponse.model_validate(
+        json.loads(fixture.read_text(encoding="utf-8"))["response"]
+    )
+    diff = (
+        "diff --git a/app/settings.py b/app/settings.py\n"
+        "@@ -0,0 +1,3 @@\n"
+        "+import os\n"
+        "+\n"
+        '+SECRET_KEY = "Zx9vQ2mL7pR4tY8wK3nB"\n'
+    )
+    actual = fallback_scan(diff, "python")
+    assert (actual.engine, actual.modelVersion, actual.qualityScore) == (
+        example.engine,
+        example.modelVersion,
+        example.qualityScore,
+    )
+    [expected_finding] = example.findings
+    [actual_finding] = actual.findings
+    assert actual_finding.model_dump(exclude={"hunkHash"}) == expected_finding.model_dump(
+        exclude={"hunkHash"}
+    )
