@@ -92,10 +92,13 @@ a PR diff (Markdown, config, etc.) are skipped.
 | GET/POST/DELETE | `/api/auth/api-keys[/{id}]` | JWT |
 | GET/POST/DELETE | `/api/repos`, `/api/repos/connect`, `/api/repos/{id}` | JWT, owner-scoped |
 | GET | `/api/repos/{id}/prs` | JWT, owner-scoped, paginated |
+| GET/PUT | `/api/repos/{id}/settings` | JWT, owner-scoped (enabled rules, min severity/confidence, comment flags, languages) |
 | GET | `/api/reviews/{prId}` | JWT, owner-scoped |
 | GET | `/api/metrics/quality-trend?repo=&days=` | JWT, owner-scoped |
+| GET | `/api/metrics/finding-summary?repo=&days=` | JWT, owner-scoped (triage outcome per rule, findings per engine) |
+| GET | `/api/diagnostics` | JWT (dependency health; queue depth for the caller's repos) |
 | POST | `/api/scan/file` | API key (`Authorization: Bearer <key>`) or JWT |
-| POST | `/api/scan/action` | JWT (accept/dismiss a finding) |
+| POST | `/api/scan/action` | JWT, owner-scoped (`accept`/`dismiss`/`fix`/`false_positive`/`reopen`; `reason` required for dismiss and false_positive) |
 | POST | `/api/webhook/github` | HMAC-SHA256 signature |
 
 ## Design decisions worth discussing
