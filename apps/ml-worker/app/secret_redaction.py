@@ -113,9 +113,11 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # JWT (3-segment base64url)
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")),
     # Generic password / token assignment: 'password = "..."', 'api_key: "..."'.
-    # The key may carry a prefix such as DB_PASSWORD or client_secret.
+    # The key may carry a prefix such as DB_PASSWORD or client_secret, and
+    # SECRET_KEY / private_key are matched whole because "_key" otherwise ends
+    # the name before the separator.
     ("generic", re.compile(
-        r"(?i)(?<![A-Za-z0-9])(password|passwd|pwd|secret|api[_\-]?key|access[_\-]?key|auth[_\-]?token|token|bearer)(\s*[:=]\s*)([\"'])([^\"'\n]{4,})\3"
+        r"(?i)(?<![A-Za-z0-9])(password|passwd|pwd|secret(?:[_\-]?key)?|private[_\-]?key|api[_\-]?key|access[_\-]?key|auth[_\-]?token|token|bearer)(\s*[:=]\s*)([\"'])([^\"'\n]{4,})\3"
     )),
     # Cookie: session=...
     ("cookie", re.compile(r"(?i)\b(session|sess|auth)_?(?:id|token)?\s*=\s*[A-Za-z0-9_\-=]{12,}")),
