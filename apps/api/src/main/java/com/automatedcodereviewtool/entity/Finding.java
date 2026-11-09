@@ -79,15 +79,25 @@ public class Finding {
     private String taxonomyVersion;
 
     /**
-     * User disposition: {@code "open"}, {@code "accepted"},
-     * {@code "dismissed"}, {@code "fixed"}.
+     * Triage state: {@code "open"}, {@code "accepted"}, {@code "dismissed"},
+     * {@code "fixed"} or {@code "false_positive"} (the {@code chk_finding_status}
+     * CHECK constraint). Written by {@code POST /api/scan/action}.
      */
     @Column(name = "status", nullable = false)
     @Builder.Default
     private String status = "open";
 
-    @Column(name = "disposition_at")
-    private Instant dispositionAt;
+    /** Trimmed reviewer reason for the latest triage action; required for dismiss and false_positive. */
+    @Column(name = "triage_reason", length = 500)
+    private String triageReason;
+
+    /** Time of the latest triage action, including reopen. */
+    @Column(name = "triaged_at")
+    private Instant triagedAt;
+
+    /** {@code users.id} of whoever performed the latest triage action. */
+    @Column(name = "triaged_by")
+    private UUID triagedBy;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

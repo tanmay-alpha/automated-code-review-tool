@@ -7,9 +7,8 @@ import com.automatedcodereviewtool.dto.request.ScanFileRequest;
 import com.automatedcodereviewtool.dto.response.FindingActionResponse;
 import com.automatedcodereviewtool.dto.response.ScanFileResponse;
 import com.automatedcodereviewtool.entity.Finding;
-import com.automatedcodereviewtool.entity.PullRequestEntity;
-import com.automatedcodereviewtool.entity.Repository;
 import com.automatedcodereviewtool.entity.User;
+import com.automatedcodereviewtool.exception.InvalidRequestException;
 import com.automatedcodereviewtool.repository.FindingRepository;
 import com.automatedcodereviewtool.service.MlWorkerService;
 import jakarta.persistence.EntityNotFoundException;
@@ -29,7 +28,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.UUID;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Ad-hoc / on-demand review endpoints — distinct from the PR-driven webhook flow.
@@ -38,8 +38,8 @@ import java.util.UUID;
  *   <li>{@code POST /api/scan/file} — scan one file's contents and return
  *       findings + a quality score. <b>Nothing is persisted.</b> Accepts a
  *       JWT or an API key.</li>
- *   <li>{@code POST /api/scan/action} — record a developer's disposition
- *       (accept / dismiss / fix) on an existing PR finding. JWT only.</li>
+ *   <li>{@code POST /api/scan/action} — triage an existing PR finding
+ *       (accept / dismiss / fix / false_positive / reopen). JWT only.</li>
  * </ul>
  */
 @RestController
@@ -48,11 +48,18 @@ public class ScanController {
 
     private static final Logger log = LoggerFactory.getLogger(ScanController.class);
 
-    /** Request verb → value allowed by the {@code findings.status} CHECK constraint. */
+    /** Request verb → value allowed by the {@code findings.status} CHECK constraint (V19). */
     private static final Map<String, String> STATUS_BY_ACTION = Map.of(
             "accept", "accepted",
             "dismiss", "dismissed",
-            "fix", "fixed");
+            "fix", "fixed",
+            "false_positive", "false_positive",
+            "reopen", "open");
+
+    /** Actions that must be justified: they suppress a finding without fixing it. */
+    private static final Set<String> REASON_REQUIRED = Set.of("dismiss", "false_positive");
+
+    static final int MAX_REASON_CHARS = 500;
 
     private final MlWorkerService mlWorkerService;
     private final FindingRepository findingRepository;
@@ -86,69 +93,56 @@ public class ScanController {
     /**
      * POST /api/scan/action
      *
-     * <p>Records a developer disposition on a finding: sets {@code status}
-     * ({@code accepted} / {@code dismissed} / {@code fixed}) and
-     * {@code disposition_at}.</p>
+     * <p>Records a triage decision: sets {@code status}, {@code triage_reason}
+     * (trimmed, ≤ 500 chars; required for {@code dismiss} and
+     * {@code false_positive}), {@code triaged_at} and {@code triaged_by}.
+     * Every action, including {@code reopen}, overwrites the previous
+     * decision, so the row always describes the latest one.</p>
      *
      * <p><b>Authorization:</b> the finding must belong to a repository
-     * owned by the authenticated user. If the user does not own the
-     * repository that owns the PR that owns the finding, we return 404
-     * (not 403) to avoid leaking the existence of findings the caller
-     * does not have permission to inspect.</p>
+     * owned by the authenticated user. Missing and foreign findings both
+     * return 404 (not 403) so the existence of out-of-scope findings is
+     * not revealed.</p>
      *
-     * @return 200 with the applied action; 404 if finding not found or
-     *         not owned by caller; 400 if action verb is unrecognized.
+     * @return 200 with the new triage state; 404 if the finding is not found
+     *         or not owned by the caller; 400 for an unknown action or a
+     *         missing/oversized reason.
      */
-    // The ownership check walks lazy finding -> PR -> repo -> owner
-    // associations, so the load, check, and update share one transaction
-    // instead of relying on open-in-view.
     @PostMapping("/action")
     @Transactional
     public ResponseEntity<FindingActionResponse> recordAction(
             @Valid @RequestBody FindingActionRequest req,
             @AuthenticationPrincipal User caller) {
 
-        String action = req.action().toLowerCase(Locale.ROOT);
+        String action = req.action().trim().toLowerCase(Locale.ROOT);
         String status = STATUS_BY_ACTION.get(action);
         if (status == null) {
-            throw new IllegalArgumentException(
-                    "Invalid action '" + req.action() + "' — expected one of " + STATUS_BY_ACTION.keySet());
+            throw new InvalidRequestException(
+                    "action: must be one of " + new TreeSet<>(STATUS_BY_ACTION.keySet()));
+        }
+        String reason = req.reason() == null || req.reason().isBlank() ? null : req.reason().trim();
+        if (reason == null && REASON_REQUIRED.contains(action)) {
+            throw new InvalidRequestException("reason: is required for action '" + action + "'");
+        }
+        if (reason != null && reason.length() > MAX_REASON_CHARS) {
+            throw new InvalidRequestException("reason: must be at most " + MAX_REASON_CHARS + " characters");
         }
 
-        Finding finding = findingRepository.findById(req.findingId())
+        Finding finding = findingRepository.findOwnedById(req.findingId(), caller.getId())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "Finding " + req.findingId() + " not found"));
 
-        // Ownership check: the finding -> PR -> repo must belong to the caller.
-        // Use 404 (not 403) so we don't reveal the existence of out-of-scope findings.
-        if (!isOwnedBy(finding, caller)) {
-            throw new EntityNotFoundException(
-                    "Finding " + req.findingId() + " not found");
-        }
-
+        Instant now = Instant.now();
         finding.setStatus(status);
-        finding.setDispositionAt(Instant.now());
+        finding.setTriageReason(reason);
+        finding.setTriagedAt(now);
+        finding.setTriagedBy(caller.getId());
         findingRepository.save(finding);
 
-        log.info("Finding {} disposition={} (actor={})",
-                finding.getId(), action, caller == null ? "?" : caller.getGithubUsername());
+        log.info("Finding {} triaged: action={} status={} (actor={})",
+                finding.getId(), action, status, caller.getGithubUsername());
 
         return ResponseEntity.ok(new FindingActionResponse(
-                finding.getId(), action, finding.getStatus()));
-    }
-
-    /**
-     * Returns true when the finding's PR's repository is owned by the
-     * caller (compared by user id). Treats unauthenticated callers
-     * as non-owners (defence in depth — the filter chain should already
-     * have rejected them).
-     */
-    private static boolean isOwnedBy(Finding finding, User caller) {
-        if (caller == null || caller.getId() == null) return false;
-        PullRequestEntity pr = finding.getPullRequest();
-        if (pr == null) return false;
-        Repository repo = pr.getRepo();
-        if (repo == null || repo.getOwner() == null || repo.getOwner().getId() == null) return false;
-        return caller.getId().equals(repo.getOwner().getId());
+                finding.getId(), status, reason, now, caller.getGithubUsername()));
     }
 }
