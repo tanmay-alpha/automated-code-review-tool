@@ -183,6 +183,7 @@ def validate_dataset_dir(dataset_dir: Path) -> dict[str, Any]:
         "language_distribution": dict(sorted(language_distribution.items())),
         "exact_duplicate_pairs": sum(pair.kind == "exact" for pair in duplicate_pairs),
         "near_duplicate_pairs": sum(pair.kind == "near" for pair in duplicate_pairs),
+        "added_code_duplicate_pairs": sum(pair.kind == "added_code" for pair in duplicate_pairs),
         "synthetic": manifest.synthetic,
         "frozen": manifest.frozen,
     }

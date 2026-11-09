@@ -76,6 +76,39 @@ def test_exact_duplicates_are_grouped_before_split() -> None:
     assert any(pair.kind == "exact" for pair in pairs)
 
 
+def test_identical_added_code_in_different_contexts_shares_a_split() -> None:
+    # Same change pasted into two PRs: context differs, so hunk-level exact and
+    # shingle signals miss it, but the model would see the defect in both splits.
+    added = "secret_token = load_token(user_id, scope='admin')"
+    records = [
+        _record(
+            "left",
+            raw_hunk=f"@@ -1,3 +1,3 @@\n import os\n-old_a()\n+{added}\n alpha_context_one()",
+            added_code=added,
+        ),
+        _record(
+            "right",
+            raw_hunk=f"@@ -90,3 +90,3 @@\n from svc import x\n-legacy_b()\n+{added}\n beta_context_two(9)",
+            added_code=added,
+        ),
+    ] + [_record(str(index)) for index in range(6)]
+    sample_splits, _, pairs = build_split_plan(records, seed=3)
+    assert sample_splits["left"] == sample_splits["right"]
+    assert [pair.kind for pair in pairs if {pair.left_sample_id, pair.right_sample_id} == {"left", "right"}] == [
+        "added_code"
+    ]
+
+
+def test_short_identical_added_code_does_not_merge_groups() -> None:
+    records = [
+        _record("left", added_code="return None"),
+        _record("right", added_code="return None"),
+    ]
+    components, pairs = duplicate_components(records)
+    assert components["left"] != components["right"]
+    assert pairs == []
+
+
 def test_artifact_manifest_is_reproducible(tmp_path: Path) -> None:
     records = [_record(str(index)) for index in range(1, 5)]
     common = {
