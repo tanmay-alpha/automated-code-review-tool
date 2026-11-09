@@ -1,0 +1,31 @@
+diff --git a/app/sync/customers.py b/app/sync/customers.py
+index 2222222..3333333 100644
+--- a/app/sync/customers.py
++++ b/app/sync/customers.py
+@@ -1,6 +1,26 @@
+ import threading
++
++import requests
+ 
+ from app.models import Customer
+ 
+ _cache = {}
+ _lock = threading.Lock()
++
++
++def sync_orders(orders):
++    for order in orders:
++        customer = Customer.objects.get(id=order.customer_id)
++        resp = requests.post("https://crm.example.com/api/sync", json={"id": customer.id})
++        if resp.status_code != 200:
++            raise RuntimeError("sync failed")
++
++
++def cached_score(key, compute):
++    if key not in _cache:
++        _cache[key] = compute(key)
++    return _cache[key]
++
++
++def chunk(items):
++    return [items[i : i + 250] for i in range(0, len(items), 250)]

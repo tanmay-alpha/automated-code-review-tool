@@ -1,0 +1,28 @@
+diff --git a/src/integrations/billing.ts b/src/integrations/billing.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/integrations/billing.ts
+@@ -0,0 +1,22 @@
++const apiKey = "sk_live_51HxQe2LkT9vYw8RmZpA4bC";
++
++export interface Invoice { id: string; lines?: { amount: number }[] }
++
++// console.log(apiKey) was used while debugging; keep it out.
++export async function fetchInvoice(id: string): Promise<number> {
++  const res = await fetch(`https://billing.example.com/invoices/${id}`, {
++    headers: { Authorization: `Bearer ${apiKey}` },
++  });
++  const invoice = (await res.json()) as Invoice;
++  return invoice.lines!.reduce((sum, line) => sum + line.amount, 0);
++}
++
++export function matchPayments(invoices: Invoice[], payments: { invoiceId: string }[]): string[] {
++  const matched: string[] = [];
++  for (const invoice of invoices) {
++    for (const payment of payments) {
++      if (payment.invoiceId === invoice.id) matched.push(invoice.id);
++    }
++  }
++  return matched;
++}

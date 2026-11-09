@@ -1,0 +1,22 @@
+id: dev-12-py-cli-and-long-statement
+title: Python CLI that legitimately prints, plus a very long statement and a long URL constant
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: READABILITY_LONG_METHOD
+  file: app/notifications.py
+  lines: [5, 5]
+  severity: minor
+  note: One statement builds the whole message.
+negatives:
+- antiPattern: MAINTAINABILITY_PRINT_STATEMENT
+  file: scripts/export_users.py
+  lines: [14, 14]
+  reason: CLI status output to stderr is the program's interface.
+- antiPattern: PERFORMANCE_N_PLUS_ONE
+  file: scripts/export_users.py
+  lines: [12, 12]
+  reason: One query streamed by the loop, not one per iteration.
+- antiPattern: READABILITY_LONG_METHOD
+  file: app/notifications.py
+  lines: [8, 8]
+  reason: Length is a single URL literal.

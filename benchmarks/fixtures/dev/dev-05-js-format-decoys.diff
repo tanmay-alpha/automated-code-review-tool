@@ -1,0 +1,53 @@
+diff --git a/src/utils/format.js b/src/utils/format.js
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/utils/format.js
+@@ -0,0 +1,23 @@
++/*
++ * Formatting helpers.
++ * console.log(formatBytes(1024)) prints "1.0 KB".
++ */
++const UNITS = ["B", "KB", "MB", "GB"];
++const KIBI = 1024;
++
++export function formatBytes(bytes) {
++  let value = bytes;
++  let unit = 0;
++  while (value >= KIBI && unit < UNITS.length - 1) {
++    value /= KIBI;
++    unit += 1;
++  }
++  return `${value.toFixed(1)} ${UNITS[unit]}`;
++}
++
++export function describeError() {
++  return "Request failed with status 500; retry after 30 seconds";
++}
++
++// md5(...) is not used here; hashing lives in the server.
++export const CHECKSUM_HELP = "Run md5(file) to compare downloads";
+diff --git a/tests/format.test.js b/tests/format.test.js
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/tests/format.test.js
+@@ -0,0 +1,7 @@
++import { formatBytes } from "../src/utils/format";
++
++test("formats kilobytes", () => {
++  console.log("running format test");
++  expect(formatBytes(2048)).toBe("2.0 KB");
++  expect(formatBytes(1048576)).toBe("1.0 MB");
++});
+diff --git a/docs/formatting.md b/docs/formatting.md
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/docs/formatting.md
+@@ -0,0 +1,5 @@
++# Formatting
++
++```js
++console.log(formatBytes(1048576)); // "1.0 MB"
++```

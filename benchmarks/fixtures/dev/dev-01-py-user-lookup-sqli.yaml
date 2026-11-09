@@ -1,0 +1,26 @@
+id: dev-01-py-user-lookup-sqli
+title: Python user lookup adds an f-string SQL query; comment and docs decoys
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: SECURITY_SQL_INJECTION
+  file: app/users/repository.py
+  lines: [15, 15]
+  severity: critical
+  note: username reaches the f-string from request.args in app/api/users.py (cross-file source).
+negatives:
+- antiPattern: SECURITY_SQL_INJECTION
+  file: app/users/repository.py
+  lines: [14, 14]
+  reason: SQL concatenation shown inside a comment.
+- antiPattern: SECURITY_SQL_INJECTION
+  file: app/users/repository.py
+  lines: [20, 20]
+  reason: Parameterized query.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: app/api/users.py
+  lines: [9, 9]
+  reason: HTTP status code.
+- antiPattern: '*'
+  file: docs/security.md
+  lines: [1, 6]
+  reason: Documentation; not reviewed.

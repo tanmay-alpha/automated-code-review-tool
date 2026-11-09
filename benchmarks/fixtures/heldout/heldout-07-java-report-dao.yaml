@@ -1,0 +1,22 @@
+id: heldout-07-java-report-dao
+title: 'Java DAO: concatenated table name in prepareStatement, off-by-one bound, string identity comparison'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: SECURITY_SQL_INJECTION
+  file: src/main/java/com/example/reports/ReportDao.java
+  lines: [17, 17]
+  severity: major
+  note: Identifier concatenated into SQL; allow-list table names.
+- antiPattern: unsupported
+  file: src/main/java/com/example/reports/ReportDao.java
+  lines: [26, 26]
+  severity: major
+  defect: boundary_error
+  note: index == size passes the guard and throws.
+- antiPattern: unsupported
+  file: src/main/java/com/example/reports/ReportDao.java
+  lines: [33, 33]
+  severity: major
+  defect: wrong_comparison
+  note: String identity instead of equals().
+negatives: []

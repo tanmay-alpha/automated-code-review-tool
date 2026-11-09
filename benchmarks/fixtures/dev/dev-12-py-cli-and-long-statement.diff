@@ -1,0 +1,38 @@
+diff --git a/scripts/export_users.py b/scripts/export_users.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/scripts/export_users.py
+@@ -0,0 +1,18 @@
++"""Export users as CSV to stdout."""
++
++import csv
++import sys
++
++from app.db import connect
++
++
++def main():
++    writer = csv.writer(sys.stdout)
++    with connect() as conn:
++        for row in conn.execute("SELECT id, email FROM users ORDER BY id"):
++            writer.writerow(row)
++    print("export complete", file=sys.stderr)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/app/notifications.py b/app/notifications.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/app/notifications.py
+@@ -0,0 +1,8 @@
++from app.mail import send
++
++
++def welcome_message(user):
++    return send(to=user.email, subject="Welcome", body=f"Hello {user.first_name}, your account {user.id} on plan {user.plan.name} is ready; it renews on {user.plan.renews_on:%Y-%m-%d} at {user.plan.price} per month, and support is available at any time.", reply_to="support@example.com")
++
++
++DOCS_URL = "https://docs.example.com/guides/notifications/welcome-messages/configuring-templates-and-localization-for-every-supported-region-and-language-including-right-to-left-scripts-and-fallback-rules"

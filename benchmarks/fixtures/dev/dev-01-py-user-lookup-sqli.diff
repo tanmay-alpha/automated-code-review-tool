@@ -1,0 +1,47 @@
+diff --git a/app/users/repository.py b/app/users/repository.py
+index 2222222..3333333 100644
+--- a/app/users/repository.py
++++ b/app/users/repository.py
+@@ -8,3 +8,16 @@
+ def find_by_id(cursor, user_id):
+     cursor.execute("SELECT id, name FROM users WHERE id = %s", (user_id,))
+     return cursor.fetchone()
++
++
++def find_by_name(cursor, username):
++    # Never build queries like cursor.execute("... name = '" + username + "'").
++    cursor.execute(f"SELECT id, name FROM users WHERE name = '{username}'")
++    return cursor.fetchone()
++
++
++def find_by_email(cursor, email):
++    cursor.execute("SELECT id, name FROM users WHERE email = %s", (email,))
++    row = cursor.fetchone()
++    logger.info("lookup by email returned %s", "a row" if row else "nothing")
++    return row
+diff --git a/app/api/users.py b/app/api/users.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/app/api/users.py
+@@ -0,0 +1,9 @@
++from flask import request
++
++from app.db import get_cursor
++from app.users.repository import find_by_name
++
++
++def lookup():
++    row = find_by_name(get_cursor(), request.args["name"])
++    return {"id": row[0], "name": row[1]} if row else ({}, 404)
+diff --git a/docs/security.md b/docs/security.md
+index 2222222..3333333 100644
+--- a/docs/security.md
++++ b/docs/security.md
+@@ -1,3 +1,6 @@
+ # Security notes
+ 
+ Load credentials from the environment.
++
++Do not write `password = "hunter2hunter2hunter2"` in code, and never call
++`cursor.execute("SELECT ... " + name)`.

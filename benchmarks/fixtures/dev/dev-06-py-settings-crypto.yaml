@@ -1,0 +1,35 @@
+id: dev-06-py-settings-crypto
+title: 'Python settings: committed SECRET_KEY, SHA-1 password hash, MD5 ETag and fake test credentials'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: SECURITY_HARDCODED_SECRET
+  file: config/settings.py
+  lines: [6, 6]
+  severity: critical
+  note: Framework signing key committed to source.
+- antiPattern: SECURITY_WEAK_CRYPTO
+  file: config/settings.py
+  lines: [11, 11]
+  severity: major
+  note: SHA-1 used to hash passwords.
+negatives:
+- antiPattern: SECURITY_HARDCODED_SECRET
+  file: config/settings.py
+  lines: [7, 7]
+  reason: Read from the environment.
+- antiPattern: SECURITY_WEAK_CRYPTO
+  file: config/settings.py
+  lines: [15, 15]
+  reason: MD5 as an HTTP ETag of trusted content, not a security control.
+- antiPattern: SECURITY_HARDCODED_SECRET
+  file: tests/test_settings.py
+  lines: [3, 3]
+  reason: Fake credential in a test.
+- antiPattern: SECURITY_HARDCODED_SECRET
+  file: tests/test_settings.py
+  lines: [7, 7]
+  reason: Fake credential in a test.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: tests/test_settings.py
+  lines: [9, 9]
+  reason: Literal expectation in a test.

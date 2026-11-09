@@ -1,0 +1,51 @@
+diff --git a/src/main/java/com/example/payments/PaymentService.java b/src/main/java/com/example/payments/PaymentService.java
+index 2222222..3333333 100644
+--- a/src/main/java/com/example/payments/PaymentService.java
++++ b/src/main/java/com/example/payments/PaymentService.java
+@@ -1,9 +1,46 @@
+ package com.example.payments;
++
++import java.io.FileInputStream;
++import java.io.IOException;
++import java.net.http.HttpClient;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.Properties;
+ 
+ public class PaymentService {
+     private final Gateway gateway;
++    private final HttpClient http = HttpClient.newHttpClient();
+ 
+     public PaymentService(Gateway gateway) {
+         this.gateway = gateway;
+     }
++
++    public boolean charge(String accountId, long cents) {
++        try {
++            gateway.charge(accountId, cents);
++            return true;
++        } catch (Exception e) {
++            return false;
++        }
++    }
++
++    public String signature(String payload) throws NoSuchAlgorithmException {
++        MessageDigest digest = MessageDigest.getInstance("MD5");
++        return toHex(digest.digest(payload.getBytes()));
++    }
++
++    public Properties loadSettings(String path) throws IOException {
++        FileInputStream in = new FileInputStream(path);
++        Properties props = new Properties();
++        props.load(in);
++        return props;
++    }
++
++    private static String toHex(byte[] bytes) {
++        StringBuilder out = new StringBuilder();
++        for (byte b : bytes) {
++            out.append(String.format("%02x", b));
++        }
++        return out.toString();
++    }
+ }

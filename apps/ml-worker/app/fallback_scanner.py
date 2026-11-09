@@ -232,6 +232,11 @@ def _file_mode_hunk(content: str, language: str, file_path: str | None) -> FileH
     )
 
 
+def reviewable_hunks(diff: str) -> list[FileHunk]:
+    """Diff hunks the rule engine inspects."""
+    return code_hunks(diff)
+
+
 def fallback_findings(
     diff: str,
     *,
@@ -245,7 +250,7 @@ def fallback_findings(
     hunks = (
         [_file_mode_hunk(diff, language, file_path)]
         if mode == "file"
-        else code_hunks(diff)
+        else reviewable_hunks(diff)
     )
     findings: list[Finding] = []
 

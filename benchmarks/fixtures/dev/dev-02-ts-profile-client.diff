@@ -1,0 +1,26 @@
+diff --git a/src/api/profile.ts b/src/api/profile.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/api/profile.ts
+@@ -0,0 +1,13 @@
++import { API_BASE } from "./config";
++
++// Docs: never call console.log(token) in production code.
++export const HELP_TEXT = "Use console.log( only while debugging";
++
++export async function loadProfile(token: string): Promise<string> {
++  const res = await fetch(`${API_BASE}/profile`, {
++    headers: { Authorization: `Bearer ${token}` },
++  });
++  console.log("profile response", res.status);
++  const body = await res.json();
++  return body.user.name.toUpperCase();
++}
+diff --git a/src/api/config.ts b/src/api/config.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/api/config.ts
+@@ -0,0 +1 @@
++export const API_BASE = process.env.API_BASE ?? "http://localhost:8080";

@@ -1,0 +1,46 @@
+diff --git a/src/main/java/com/example/orders/OrderService.java b/src/main/java/com/example/orders/OrderService.java
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/main/java/com/example/orders/OrderService.java
+@@ -0,0 +1,40 @@
++package com.example.orders;
++
++import java.io.BufferedReader;
++import java.io.FileReader;
++import java.io.IOException;
++import java.util.ArrayList;
++import java.util.List;
++
++public class OrderService {
++    private final OrderRepository orderRepository;
++
++    public OrderService(OrderRepository orderRepository) {
++        this.orderRepository = orderRepository;
++    }
++
++    public List<Order> load(List<Long> ids) {
++        List<Order> orders = new ArrayList<>();
++        for (Long id : ids) {
++            orders.add(orderRepository.findById(id).orElseThrow());
++        }
++        return orders;
++    }
++
++    public String resetToken() {
++        return Long.toHexString(Double.doubleToLongBits(Math.random()));
++    }
++
++    public String firstLine(String path) throws IOException {
++        BufferedReader reader = new BufferedReader(new FileReader(path));
++        return reader.readLine();
++    }
++
++    public void process(Order order) {
++        try {
++            order.validate();
++        } catch (Throwable t) {
++            order.markInvalid();
++        }
++    }
++}

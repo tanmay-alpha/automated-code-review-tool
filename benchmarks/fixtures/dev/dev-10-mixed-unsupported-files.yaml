@@ -1,0 +1,22 @@
+id: dev-10-mixed-unsupported-files
+title: 'Mixed PR: Go, YAML, SQL, binary, rename and delete alongside one Python change'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: MAINTAINABILITY_COMMENTED_CODE
+  file: app/report.py
+  lines: [3, 5]
+  severity: minor
+  note: Three commented-out statements.
+negatives:
+- antiPattern: '*'
+  file: cmd/server/main.go
+  lines: [1, 15]
+  reason: 'Go is outside the rule engine''s languages (README: Python, JavaScript/TypeScript, Java).'
+- antiPattern: '*'
+  file: deploy/values.yaml
+  lines: [1, 2]
+  reason: Configuration file; not reviewed.
+- antiPattern: '*'
+  file: db/migrations/V3__orders.sql
+  lines: [1, 1]
+  reason: SQL migration; not reviewed.

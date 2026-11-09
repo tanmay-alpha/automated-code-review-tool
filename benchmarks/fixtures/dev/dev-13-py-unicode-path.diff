@@ -1,0 +1,14 @@
+diff --git "a/app/services/caf\303\251.py" "b/app/services/caf\303\251.py"
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ "b/app/services/caf\303\251.py"
+@@ -0,0 +1,8 @@
++import os
++
++PAYMENTS_URL = os.environ["PAYMENTS_URL"]
++api_key = "pk9Qe2LkT9vYw8RmZpA4bC7d"
++
++
++def notify(order):
++    print("notifying", order.id)

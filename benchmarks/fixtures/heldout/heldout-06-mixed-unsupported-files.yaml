@@ -1,0 +1,22 @@
+id: heldout-06-mixed-unsupported-files
+title: 'Mixed PR: README, package.json, Dockerfile and Rust alongside commented-out JavaScript'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: MAINTAINABILITY_COMMENTED_CODE
+  file: src/legacy.js
+  lines: [2, 4]
+  severity: minor
+  note: Disabled discount logic left in comments.
+negatives:
+- antiPattern: '*'
+  file: src/main.rs
+  lines: [1, 5]
+  reason: Rust is outside the rule engine's languages.
+- antiPattern: '*'
+  file: package.json
+  lines: [1, 5]
+  reason: Configuration file.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: src/legacy.js
+  lines: [3, 3]
+  reason: Inside commented-out code (reported as commented code instead).
