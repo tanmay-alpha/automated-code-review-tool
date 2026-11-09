@@ -1,0 +1,26 @@
+# gitleaks configuration (read by the secret-scan job in ci-platform.yml).
+#
+# This project detects hard-coded secrets, so its tests, benchmarks and
+# training data deliberately contain fake credentials. Those paths are
+# allowlisted; everything else uses gitleaks' default rules unchanged.
+
+title = "automated-code-review-tool"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake credentials used as detector fixtures, and documented CI/local-only values"
+paths = [
+  # Unit/integration test sources and resources in every component.
+  '''(^|/)tests?/''',
+  '''^apps/api/src/test/''',
+  # Benchmark diffs that seed secrets on purpose.
+  '''^benchmarks/fixtures/''',
+  # Synthetic training samples.
+  '''^apps/ml-worker/training/data/''',
+  '''^apps/ml-worker/training/generate_mock_raw_data\.py$''',
+  # Documented local-only defaults ("change-me" values) and CI-only keys.
+  '''^\.env\.example$''',
+  '''^\.github/workflows/ci-api\.yml$''',
+]
