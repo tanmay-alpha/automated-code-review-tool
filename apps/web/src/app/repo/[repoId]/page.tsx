@@ -12,8 +12,10 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Settings2,
 } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
+import { FindingSummaryPanel } from "@/components/FindingSummaryPanel";
 import { QualityChart } from "@/components/QualityChart";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -82,7 +84,7 @@ function RepoDetailContent() {
   const delta = trend30 ? trendDelta(trend30) : null;
 
   return (
-    <div className="mx-auto max-w-7xl p-8">
+    <div className="mx-auto max-w-7xl p-4 md:p-8">
       <div className="mb-2">
         <Link
           href="/dashboard"
@@ -94,7 +96,7 @@ function RepoDetailContent() {
       </div>
       <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">
+          <h1 className="break-words text-2xl font-bold tracking-tight md:text-3xl">
             {repo?.fullName ?? "Repository"}
           </h1>
           {repo ? (
@@ -104,20 +106,28 @@ function RepoDetailContent() {
             </p>
           ) : null}
         </div>
-        {repo?.latestQualityScore != null ? (
-          <Badge
-            className={`border ${qualityScoreColor(repo.latestQualityScore)}`}
-            variant="outline"
-          >
-            {repo.latestQualityScore.toFixed(0)} · latest quality
-          </Badge>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-3">
+          {repo?.latestQualityScore != null ? (
+            <Badge
+              className={`border ${qualityScoreColor(repo.latestQualityScore)}`}
+              variant="outline"
+            >
+              {repo.latestQualityScore.toFixed(0)} · latest quality
+            </Badge>
+          ) : null}
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/repo/${repoId}/settings`}>
+              <Settings2 className="mr-2 h-4 w-4" aria-hidden="true" />
+              Review settings
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <Separator />
 
       {/* Summary statistics for this repository. */}
-      <section className="mt-6 grid gap-4 md:grid-cols-4">
+      <section className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         <SummaryStat
           label="Current score"
           value={
@@ -174,7 +184,7 @@ function RepoDetailContent() {
           ) : prs ? (
             <>
               <div className="rounded-lg border">
-                <Table>
+                <Table scrollLabel="Pull requests">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-16">#</TableHead>
@@ -283,6 +293,10 @@ function RepoDetailContent() {
         <aside className="lg:col-span-1">
           <QualityChart repoId={repoId} compact />
         </aside>
+      </div>
+
+      <div className="mt-8">
+        <FindingSummaryPanel repoId={repoId} />
       </div>
     </div>
   );

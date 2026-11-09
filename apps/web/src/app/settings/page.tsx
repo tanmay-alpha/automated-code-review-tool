@@ -2,6 +2,7 @@
 
 import { useState, useEffect, type FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import {
   Key,
@@ -11,6 +12,7 @@ import {
   Plus,
   Github,
   FolderGit2,
+  Settings2,
 } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,15 @@ import {
   CardHeader,
 } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -29,6 +40,7 @@ import {
   getMe,
   getRepos,
   listApiKeys,
+  logoutAll,
   revokeApiKey,
 } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
@@ -49,6 +61,9 @@ function SettingsContent() {
   const [label, setLabel] = useState("");
   const [creating, setCreating] = useState(false);
   const [keyActionError, setKeyActionError] = useState<string | null>(null);
+  const [repoActionError, setRepoActionError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+  const router = useRouter();
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
@@ -83,18 +98,19 @@ function SettingsContent() {
     if (!confirm(`Disconnect ${fullName}? The webhook will be removed.`)) {
       return;
     }
+    setRepoActionError(null);
     try {
       await disconnectRepo(id);
       mutateRepos();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed to disconnect");
+      setRepoActionError(e instanceof Error ? e.message : "Failed to disconnect");
     }
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 p-8">
+    <div className="mx-auto max-w-4xl space-y-8 p-4 md:p-8">
       <header>
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Settings</h1>
         <p className="mt-1 text-muted-foreground">
           Manage connected repositories, your API keys, and your account.
         </p>
@@ -108,6 +124,12 @@ function SettingsContent() {
           <FolderGit2 className="h-5 w-5 text-muted-foreground" />
           <h2 className="text-xl font-semibold">Connected repositories</h2>
         </div>
+        {repoActionError ? (
+          <Alert variant="destructive" className="mb-3">
+            <AlertTitle>Couldn’t disconnect the repository</AlertTitle>
+            <AlertDescription>{repoActionError}</AlertDescription>
+          </Alert>
+        ) : null}
         {reposError ? (
           <Alert variant="destructive">
             <AlertTitle>Couldn’t load repositories</AlertTitle>
@@ -132,7 +154,7 @@ function SettingsContent() {
             {repos.map((r) => (
               <div
                 key={r.id}
-                className="flex items-center justify-between gap-3 px-4 py-3"
+                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
               >
                 <div className="min-w-0">
                   <div className="truncate font-medium">{r.fullName}</div>
@@ -141,14 +163,26 @@ function SettingsContent() {
                     PR{r.totalPrsReviewed === 1 ? "" : "s"} reviewed
                   </div>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDisconnect(r.id, r.fullName)}
-                >
-                  <Trash2 className="mr-1 h-3.5 w-3.5" />
-                  Disconnect
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button asChild variant="outline" size="sm">
+                    <Link
+                      href={`/repo/${r.id}/settings`}
+                      aria-label={`Review settings for ${r.fullName}`}
+                    >
+                      <Settings2 className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                      Review settings
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDisconnect(r.id, r.fullName)}
+                    aria-label={`Disconnect ${r.fullName}`}
+                  >
+                    <Trash2 className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                    Disconnect
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -173,15 +207,14 @@ function SettingsContent() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <form onSubmit={handleCreate} className="flex items-center gap-2">
-              <input
-                type="text"
+            <form onSubmit={handleCreate} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Input
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder="Label, e.g. work laptop"
                 maxLength={60}
                 aria-label="New key label"
-                className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex-1"
               />
               <Button type="submit" disabled={creating || !label.trim()}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -224,8 +257,9 @@ function SettingsContent() {
                       variant="outline"
                       size="sm"
                       onClick={() => handleRevoke(k.id, k.label)}
+                      aria-label={`Revoke ${k.label}`}
                     >
-                      <Trash2 className="mr-1 h-3.5 w-3.5" />
+                      <Trash2 className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
                       Revoke
                     </Button>
                   </div>
@@ -269,6 +303,26 @@ function SettingsContent() {
                 <span>{timeAgo(user?.createdAt)}</span>
               )}
             </Row>
+            <Row label="Sessions">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={signingOut}
+                onClick={async () => {
+                  if (!confirm("Sign out on every device, including this one?")) return;
+                  setSigningOut(true);
+                  try {
+                    await logoutAll();
+                    router.replace("/");
+                  } catch (err) {
+                    setSigningOut(false);
+                    alert(err instanceof Error ? err.message : "Could not sign out everywhere.");
+                  }
+                }}
+              >
+                {signingOut ? "Signing out…" : "Sign out everywhere"}
+              </Button>
+            </Row>
           </CardContent>
         </Card>
       </section>
@@ -286,7 +340,7 @@ function Row({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between px-4 py-3">
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
       <span className="text-sm text-muted-foreground">{label}</span>
       <span className="text-sm">{children}</span>
     </div>
@@ -336,37 +390,46 @@ function ApiKeyModal({
     }
   };
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div className="w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg">
-        <h2 className="text-lg font-semibold">New API key</h2>
-        <Alert variant="warning" className="my-4">
-          <AlertTriangle className="h-4 w-4" />
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New API key</DialogTitle>
+          <DialogDescription>
+            Copy the key now; it is shown only once.
+          </DialogDescription>
+        </DialogHeader>
+        <Alert variant="warning">
+          <AlertTriangle className="h-4 w-4" aria-hidden="true" />
           <AlertTitle>This key will not be shown again.</AlertTitle>
           <AlertDescription>
-            Copy it now, then run{" "}
+            Run{" "}
             <span className="font-mono">automated-code-review-tool: Set API Key</span>{" "}
             in VS Code or paste it into your CI secret store.{" "}
-            {countdown > 0 ? `Key will be hidden in ${countdown}s...` : "Key hidden."}
+            {countdown > 0 ? `Key will be hidden in ${countdown}s…` : "Key hidden."}
           </AlertDescription>
         </Alert>
         <div className="flex items-center gap-2">
-          <code className="flex-1 break-all rounded-md bg-muted px-3 py-2 font-mono text-xs">
+          <code
+            className="flex-1 break-all rounded-md bg-muted px-3 py-2 font-mono text-xs"
+            data-testid="new-api-key"
+          >
             {displayKey}
           </code>
-          <Button onClick={handleCopy} variant="outline" size="sm" disabled={!displayKey || displayKey.startsWith("•")}>
-            <Copy className="mr-1 h-3.5 w-3.5" />
+          <Button
+            onClick={handleCopy}
+            variant="outline"
+            size="sm"
+            disabled={!displayKey || displayKey.startsWith("•")}
+          >
+            <Copy className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
             {copied ? "Copied!" : "Copy"}
           </Button>
         </div>
-        <div className="mt-4 flex justify-end">
+        <DialogFooter>
           <Button onClick={onClose}>Done</Button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

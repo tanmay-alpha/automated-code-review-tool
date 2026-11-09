@@ -1,9 +1,17 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { connectRepo } from "@/lib/api";
 import type { RepoResponse } from "@/lib/types";
 
@@ -56,54 +64,29 @@ export function ConnectRepoModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="connect-repo-title"
-    >
-      <div className="w-full max-w-md rounded-lg border bg-background p-6 shadow-lg">
-        <div className="mb-4 flex items-start justify-between">
-          <div>
-            <h2
-              id="connect-repo-title"
-              className="text-lg font-semibold tracking-tight"
-            >
-              Connect a repository
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Install the automated-code-review-tool webhook on a GitHub repo you own.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-1 text-muted-foreground hover:bg-accent"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(next) => !next && !submitting && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Connect a repository</DialogTitle>
+          <DialogDescription>
+            Install the automated-code-review-tool webhook on a GitHub repo you own.
+          </DialogDescription>
+        </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label
-              htmlFor="fullName"
-              className="mb-1 block text-sm font-medium"
-            >
+            <label htmlFor="fullName" className="mb-1 block text-sm font-medium">
               Repository
             </label>
-            <input
+            <Input
               id="fullName"
-              type="text"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="octocat/hello-world"
               autoComplete="off"
-              autoFocus
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-describedby="fullName-hint"
             />
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p id="fullName-hint" className="mt-1 text-xs text-muted-foreground">
               Format: owner/repo. Creating the webhook needs admin access to
               the repository.
             </p>
@@ -116,21 +99,16 @@ export function ConnectRepoModal({
             </Alert>
           ) : null}
 
-          <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={onClose}
-              disabled={submitting}
-            >
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
               Cancel
             </Button>
             <Button type="submit" disabled={submitting || !fullName.trim()}>
               {submitting ? "Connecting…" : "Connect"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
