@@ -194,8 +194,11 @@ advisories still apply at the package-version level:
 [SSE view fragments](https://osv.dev/vulnerability/GHSA-j9f9-w8pj-32f8),
 [XSLT views](https://osv.dev/vulnerability/GHSA-pc63-qcmh-9cmg) and
 [functional WebFlux routes](https://osv.dev/vulnerability/GHSA-9qf2-26p9-2q2q).
-This API uses none of those features; no findings are suppressed. Reassess
-these advisories before adding view rendering, SSE or functional routes.
+This API uses none of those features. The fixes ship only in Spring Framework
+7.0.9 (Spring Boot 4), so the CI image scan carries scoped, expiring exceptions
+for them in `apps/api/.trivyignore.yaml` (CVE-2026-47884/47890/47892); every
+other fixable CRITICAL fails the build. Reassess before adding view rendering,
+SSE or functional routes, and remove the exceptions when moving to Boot 4.
 
 Detailed application security analysis, threat boundaries, and ASVS 5.0 audit
 results are documented in [docs/security-review.md](docs/security-review.md).

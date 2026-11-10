@@ -1,0 +1,21 @@
+# Reviewed Trivy exceptions for the API image. Each entry names one CVE and
+# expires, so the scan fails again when the review is stale.
+#
+# The fixes for these Spring Framework advisories ship only in 7.0.9 (Spring
+# Boot 4); 6.2.19 is the newest open-source 6.2.x release. The API does not use
+# any affected feature: there are no XsltView, SSE or fragment-rendering views,
+# and no WebFlux functional endpoints (RouterFunction/HandlerFunction).
+# spring-webflux is on the classpath only for the outbound WebClient.
+# Re-check with:
+#   grep -rE "XsltView|SseEmitter|ServerSentEvent|text/event-stream|RouterFunction|HandlerFunction|FragmentsRendering" apps/api/src/main
+# Remove these entries once the API moves to Spring Boot 4 (docs/roadmap.md).
+vulnerabilities:
+  - id: CVE-2026-47884
+    statement: "XsltView RCE; the API renders no views (JSON REST only)."
+    expired_at: 2027-02-10
+  - id: CVE-2026-47890
+    statement: "SSE stream corruption with view fragments; the API has no SSE endpoints or view rendering."
+    expired_at: 2027-02-10
+  - id: CVE-2026-47892
+    statement: "Header predicate bypass in WebFlux functional endpoints; none are defined (WebClient only)."
+    expired_at: 2027-02-10
