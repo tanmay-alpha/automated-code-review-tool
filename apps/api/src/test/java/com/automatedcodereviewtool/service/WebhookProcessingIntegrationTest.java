@@ -40,7 +40,6 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -49,9 +48,9 @@ import static org.mockito.Mockito.when;
 /**
  * Webhook delivery → review → GitHub publication against H2, the real
  * services and the real {@link GitHubService} talking HTTP to a stateful
- * fake GitHub ({@link FakeGitHub}). Only the ML worker and the repository
- * publication policy are mocked. Background pollers are slowed down so the
- * tests drive them explicitly.
+ * fake GitHub ({@link FakeGitHub}). Only the ML worker is mocked; repository
+ * settings are applied by the real {@link RepoReviewPolicy}. Background
+ * pollers are slowed down so the tests drive them explicitly.
  */
 @SpringBootTest(properties = {
         "app.webhook.recovery-delay-ms=3600000",
@@ -127,7 +126,6 @@ class WebhookProcessingIntegrationTest {
     @Autowired private com.automatedcodereviewtool.controller.ReviewRunController reviewRunController;
 
     @MockBean private MlWorkerService mlWorkerService;
-    @MockBean private ReviewPipelinePolicy publicationPolicy;
 
     private long githubId;
     private Repository repo;
@@ -143,9 +141,6 @@ class WebhookProcessingIntegrationTest {
         repo = saveRepo(githubId, true);
         long repoGithubId = githubId;
         GITHUB.reset(githubId, HEAD_A, head -> diff(repoGithubId, head));
-        when(publicationPolicy.postComments(any())).thenReturn(true);
-        when(publicationPolicy.inlineComments(any())).thenReturn(false);
-        when(publicationPolicy.apply(any(), any())).thenAnswer(inv -> inv.getArgument(1));
         when(mlWorkerService.review(anyString(), anyString())).thenReturn(twoFindings());
     }
 
@@ -467,7 +462,8 @@ class WebhookProcessingIntegrationTest {
 
     @Test
     void inlineReviewIsPostedOncePerHeadOnAddedLinesOnly() {
-        when(publicationPolicy.inlineComments(any())).thenReturn(true);
+        repo.setReviewInlineComments(true);
+        repositoryRepository.save(repo);
         when(mlWorkerService.review(anyString(), anyString())).thenReturn(new MlReviewResponse(List.of(
                 new MlFinding("src/a.py", null, 2, 2, "SECURITY_HARDCODED_SECRET", "SECURITY", "critical",
                         new BigDecimal("0.95"), "hard-coded key", "API_KEY = \"<REDACTED_SECRET>\"",
@@ -507,14 +503,47 @@ class WebhookProcessingIntegrationTest {
 
     @Test
     void disabledCommentsSkipPublicationWithoutCallingGitHub() {
-        when(publicationPolicy.postComments(any())).thenReturn(false);
+        repo.setReviewPostComments(false);
+        repo.setReviewInlineComments(true); // ignored while comments are off
+        repositoryRepository.save(repo);
 
         deliver("quiet-" + githubId, HEAD_A);
+        // Even a due poll pass publishes nothing.
+        reviewPublisher.publishDue();
 
-        assertThat(publication("quiet-" + githubId).getStatus()).isEqualTo(ReviewPublication.SKIPPED);
+        ReviewPublication publication = publication("quiet-" + githubId);
+        assertThat(publication.getStatus()).isEqualTo(ReviewPublication.SKIPPED);
+        assertThat(publication.isInlineComments()).isFalse();
         assertThat(GITHUB.calls("GET head")).isZero();
+        assertThat(GITHUB.calls("POST comment")).isZero();
+        assertThat(GITHUB.calls("POST review")).isZero();
         assertThat(GITHUB.comments).isEmpty();
+        assertThat(GITHUB.reviews).isEmpty();
         assertThat(pr().getStatus()).isEqualTo("reviewed");
+        assertThat(findingRepository.findAllByPullRequestId(pr().getId())).hasSize(2);
+    }
+
+    /**
+     * Settings filter before persistence: a disabled rule's finding is never
+     * stored (only its prediction event), so it is neither returned by the API
+     * nor published.
+     */
+    @Test
+    void disabledRuleIsFilteredBeforePersistenceAndPublication() {
+        repo.setReviewEnabledRules(List.of("SECURITY_HARDCODED_SECRET"));
+        repositoryRepository.save(repo);
+
+        deliver("rules-" + githubId, HEAD_A);
+
+        assertThat(findingRepository.findAllByPullRequestId(pr().getId()))
+                .extracting(Finding::getAntiPattern).containsExactly("SECURITY_HARDCODED_SECRET");
+        assertThat(jdbc.queryForList(
+                "SELECT status FROM ml.prediction_events WHERE pull_request_id = ? AND anti_pattern_id = ?",
+                String.class, pr().getId(), "MAINTAINABILITY_PRINT_STATEMENT"))
+                .containsExactly(ReviewService.STATUS_FILTERED_BY_SETTINGS);
+        assertThat(publication("rules-" + githubId).getStatus()).isEqualTo(ReviewPublication.PUBLISHED);
+        assertThat((String) GITHUB.comments.get(0).get("body"))
+                .contains("SECURITY_HARDCODED_SECRET").doesNotContain("MAINTAINABILITY_PRINT_STATEMENT");
     }
 
     // -----------------------------------------------------------------

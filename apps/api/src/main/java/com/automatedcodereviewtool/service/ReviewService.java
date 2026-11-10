@@ -108,7 +108,7 @@ public class ReviewService {
     private final ObjectMapper objectMapper;
     private final SecretRedactor secretRedactor;
     private final TaxonomyService taxonomyService;
-    private final ReviewPipelinePolicy reviewPolicy;
+    private final RepoReviewPolicy reviewPolicy;
     private final TransactionTemplate transactionTemplate;
 
     public ReviewService(MlWorkerService mlWorkerService,
@@ -124,7 +124,7 @@ public class ReviewService {
                          ObjectMapper objectMapper,
                          SecretRedactor secretRedactor,
                          TaxonomyService taxonomyService,
-                         ReviewPipelinePolicy reviewPolicy,
+                         RepoReviewPolicy reviewPolicy,
                          PlatformTransactionManager transactionManager) {
         this.mlWorkerService = mlWorkerService;
         this.findingRepository = findingRepository;

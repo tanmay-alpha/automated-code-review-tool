@@ -51,10 +51,4 @@ public interface PullRequestRepository extends JpaRepository<PullRequestEntity, 
      * Used by {@code GET /api/repos/{id}/prs}.
      */
     Page<PullRequestEntity> findAllByRepo(Repository repo, Pageable pageable);
-
-    /** Total PRs in a repo with a given lifecycle status. */
-    long countByRepoAndStatus(Repository repo, String status);
-
-    /** Most recently reviewed PR for a repo (null if none). */
-    Optional<PullRequestEntity> findFirstByRepoOrderByReviewedAtDesc(Repository repo);
 }

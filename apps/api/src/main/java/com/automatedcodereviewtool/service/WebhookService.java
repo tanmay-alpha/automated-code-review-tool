@@ -47,7 +47,7 @@ public class WebhookService {
     private final GitHubService githubService;
     private final ReviewService reviewService;
     private final ReviewPublisher reviewPublisher;
-    private final ReviewPipelinePolicy reviewPolicy;
+    private final RepoReviewPolicy reviewPolicy;
     private final SecretRedactor secretRedactor;
 
     public WebhookService(RepositoryRepository repositoryRepository,
@@ -57,7 +57,7 @@ public class WebhookService {
                           GitHubService githubService,
                           ReviewService reviewService,
                           ReviewPublisher reviewPublisher,
-                          ReviewPipelinePolicy reviewPolicy,
+                          RepoReviewPolicy reviewPolicy,
                           SecretRedactor secretRedactor) {
         this.repositoryRepository = repositoryRepository;
         this.pullRequestRepository = pullRequestRepository;
@@ -163,6 +163,8 @@ public class WebhookService {
                 return;
             }
 
+            // Captured on the run (and the publication row), so a settings change
+            // after this point does not alter this delivery's publication.
             boolean postComments = reviewPolicy.postComments(repo);
             run = new ReviewRun(deliveryId, attempt, delivery.getHeadSha(),
                     postComments, postComments && reviewPolicy.inlineComments(repo));
