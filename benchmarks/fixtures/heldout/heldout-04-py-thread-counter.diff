@@ -1,0 +1,31 @@
+diff --git a/app/metrics/counter.py b/app/metrics/counter.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/app/metrics/counter.py
+@@ -0,0 +1,25 @@
++import threading
++import time
++
++_counts = {}
++
++
++def record(event):
++    current = _counts.get(event, 0)
++    time.sleep(0)
++    _counts[event] = current + 1
++
++
++def run_workers(events):
++    threads = [threading.Thread(target=record, args=(e,)) for e in events]
++    for t in threads:
++        t.start()
++    for t in threads:
++        t.join(timeout=15)
++
++
++def safe_shutdown(server):
++    try:
++        server.stop()
++    except BaseException:
++        server = None

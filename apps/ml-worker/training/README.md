@@ -50,8 +50,9 @@ python -m training.build_dataset freeze --dataset-dir artifacts/datasets/review-
 `create` reads approved redacted samples, explicit per-label human evidence,
 and clean-review negatives from PostgreSQL. It writes deterministic
 `samples.jsonl`, `splits.json`, `manifest.json`, and
-`data_quality_report.json`. Exact and near-duplicate components are assigned as
-groups, so they cannot cross train, validation, and test. `freeze` refuses any
+`data_quality_report.json`. Exact-hunk, near-duplicate and identical-added-code
+components are assigned as groups, so they cannot cross train, validation, and
+test. `freeze` refuses any
 critical quality failure and makes the database release immutable.
 
 ## Baselines, train, tune, and evaluate

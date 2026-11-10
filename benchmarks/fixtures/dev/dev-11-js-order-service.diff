@@ -1,0 +1,27 @@
+diff --git a/src/services/orders.js b/src/services/orders.js
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/services/orders.js
+@@ -0,0 +1,21 @@
++import axios from "axios";
++import { db } from "../db.js";
++
++export async function loadUsers(ids) {
++  const users = [];
++  for (const id of ids) {
++    const { rows } = await db.query("SELECT * FROM users WHERE id = $1", [id]);
++    users.push(rows[0]);
++  }
++  return users;
++}
++
++export async function ordersByStatus(status) {
++  const { rows } = await db.query(`SELECT * FROM orders WHERE status = '${status}'`);
++  return rows;
++}
++
++export async function notifyWarehouse(order) {
++  const response = await axios.post("https://warehouse.example.com/notify", order);
++  return response.data;
++}

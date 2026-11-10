@@ -113,9 +113,11 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # JWT (3-segment base64url)
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")),
     # Generic password / token assignment: 'password = "..."', 'api_key: "..."'.
-    # The key may carry a prefix such as DB_PASSWORD or client_secret.
+    # The key may carry a prefix such as DB_PASSWORD or client_secret, and
+    # SECRET_KEY / private_key are matched whole because "_key" otherwise ends
+    # the name before the separator.
     ("generic", re.compile(
-        r"(?i)(?<![A-Za-z0-9])(password|passwd|pwd|secret|api[_\-]?key|access[_\-]?key|auth[_\-]?token|token|bearer)(\s*[:=]\s*)([\"'])([^\"'\n]{4,})\3"
+        r"(?i)(?<![A-Za-z0-9])(password|passwd|pwd|secret(?:[_\-]?key)?|private[_\-]?key|api[_\-]?key|access[_\-]?key|auth[_\-]?token|token|bearer)(\s*[:=]\s*)([\"'])([^\"'\n]{4,})\3"
     )),
     # Cookie: session=...
     ("cookie", re.compile(r"(?i)\b(session|sess|auth)_?(?:id|token)?\s*=\s*[A-Za-z0-9_\-=]{12,}")),
@@ -137,6 +139,21 @@ def _is_placeholder_or_doc(val: str) -> bool:
     if v.startswith("your_") or v.startswith("<"):
         return True
     return False
+
+
+_PROVIDER_PATTERNS = tuple(
+    pattern for name, pattern in _PATTERNS if name not in {"generic", "cookie"}
+)
+
+
+def is_provider_credential(value: str) -> bool:
+    """True when ``value`` has a recognisable provider token format (AWS, GitHub,
+    Slack, Google, Stripe, JWT), as opposed to an arbitrary assigned string."""
+    return any(
+        not _is_placeholder_or_doc(match.group(0))
+        for pattern in _PROVIDER_PATTERNS
+        for match in pattern.finditer(value)
+    )
 
 
 def redact_secrets(text: str) -> RedactionResult:

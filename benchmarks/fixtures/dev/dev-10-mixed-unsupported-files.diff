@@ -1,0 +1,63 @@
+diff --git a/cmd/server/main.go b/cmd/server/main.go
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/cmd/server/main.go
+@@ -0,0 +1,15 @@
++package main
++
++import (
++	"fmt"
++	"net/http"
++	"time"
++)
++
++func main() {
++	client := &http.Client{Timeout: 30 * time.Second}
++	for i := 0; i < 100; i++ {
++		fmt.Println("tick", i)
++	}
++	_ = client
++}
+diff --git a/deploy/values.yaml b/deploy/values.yaml
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/deploy/values.yaml
+@@ -0,0 +1,2 @@
++timeout: 300
++replicas: 3
+diff --git a/db/migrations/V3__orders.sql b/db/migrations/V3__orders.sql
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/db/migrations/V3__orders.sql
+@@ -0,0 +1 @@
++CREATE TABLE orders (id BIGINT PRIMARY KEY, total NUMERIC(12, 2));
+diff --git a/assets/logo.png b/assets/logo.png
+new file mode 100644
+index 0000000..1a2b3c4
+Binary files /dev/null and b/assets/logo.png differ
+diff --git a/app/old_helpers.py b/app/helpers.py
+similarity index 100%
+rename from app/old_helpers.py
+rename to app/helpers.py
+diff --git a/app/legacy.py b/app/legacy.py
+deleted file mode 100644
+index 4444444..0000000
+--- a/app/legacy.py
++++ /dev/null
+@@ -1,2 +0,0 @@
+-def legacy():
+-    print("legacy")
+diff --git a/app/report.py b/app/report.py
+index 2222222..3333333 100644
+--- a/app/report.py
++++ b/app/report.py
+@@ -1,3 +1,6 @@
+ def build_report(rows):
+     total = sum(row.amount for row in rows)
++    # average = total / len(rows)
++    # if average > limit:
++    #     notify(average)
+     return {"total": total}

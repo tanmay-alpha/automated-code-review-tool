@@ -1,0 +1,24 @@
+id: dev-11-js-order-service
+title: 'JavaScript order service: per-id query loop, template-literal SQL, axios without timeout'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: PERFORMANCE_N_PLUS_ONE
+  file: src/services/orders.js
+  lines: [6, 7]
+  severity: major
+  note: One query per id; use WHERE id = ANY($1).
+- antiPattern: SECURITY_SQL_INJECTION
+  file: src/services/orders.js
+  lines: [14, 14]
+  severity: major
+  note: status interpolated into SQL via a template literal.
+- antiPattern: RELIABILITY_MISSING_TIMEOUT
+  file: src/services/orders.js
+  lines: [19, 19]
+  severity: minor
+  note: axios has no default timeout.
+negatives:
+- antiPattern: SECURITY_SQL_INJECTION
+  file: src/services/orders.js
+  lines: [7, 7]
+  reason: Parameterized query.

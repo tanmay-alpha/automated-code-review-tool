@@ -1,0 +1,41 @@
+id: dev-05-js-format-decoys
+title: JavaScript helpers whose risky-looking text is only in comments, strings, tests and docs
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected: []
+negatives:
+- antiPattern: MAINTAINABILITY_PRINT_STATEMENT
+  file: src/utils/format.js
+  lines: [3, 3]
+  reason: Inside a block comment.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: src/utils/format.js
+  lines: [3, 3]
+  reason: Inside a block comment.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: src/utils/format.js
+  lines: [6, 6]
+  reason: Named constant definition.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: src/utils/format.js
+  lines: [19, 19]
+  reason: Inside a string literal.
+- antiPattern: SECURITY_WEAK_CRYPTO
+  file: src/utils/format.js
+  lines: [22, 22]
+  reason: Inside a comment.
+- antiPattern: SECURITY_WEAK_CRYPTO
+  file: src/utils/format.js
+  lines: [23, 23]
+  reason: Inside a string literal.
+- antiPattern: MAINTAINABILITY_PRINT_STATEMENT
+  file: tests/format.test.js
+  lines: [4, 4]
+  reason: Test code, not production output.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: tests/format.test.js
+  lines: [5, 5]
+  reason: Literal expectation in a test.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: tests/format.test.js
+  lines: [6, 6]
+  reason: Literal expectation in a test.

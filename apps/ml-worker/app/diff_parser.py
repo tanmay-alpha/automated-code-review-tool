@@ -76,18 +76,63 @@ def detect_language(file_path: str) -> str:
     return _LANGUAGE_BY_EXT.get(PurePosixPath(file_path).suffix.lower(), "unknown")
 
 
+_C_ESCAPES = {
+    "a": b"\a", "b": b"\b", "t": b"\t", "n": b"\n", "v": b"\v",
+    "f": b"\f", "r": b"\r", '"': b'"', "\\": b"\\",
+}
+
+
+def _unquote_path(path: str) -> str:
+    """Decode a path git C-quoted because it has non-ASCII or special bytes.
+
+    ``core.quotePath`` (on by default) writes ``"b/caf\\303\\251.py"``; read
+    literally, the quotes hide the extension and the file is never reviewed.
+    """
+    if len(path) < 2 or not (path.startswith('"') and path.endswith('"')):
+        return path
+    body = path[1:-1]
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        char = body[i]
+        octal = body[i + 1 : i + 4]
+        if char != "\\" or i + 1 == len(body):
+            out += char.encode("utf-8")
+            i += 1
+        elif len(octal) == 3 and all(digit in "01234567" for digit in octal):
+            out.append(int(octal, 8) & 0xFF)
+            i += 4
+        else:
+            out += _C_ESCAPES.get(body[i + 1], body[i + 1].encode("utf-8"))
+            i += 2
+    return out.decode("utf-8", errors="replace")
+
+
+def _strip_side_prefix(path: str) -> str:
+    return path[2:] if path.startswith(("a/", "b/")) else path
+
+
 def _path_from_git_header(line: str) -> str:
-    """Return the path after the first `` b/`` of a ``diff --git`` line, or ``""``."""
+    """Return the new path of a ``diff --git`` line, or ``""``.
+
+    Unquoted paths use the first `` b/`` like the Java ``HunkParser``; a quoted
+    new path (``"b/…"``) is decoded.
+    """
+    rest = line[len(_GIT_HEADER_PREFIX) :]
+    quoted = rest.rfind(' "b/')
+    if rest.endswith('"') and quoted >= 0:
+        return _strip_side_prefix(_unquote_path(rest[quoted + 1 :]))
     marker = line.find(" b/")
     return line[marker + 3 :] if marker >= 0 else ""
 
 
 def _path_from_file_header(line: str) -> str:
     """Return the path of a ``+++ b/x`` line; ``""`` for ``/dev/null``."""
-    path = line[4:].split("\t", 1)[0].strip()
+    raw = line[4:].strip()
+    path = _unquote_path(raw) if raw.startswith('"') else raw.split("\t", 1)[0].strip()
     if path == "/dev/null":
         return ""
-    return path[2:] if path.startswith(("a/", "b/")) else path
+    return _strip_side_prefix(path)
 
 
 def parse_diff(diff_text: str) -> list[FileHunk]:
@@ -118,7 +163,10 @@ def parse_diff(diff_text: str) -> list[FileHunk]:
             skip_file = True
             continue
         if line.startswith("+++ "):
+            # A text file header (plain ``diff -ru`` has no ``diff --git``
+            # line) starts a new file, so an earlier binary marker no longer applies.
             file_path = _path_from_file_header(line) or file_path
+            skip_file = False
             continue
         match = _HUNK_HEADER_RE.match(line)
         if not match:

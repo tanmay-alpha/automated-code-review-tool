@@ -74,12 +74,6 @@ class AntiPattern:
     description: str
     trainable: bool = False
 
-    @property
-    def explanation(self) -> str:
-        """User-facing finding text: the description folded onto one line."""
-        text = " ".join(self.description.split())
-        return text or f"{self.display_name} detected."
-
 
 @dataclass(frozen=True)
 class Taxonomy:

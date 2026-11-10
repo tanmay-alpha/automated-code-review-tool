@@ -1,0 +1,26 @@
+id: dev-08-ts-report-pagination
+title: 'TypeScript reports: nested user/order loops and two off-by-one boundaries'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: PERFORMANCE_QUADRATIC_LOOP
+  file: src/reports/pagination.ts
+  lines: [15, 16]
+  severity: major
+  note: Scans every order for every user; group orders by userId first.
+- antiPattern: unsupported
+  file: src/reports/pagination.ts
+  lines: [7, 7]
+  severity: major
+  defect: boundary_error
+  note: Returns pageSize + 1 items.
+- antiPattern: unsupported
+  file: src/reports/pagination.ts
+  lines: [26, 26]
+  severity: minor
+  defect: boundary_error
+  note: Zero-based page; the last page is totalPages - 1.
+negatives:
+- antiPattern: PERFORMANCE_QUADRATIC_LOOP
+  file: src/reports/pagination.ts
+  lines: [7, 7]
+  reason: Single loop.

@@ -1,0 +1,22 @@
+diff --git a/tests/test_billing.py b/tests/test_billing.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/tests/test_billing.py
+@@ -0,0 +1,16 @@
++import pytest
++
++from app.billing import apply_discount
++
++API_TOKEN = "test-token-0123456789abcdef"
++
++
++@pytest.mark.parametrize("amount,expected", [(100, 90), (250, 225)])
++def test_discount(amount, expected):
++    print("checking", amount)
++    assert apply_discount(amount, percent=10) == expected
++
++
++def test_rejects_negative():
++    with pytest.raises(ValueError):
++        apply_discount(-50, percent=10)

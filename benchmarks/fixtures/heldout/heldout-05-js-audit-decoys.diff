@@ -1,0 +1,23 @@
+diff --git a/src/lib/audit.js b/src/lib/audit.js
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/lib/audit.js
+@@ -0,0 +1,17 @@
++import crypto from "node:crypto";
++import { logger } from "./logger.js";
++
++export function auditQuery(name, params) {
++  logger.info("will execute(" + name + ") with " + params.length + " params");
++}
++
++export function objectId(content) {
++  // Git object ids use SHA-1 by design; this is not a security boundary.
++  return crypto.createHash("sha1").update(content).digest("hex");
++}
++
++export function hashPassword(password, salt) {
++  return crypto.createHash("md5").update(salt + password).digest("hex");
++}
++
++export const RETRY_MESSAGE = "Retry in 60 seconds (error 503)";

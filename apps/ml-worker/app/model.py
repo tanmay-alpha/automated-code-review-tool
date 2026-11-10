@@ -11,6 +11,7 @@ from typing import Any, Iterable, Protocol
 import torch
 
 from app.config import settings
+from app.finding_guidance import MODEL_CAVEAT, guidance_for
 from app.preprocessing import build_model_text
 from app.schemas import Finding
 from app.taxonomy import Severity, Taxonomy, load_taxonomy
@@ -61,6 +62,7 @@ class LabelMetadata:
     category: str
     severity: Severity
     explanation: str
+    remediation: str
 
 
 @dataclass(frozen=True)
@@ -77,7 +79,8 @@ def build_label_config(taxonomy: Taxonomy | None = None) -> tuple[LabelMetadata,
             anti_pattern_id=entry.id,
             category=entry.category,
             severity=entry.default_severity,
-            explanation=entry.explanation,
+            explanation=guidance_for(entry.id).explanation,
+            remediation=guidance_for(entry.id).remediation,
         )
         for entry in loaded.entries
         if entry.trainable
@@ -379,6 +382,8 @@ class AutomatedCodeReviewToolModel:
                     severity=metadata.severity,
                     confidence=round(score, 4),
                     explanation=metadata.explanation,
+                    remediation=metadata.remediation,
+                    caveat=MODEL_CAVEAT,
                 )
             )
         return ModelPrediction(tuple(findings), window_count)

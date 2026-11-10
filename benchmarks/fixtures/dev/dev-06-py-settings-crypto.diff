@@ -1,0 +1,35 @@
+diff --git a/config/settings.py b/config/settings.py
+index 2222222..3333333 100644
+--- a/config/settings.py
++++ b/config/settings.py
+@@ -1,4 +1,15 @@
++import hashlib
+ import os
+ 
+ DEBUG = os.environ.get("DEBUG") == "1"
+ DATABASE_URL = os.environ["DATABASE_URL"]
++SECRET_KEY = "django-insecure-7c1f9a2b4d6e8f0a1b3c5d7e9f"
++STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
++
++
++def hash_password(password):
++    return hashlib.sha1(password.encode("utf-8")).hexdigest()
++
++
++def etag_for(content):
++    return hashlib.md5(content).hexdigest()
+diff --git a/tests/test_settings.py b/tests/test_settings.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/tests/test_settings.py
+@@ -0,0 +1,9 @@
++from config.settings import hash_password
++
++TEST_PASSWORD = "correct-horse-battery-staple"
++
++
++def test_hash_password_is_stable():
++    password = "fixture-password-not-real"
++    assert hash_password(password) == hash_password(password)
++    assert len(hash_password(TEST_PASSWORD)) == 40
