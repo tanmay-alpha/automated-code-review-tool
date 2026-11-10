@@ -126,14 +126,20 @@ export function DiagnosticsView({ data }: { data: DiagnosticsResponse }) {
         <p className="mb-3 text-sm text-muted-foreground">
           Webhook deliveries and ML ingestion events for your repositories.
         </p>
-        <dl className="grid grid-cols-2 gap-4 md:grid-cols-3">
-          <Stat label="Webhooks pending" value={q.webhooksPending} />
-          <Stat label="Webhooks retrying" value={q.webhooksRetrying} warn={q.webhooksRetrying > 0} />
-          <Stat label="Dead-lettered webhooks" value={q.webhooksDeadLetter} warn={q.webhooksDeadLetter > 0} />
-          <Stat label="Oldest pending" value={formatAge(q.oldestPendingSeconds)} />
-          <Stat label="Outbox pending" value={q.outboxPending} />
-          <Stat label="Outbox failed" value={q.outboxFailed} warn={q.outboxFailed > 0} />
-        </dl>
+        {q ? (
+          <dl className="grid grid-cols-2 gap-4 md:grid-cols-3">
+            <Stat label="Webhooks pending" value={q.webhooksPending} />
+            <Stat label="Webhooks retrying" value={q.webhooksRetrying} warn={q.webhooksRetrying > 0} />
+            <Stat label="Dead-lettered webhooks" value={q.webhooksDeadLetter} warn={q.webhooksDeadLetter > 0} />
+            <Stat label="Oldest pending" value={formatAge(q.oldestPendingSeconds)} />
+            <Stat label="Outbox pending" value={q.outboxPending} />
+            <Stat label="Outbox failed" value={q.outboxFailed} warn={q.outboxFailed > 0} />
+          </dl>
+        ) : (
+          <p className="rounded-lg border p-6 text-center text-sm text-muted-foreground" data-testid="queue-unavailable">
+            Queue counts are unavailable while the database cannot be reached.
+          </p>
+        )}
       </section>
     </div>
   );

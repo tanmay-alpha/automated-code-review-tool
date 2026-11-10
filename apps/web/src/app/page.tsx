@@ -11,13 +11,18 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { LOGIN_PATH } from "@/lib/api";
 
-/** `?authError=<code>` values the API's OAuth callback redirects with. */
+/**
+ * `?authError=<code>` values: those the API's OAuth callback redirects with,
+ * plus `github_reauth_required`, set by AuthShell when the session refresh
+ * answers GITHUB_REAUTH_REQUIRED.
+ */
 const AUTH_ERRORS: Record<string, string> = {
   access_denied: "GitHub sign-in was cancelled.",
   oauth_state_invalid: "The sign-in link expired or was opened in another browser. Try again.",
   github_unavailable: "GitHub could not be reached. Try again shortly.",
   github_rejected: "GitHub rejected the sign-in request.",
   session_unavailable: "The session store is unavailable. Try again shortly.",
+  github_reauth_required: "Your GitHub authorization was revoked or expired. Sign in again to continue.",
 };
 
 function authErrorMessage(code: string | string[] | undefined): string | null {

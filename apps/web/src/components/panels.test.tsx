@@ -176,14 +176,21 @@ describe("DiagnosticsView", () => {
     expect(screen.getByText("Oldest pending").nextSibling).toHaveTextContent("2m");
   });
 
-  it("reports an outage", () => {
+  it("reports an outage without queue counts when the database is down", () => {
     render(
       <DiagnosticsView
-        data={{ ...DIAG, status: "down", components: { ...DIAG.components, database: { status: "down", detail: "Connection refused" } } }}
+        data={{
+          ...DIAG,
+          status: "down",
+          components: { ...DIAG.components, database: { status: "down", detail: "Connection refused" } },
+          queue: null,
+        }}
       />,
     );
     expect(screen.getByTestId("diagnostics-banner")).toHaveTextContent("Reviews are not running");
     expect(screen.getByTestId("diagnostics-banner")).toHaveTextContent("Database, ML worker");
+    expect(screen.getByTestId("queue-unavailable")).toHaveTextContent("database cannot be reached");
+    expect(screen.queryByText("Webhooks pending")).toBeNull();
   });
 
   it("formats queue ages", () => {

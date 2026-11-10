@@ -48,20 +48,34 @@ interface RequestOptions {
   body?: unknown;
 }
 
-let refreshInFlight: Promise<boolean> | null = null;
+/**
+ * Error code of the 401 that POST /api/auth/refresh answers when GitHub
+ * reports the stored grant revoked or expired: the session is gone and only a
+ * new GitHub sign-in restores it.
+ */
+export const GITHUB_REAUTH_REQUIRED = "GITHUB_REAUTH_REQUIRED";
+
+/** `ok`: new cookies issued; `reauth`: GITHUB_REAUTH_REQUIRED; `failed`: anything else. */
+type RefreshResult = "ok" | "reauth" | "failed";
+
+let refreshInFlight: Promise<RefreshResult> | null = null;
 
 /**
  * POST /api/auth/refresh — trades the refresh cookie for a new access cookie
  * (the access token lives 15 minutes). The API rotates the refresh token and
  * rejects reuse of the old one, so concurrent 401s must share one attempt.
  */
-function refreshSession(): Promise<boolean> {
+function refreshSession(): Promise<RefreshResult> {
   refreshInFlight ??= fetch("/api/auth/refresh", {
     method: "POST",
     credentials: "same-origin",
   })
-    .then((res) => res.ok)
-    .catch(() => false)
+    .then(async (res): Promise<RefreshResult> => {
+      if (res.ok) return "ok";
+      const err = await toApiError(res, "POST", "/api/auth/refresh");
+      return err.code === GITHUB_REAUTH_REQUIRED ? "reauth" : "failed";
+    })
+    .catch((): RefreshResult => "failed")
     .finally(() => {
       refreshInFlight = null;
     });
@@ -111,8 +125,19 @@ async function request<T>(
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
 
-  if (res.status === 401 && !isRetry && (await refreshSession())) {
-    return request<T>(path, opts, true);
+  if (res.status === 401 && !isRetry) {
+    const refreshed = await refreshSession();
+    if (refreshed === "ok") {
+      return request<T>(path, opts, true);
+    }
+    if (refreshed === "reauth") {
+      throw new ApiError(
+        "GitHub authorization was revoked or expired; sign in again.",
+        401,
+        path,
+        GITHUB_REAUTH_REQUIRED,
+      );
+    }
   }
 
   if (!res.ok) {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
   ApiError,
+  GITHUB_REAUTH_REQUIRED,
   getDiagnostics,
   getFindingSummary,
   getMe,
@@ -184,6 +185,19 @@ describe("api client", () => {
 
     const err = await caught(getMe());
     expect(err.status).toBe(401);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports GITHUB_REAUTH_REQUIRED when the refresh says GitHub revoked the grant", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, { status: 401 })) // /me
+      .mockResolvedValueOnce(
+        json(401, { error: "GITHUB_REAUTH_REQUIRED", message: "GitHub authorization was revoked", status: 401 }),
+      ); // /refresh
+
+    const err = await caught(getMe());
+    expect(err.status).toBe(401);
+    expect(err.code).toBe(GITHUB_REAUTH_REQUIRED);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

@@ -5,13 +5,14 @@ import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ApiError, getMe, logout } from "@/lib/api";
+import { ApiError, GITHUB_REAUTH_REQUIRED, getMe, logout } from "@/lib/api";
 import type { UserResponse } from "@/lib/types";
 
 /**
  * Wraps every authenticated page:
  *   1. Calls /api/auth/me on mount and shows a skeleton while waiting.
- *   2. On 401 → redirects to `/`, which hosts the "Login with GitHub" button.
+ *   2. On 401 → redirects to `/`, which hosts the "Login with GitHub" button
+ *      (with `?authError=github_reauth_required` when GitHub revoked the grant).
  *   3. On any other failure (API down, 5xx) → shows the error instead of
  *      pretending the user is logged out.
  *   4. On success → renders Sidebar + children.
@@ -34,7 +35,9 @@ export function AuthShell({ children }: AuthShellProps) {
       .catch((err: unknown) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) {
-          router.replace("/");
+          router.replace(
+            err.code === GITHUB_REAUTH_REQUIRED ? "/?authError=github_reauth_required" : "/",
+          );
         } else {
           setError(err instanceof Error ? err.message : "Unknown error");
         }

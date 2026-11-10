@@ -186,6 +186,16 @@ export interface MlWorkerHealth extends ComponentHealth {
   engine: string | null;
 }
 
+/** Counts are scoped to the caller's repositories. */
+export interface DiagnosticsQueue {
+  webhooksPending: number;
+  webhooksRetrying: number;
+  webhooksDeadLetter: number;
+  oldestPendingSeconds: number | null;
+  outboxPending: number;
+  outboxFailed: number;
+}
+
 export interface DiagnosticsResponse {
   status: HealthStatus;
   checkedAt: string;
@@ -195,15 +205,8 @@ export interface DiagnosticsResponse {
     mlWorker: MlWorkerHealth;
     github: ComponentHealth;
   };
-  /** Counts are scoped to the caller's repositories. */
-  queue: {
-    webhooksPending: number;
-    webhooksRetrying: number;
-    webhooksDeadLetter: number;
-    oldestPendingSeconds: number | null;
-    outboxPending: number;
-    outboxFailed: number;
-  };
+  /** Null when the database could not be queried. */
+  queue: DiagnosticsQueue | null;
 }
 
 // ---------- /api/metrics/* ----------
