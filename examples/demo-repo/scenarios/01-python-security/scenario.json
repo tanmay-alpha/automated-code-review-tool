@@ -1,0 +1,22 @@
+{
+  "branch": "demo/python-security",
+  "title": "Add refunds and payment key",
+  "description": "Python change with a hard-coded credential, string-built SQL and a swallowed exception.",
+  "expected": [
+    {
+      "antiPattern": "SECURITY_HARDCODED_SECRET",
+      "file": "app/orders.py"
+    },
+    {
+      "antiPattern": "SECURITY_SQL_INJECTION",
+      "file": "app/orders.py"
+    },
+    {
+      "antiPattern": "RELIABILITY_BROAD_EXCEPTION",
+      "file": "app/orders.py"
+    }
+  ],
+  "decoys": [
+    "parameterised UPDATE query with %s placeholder"
+  ]
+}

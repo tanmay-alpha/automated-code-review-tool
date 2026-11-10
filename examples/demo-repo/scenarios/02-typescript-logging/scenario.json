@@ -1,0 +1,16 @@
+{
+  "branch": "demo/typescript-logging",
+  "title": "Log profile responses",
+  "description": "TypeScript change with a leftover debug log next to text that only mentions console.log.",
+  "expected": [
+    {
+      "antiPattern": "MAINTAINABILITY_PRINT_STATEMENT",
+      "file": "web/client.ts"
+    }
+  ],
+  "decoys": [
+    "console.log mentioned inside a // comment",
+    "console.log( inside a string literal",
+    "fetch already bounded by AbortSignal.timeout"
+  ]
+}
