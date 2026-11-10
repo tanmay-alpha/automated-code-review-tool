@@ -368,14 +368,14 @@ class Runner:
         # SHA-256 decoy is unchanged base code: the report explicitly notes this
         # is a diff-scope exclusion, not evidence of standalone scanner accuracy.
         decoy_checks = {
-            "demo/python-security": [(scenario["decoys"][0], "app/orders.py", 12, 12, "SECURITY_SQL_INJECTION")],
+            "demo/python-security": [("app/orders.py", 12, 12, "SECURITY_SQL_INJECTION")],
             "demo/typescript-logging": [
-                (scenario["decoys"][0], "web/client.ts", 9, 9, "MAINTAINABILITY_PRINT_STATEMENT"),
-                (scenario["decoys"][1], "web/client.ts", 10, 10, "MAINTAINABILITY_PRINT_STATEMENT"),
-                (scenario["decoys"][2], "web/client.ts", 2, 4, "RELIABILITY_MISSING_TIMEOUT")],
-            "demo/java-crypto": [(scenario["decoys"][0], "src/main/java/demo/Checksums.java", 10, 10, "SECURITY_WEAK_CRYPTO")],
+                ("web/client.ts", 9, 9, "MAINTAINABILITY_PRINT_STATEMENT"),
+                ("web/client.ts", 10, 10, "MAINTAINABILITY_PRINT_STATEMENT"),
+                ("web/client.ts", 2, 4, "RELIABILITY_MISSING_TIMEOUT")],
+            "demo/java-crypto": [("src/main/java/demo/Checksums.java", 10, 10, "SECURITY_WEAK_CRYPTO")],
         }
-        for description, file, start, end, rule in decoy_checks[branch]:
+        for description, (file, start, end, rule) in zip(scenario["decoys"], decoy_checks[branch], strict=True):
             offending = [f for f in findings if f.get("filePath") == file and f.get("antiPattern") == rule
                          and f.get("lineStart") is not None and f.get("lineEnd") is not None
                          and f["lineStart"] <= end and f["lineEnd"] >= start]
