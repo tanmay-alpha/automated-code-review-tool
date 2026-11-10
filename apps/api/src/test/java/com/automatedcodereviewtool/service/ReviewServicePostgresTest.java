@@ -18,7 +18,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers
 @SpringBootTest(properties = {
         "app.webhook.recovery-delay-ms=3600000",
-        "app.outbox.poll-delay-ms=3600000"
+        "app.outbox.poll-delay-ms=3600000",
+        "app.publication.poll-delay-ms=3600000"
 })
 @ActiveProfiles("test")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)

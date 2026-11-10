@@ -10,6 +10,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 @Repository
 public interface ProcessedWebhookRepository extends JpaRepository<ProcessedWebhook, String> {
@@ -128,4 +130,21 @@ public interface ProcessedWebhookRepository extends JpaRepository<ProcessedWebho
                    @Param("claimedAttempt") int claimedAttempt,
                    @Param("retryAt") Instant retryAt,
                    @Param("message") String message);
+
+    /**
+     * Lock the delivery row and return the attempt that currently holds its
+     * processing lease (empty when it is not being processed). A review
+     * transaction commits only while it still owns that attempt.
+     */
+    @Query(value = """
+            SELECT attempt_count
+              FROM processed_webhooks
+             WHERE delivery_id = :deliveryId AND status = 'processing'
+               FOR UPDATE
+            """, nativeQuery = true)
+    Optional<Integer> lockProcessingAttempt(@Param("deliveryId") String deliveryId);
+
+    /** Review runs of one PR, newest first ({@code GET /api/reviews/{prId}/runs}). */
+    List<ProcessedWebhook> findTop50ByRepoIdAndGithubPrNumberOrderByProcessedAtDesc(UUID repoId,
+                                                                                   Integer githubPrNumber);
 }
