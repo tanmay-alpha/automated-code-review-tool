@@ -50,7 +50,11 @@ public record ReviewResponse(
             BigDecimal confidence,
             String explanation,
             String codeSnippet,
-            String status
+            String status,
+            // Explainability (worker contract): redacted triggering line, fix, applicability caveat.
+            String evidence,
+            String remediation,
+            String caveat
     ) {
     }
 }

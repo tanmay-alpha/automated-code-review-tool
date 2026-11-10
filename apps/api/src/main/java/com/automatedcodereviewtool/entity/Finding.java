@@ -66,6 +66,18 @@ public class Finding {
     @Column(name = "code_snippet", columnDefinition = "TEXT")
     private String codeSnippet;
 
+    /** The triggering added line, secret-redacted before it is stored (≤200 chars). */
+    @Column(name = "evidence", length = 200)
+    private String evidence;
+
+    /** How to fix the finding (≤300 chars). */
+    @Column(name = "remediation", length = 300)
+    private String remediation;
+
+    /** When the finding may not apply (≤300 chars). */
+    @Column(name = "caveat", length = 300)
+    private String caveat;
+
     /** Detector reported by the ML worker: {@code "model"} or {@code "fallback"} (rule-based). */
     @Column(name = "engine", length = 60)
     private String engine;
