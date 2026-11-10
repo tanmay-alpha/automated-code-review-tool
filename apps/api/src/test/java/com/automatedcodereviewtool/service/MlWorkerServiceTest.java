@@ -171,6 +171,41 @@ class MlWorkerServiceTest {
         assertThat(server.getRequestCount()).isEqualTo(1);
     }
 
+    /** Scenario: the worker answers 2xx with something that is not a review. */
+    @Test
+    void review_malformedSuccessBody_isAnMlWorkerFailureWithoutImmediateRetry() {
+        server.enqueue(new MockResponse()
+                .setHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .setResponseCode(200)
+                .setBody("{\"findings\": \"not-a-list\""));
+
+        assertThatThrownBy(() -> service.review("diff", "java"))
+                .isInstanceOf(MlWorkerException.class)
+                .hasMessage("ML worker returned a malformed response");
+        assertThat(server.getRequestCount()).isEqualTo(1);
+    }
+
+    @Test
+    void review_parsesExplainabilityFields() {
+        server.enqueue(new MockResponse()
+                .setHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .setResponseCode(200)
+                .setBody("""
+                        {"findings":[{"filePath":"a.py","lineStart":2,"antiPattern":"X","confidence":0.5,
+                          "evidence":"KEY = \\"<REDACTED_SECRET>\\"","remediation":"Use env vars.",
+                          "caveat":"Fixtures are fine."}],
+                         "qualityScore":90,"engine":"fallback"}
+                        """));
+
+        MlReviewResponse response = service.review("diff", "python");
+
+        assertThat(response.findings()).singleElement().satisfies(f -> {
+            assertThat(f.evidence()).isEqualTo("KEY = \"<REDACTED_SECRET>\"");
+            assertThat(f.remediation()).isEqualTo("Use env vars.");
+            assertThat(f.caveat()).isEqualTo("Fixtures are fine.");
+        });
+    }
+
     @Test
     void reviewFile_callsSameEndpoint_asReview() throws Exception {
         server.enqueue(new MockResponse()
