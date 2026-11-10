@@ -2,6 +2,7 @@ package com.automatedcodereviewtool.service;
 
 import com.automatedcodereviewtool.dto.MlFinding;
 import com.automatedcodereviewtool.dto.MlReviewResponse;
+import com.automatedcodereviewtool.entity.Finding;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -226,5 +227,44 @@ class ReviewServiceTest {
 
         assertEquals("src/a.py", ReviewService.resolveFilePath(finding(null, 9), lines));
         assertNull(ReviewService.resolveFilePath(finding(null, 10), lines));
+    }
+
+    @Test
+    void triageIdentityUsesNormalizedCodeNotLineNumbers() {
+        Finding first = Finding.builder().filePath("src/a.py").antiPattern("RULE")
+                .evidence("  dangerous_call()\r\n").lineStart(2).build();
+        Finding moved = Finding.builder().filePath("src/a.py").antiPattern("RULE")
+                .evidence("dangerous_call()").lineStart(30).build();
+        assertEquals(ReviewService.triageIdentity(first), ReviewService.triageIdentity(moved));
+        moved.setEvidence("different_call()");
+        assertTrue(!ReviewService.triageIdentity(first).equals(ReviewService.triageIdentity(moved)));
+        moved.setEvidence(first.getEvidence());
+        moved.setFilePath("src/b.py");
+        assertTrue(!ReviewService.triageIdentity(first).equals(ReviewService.triageIdentity(moved)));
+        moved.setFilePath(first.getFilePath());
+        moved.setAntiPattern("OTHER_RULE");
+        assertTrue(!ReviewService.triageIdentity(first).equals(ReviewService.triageIdentity(moved)));
+    }
+
+    @Test
+    void triageIdentityFallsBackToNormalizedSnippet() {
+        Finding first = Finding.builder().filePath("a.py").antiPattern("RULE").codeSnippet("a()\r\nb()\r\n").build();
+        Finding next = Finding.builder().filePath("a.py").antiPattern("RULE").codeSnippet("a()\nb()").build();
+        assertEquals(ReviewService.triageIdentity(first), ReviewService.triageIdentity(next));
+    }
+
+    @Test
+    void carryTriageCopiesEveryExistingDisposition() {
+        java.util.UUID reviewer = java.util.UUID.randomUUID();
+        for (String status : List.of("accepted", "dismissed", "fixed", "false_positive", "open")) {
+            Finding previous = Finding.builder().status(status).triageReason("reason " + status)
+                    .triagedAt(java.time.Instant.EPOCH).triagedBy(reviewer).build();
+            Finding next = Finding.builder().status("open").build();
+            ReviewService.carryTriage(previous, next);
+            assertEquals(status, next.getStatus());
+            assertEquals("reason " + status, next.getTriageReason());
+            assertEquals(java.time.Instant.EPOCH, next.getTriagedAt());
+            assertEquals(reviewer, next.getTriagedBy());
+        }
     }
 }

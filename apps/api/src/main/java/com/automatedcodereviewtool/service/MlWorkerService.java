@@ -115,6 +115,10 @@ public class MlWorkerService {
                         ex -> ex.getStatusCode().is4xxClientError()
                                 ? rejected(inputKind, ex.getStatusCode().value())
                                 : upstreamFailure(ex.getStatusCode().value()))
+                // A 2xx body that is not a review (deploy mismatch, proxy error page):
+                // re-sending the same request immediately would decode the same way.
+                .onErrorMap(org.springframework.core.codec.CodecException.class,
+                        ex -> new MlWorkerException("ML worker returned a malformed response", ex, false))
                 .onErrorMap(java.net.ConnectException.class,
                         ex -> new MlWorkerException("ML worker unavailable", ex))
                 .onErrorMap(java.nio.channels.UnresolvedAddressException.class,

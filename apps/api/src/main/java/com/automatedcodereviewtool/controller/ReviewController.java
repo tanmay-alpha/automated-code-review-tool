@@ -71,7 +71,10 @@ public class ReviewController {
                         f.getCodeSnippet(),
                         f.getStatus(),
                         f.getTriageReason(),
-                        f.getTriagedAt()
+                        f.getTriagedAt(),
+                        f.getEvidence(),
+                        f.getRemediation(),
+                        f.getCaveat()
                 ))
                 .toList();
 

@@ -54,7 +54,11 @@ public record ReviewResponse(
             String codeSnippet,
             String status,
             String triageReason,
-            Instant triagedAt
+            Instant triagedAt,
+            // Explainability (worker contract): redacted triggering line, fix, applicability caveat.
+            String evidence,
+            String remediation,
+            String caveat
     ) {
     }
 }

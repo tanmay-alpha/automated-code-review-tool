@@ -1,6 +1,5 @@
 package com.automatedcodereviewtool.service;
 
-import com.automatedcodereviewtool.dto.MlFinding;
 import com.automatedcodereviewtool.dto.ReviewResult;
 import com.automatedcodereviewtool.entity.ProcessedWebhook;
 import com.automatedcodereviewtool.entity.PullRequestEntity;
@@ -18,16 +17,19 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
-import java.util.Locale;
-import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
-/** Durable webhook ingress and restart-safe review processor. */
+/**
+ * Durable webhook ingress and restart-safe review processor.
+ *
+ * <p>Lifecycle of a delivery: {@code received} → {@code processing} (an
+ * attempt-fenced lease) → {@code completed} | {@code superseded} |
+ * {@code failed} (retry scheduled) | {@code dead_letter}. Publishing the
+ * result to GitHub is a separate, independently retried step owned by
+ * {@link ReviewPublisher}.</p>
+ */
 @Service
 public class WebhookService {
 
@@ -44,6 +46,8 @@ public class WebhookService {
     private final EncryptionService encryptionService;
     private final GitHubService githubService;
     private final ReviewService reviewService;
+    private final ReviewPublisher reviewPublisher;
+    private final ReviewPipelinePolicy reviewPolicy;
     private final SecretRedactor secretRedactor;
 
     public WebhookService(RepositoryRepository repositoryRepository,
@@ -52,6 +56,8 @@ public class WebhookService {
                           EncryptionService encryptionService,
                           GitHubService githubService,
                           ReviewService reviewService,
+                          ReviewPublisher reviewPublisher,
+                          ReviewPipelinePolicy reviewPolicy,
                           SecretRedactor secretRedactor) {
         this.repositoryRepository = repositoryRepository;
         this.pullRequestRepository = pullRequestRepository;
@@ -59,6 +65,8 @@ public class WebhookService {
         this.encryptionService = encryptionService;
         this.githubService = githubService;
         this.reviewService = reviewService;
+        this.reviewPublisher = reviewPublisher;
+        this.reviewPolicy = reviewPolicy;
         this.secretRedactor = secretRedactor;
     }
 
@@ -66,6 +74,10 @@ public class WebhookService {
      * Persist delivery identity and the PR state in one short transaction.
      * A false result means the repo is disconnected, or the exact delivery
      * or logical repo/PR/head review already exists.
+     *
+     * <p>The PR row is locked before it is updated, so a review transaction
+     * of an older head either commits first (and is then superseded by this
+     * head) or sees this head and discards its own result.</p>
      */
     @Transactional
     public boolean receiveDelivery(String deliveryId, GitHubWebhookEvent event, long repoGithubId) {
@@ -90,7 +102,7 @@ public class WebhookService {
         }
 
         PullRequestEntity pr = pullRequestRepository
-                .findByRepoAndGithubPrNumber(repo, event.pullRequest().number())
+                .findForUpdateByRepoAndGithubPrNumber(repo, event.pullRequest().number())
                 .orElseGet(() -> PullRequestEntity.builder()
                         .repo(repo)
                         .githubPrNumber(event.pullRequest().number())
@@ -136,58 +148,90 @@ public class WebhookService {
         // Fencing token: every completion write matches only this attempt, so a
         // worker whose lease expired can't overwrite a newer claim.
         int attempt = observedAttempt + 1;
+        ReviewRun run = null;
+        PullRequestEntity pr = null;
 
         try {
             Repository repo = repositoryRepository.findWithOwnerById(delivery.getRepoId())
                     .orElseThrow(() -> new IllegalStateException("repository no longer exists"));
-            PullRequestEntity pr = pullRequestRepository
+            pr = pullRequestRepository
                     .findByRepoAndGithubPrNumber(repo, delivery.getGithubPrNumber())
                     .orElseThrow(() -> new IllegalStateException("pull request state is missing"));
-            // The PR row was loaded in its own (now closed) session; point it at
-            // the fully loaded repo so the review can update it without a lazy proxy.
-            pr.setRepo(repo);
 
             if (!delivery.getHeadSha().equals(pr.getHeadSha())) {
                 finish(deliveryId, attempt, "superseded", "A newer PR head is already scheduled");
                 return;
             }
 
+            boolean postComments = reviewPolicy.postComments(repo);
+            run = new ReviewRun(deliveryId, attempt, delivery.getHeadSha(),
+                    postComments, postComments && reviewPolicy.inlineComments(repo));
+
             User owner = repo.getOwner();
             if (owner == null || owner.getAccessToken() == null) {
-                finish(deliveryId, attempt, "dead_letter", "Repository owner token is unavailable");
+                String error = GitHubApiException.Kind.AUTH_REVOKED.code()
+                        + ": repository owner token is unavailable; reconnect the repository";
+                reviewService.failPullRequest(pr.getId(), run, error);
+                finish(deliveryId, attempt, "dead_letter", error);
                 return;
             }
 
             String token = encryptionService.decrypt(owner.getAccessToken());
-            String diff = githubService.getFileDiff(token, repo.getFullName(), pr.getGithubPrNumber());
-            ReviewResult result = reviewService.orchestrateReview(pr, diff);
-            if (!result.success()) {
-                if (result.retryable()) {
-                    failDelivery(deliveryId, attempt, result.errorMessage());
-                } else {
-                    finish(deliveryId, attempt, "dead_letter", secretRedactor.redact(result.errorMessage()));
-                }
+            String diff;
+            try {
+                diff = githubService.getFileDiff(token, repo.getFullName(), pr.getGithubPrNumber());
+            } catch (GitHubApiException ex) {
+                handleGitHubFailure(delivery, attempt, run, pr, ex);
                 return;
             }
 
-            String warning = null;
-            try {
-                String markdown = reviewService.formatGithubComment(
-                        result.findings(), result.qualityScore(), result.engine());
-                githubService.postPrComment(
-                        token, repo.getFullName(), pr.getGithubPrNumber(), markdown);
-            } catch (Exception ex) {
-                // The review and ingestion event are already durable. Retrying the
-                // whole review could double-post when GitHub accepted a request but
-                // its response was lost, so retain a visible warning instead.
-                warning = "Review persisted but GitHub comment failed: " + safeError(ex);
-                log.warn("{}", warning);
+            ReviewResult result = reviewService.orchestrateReview(pr, diff, run);
+            switch (result.outcome()) {
+                case REVIEWED -> {
+                    finish(deliveryId, attempt, "completed", null);
+                    // The publication row committed with the findings; publishing now
+                    // is an optimisation over waiting for the publication poller,
+                    // which retries it if this attempt cannot run.
+                    try {
+                        reviewPublisher.publish(result.publicationId());
+                    } catch (RuntimeException ex) {
+                        log.warn("Publication {} deferred to the poller: {}", result.publicationId(), safeError(ex));
+                    }
+                }
+                case SUPERSEDED -> finish(deliveryId, attempt, "superseded", result.errorMessage());
+                case LEASE_LOST -> log.warn("Delivery {} attempt {} lost its lease; result discarded",
+                        deliveryId, attempt);
+                case FAILED -> {
+                    if (result.retryable()) {
+                        failDelivery(delivery, attempt, run, pr, result.errorMessage(), null);
+                    } else {
+                        finish(deliveryId, attempt, "dead_letter", secretRedactor.redact(result.errorMessage()));
+                    }
+                }
             }
-            finish(deliveryId, attempt, "completed", warning);
         } catch (Exception ex) {
-            failDelivery(deliveryId, attempt, safeError(ex));
             log.error("Webhook delivery {} failed: {}", deliveryId, safeError(ex));
+            failDelivery(delivery, attempt, run, pr, safeError(ex), null);
         }
+    }
+
+    /**
+     * Revoked tokens, vanished PRs, missing permissions and diffs GitHub
+     * refuses to render cannot succeed on retry: they dead-letter with the
+     * classified code and mark the PR failed. Rate limits retry at the
+     * reset time; 5xx and I/O failures retry with backoff.
+     */
+    private void handleGitHubFailure(ProcessedWebhook delivery, int attempt, ReviewRun run,
+                                     PullRequestEntity pr, GitHubApiException ex) {
+        String error = safe(ex.describe());
+        if (ex.retryable()) {
+            log.warn("Delivery {} attempt {}: retryable GitHub failure: {}", delivery.getDeliveryId(), attempt, error);
+            failDelivery(delivery, attempt, run, pr, error, ex.retryAt());
+            return;
+        }
+        log.warn("Delivery {} attempt {}: terminal GitHub failure: {}", delivery.getDeliveryId(), attempt, error);
+        reviewService.failPullRequest(pr.getId(), run, error);
+        finish(delivery.getDeliveryId(), attempt, "dead_letter", error);
     }
 
     private void finish(String deliveryId, int attempt, String status, String message) {
@@ -197,77 +241,33 @@ public class WebhookService {
         }
     }
 
-    private void failDelivery(String deliveryId, int attempt, String error) {
+    /**
+     * Schedule a retry (exponential backoff, or {@code notBefore} for a rate
+     * limit). The final attempt also marks the PR failed, so a dead-lettered
+     * delivery never leaves its PR showing {@code processing}.
+     */
+    private void failDelivery(ProcessedWebhook delivery, int attempt, ReviewRun run, PullRequestEntity pr,
+                              String error, Instant notBefore) {
+        String safeError = safe(error == null ? "review processing failed" : error);
+        if (attempt >= delivery.getMaxAttempts() && run != null && pr != null) {
+            reviewService.failPullRequest(pr.getId(), run, safeError);
+        }
         long baseSeconds = Math.min(600L, 10L << Math.min(attempt, 5));
         long jitter = ThreadLocalRandom.current().nextLong(Math.max(1L, baseSeconds / 4L));
-        int updated = processedWebhookRepository.markFailed(
-                deliveryId,
-                attempt,
-                Instant.now().plusSeconds(baseSeconds + jitter),
-                secretRedactor.redact(error == null ? "review processing failed" : error));
+        Instant retryAt = notBefore != null ? notBefore : Instant.now().plusSeconds(baseSeconds + jitter);
+        int updated = processedWebhookRepository.markFailed(delivery.getDeliveryId(), attempt, retryAt, safeError);
         if (updated != 1) {
             log.warn("Webhook delivery {} attempt {} lost its lease; failure not recorded",
-                    deliveryId, attempt);
+                    delivery.getDeliveryId(), attempt);
         }
     }
 
     private String safeError(Exception ex) {
-        String error = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
-        error = secretRedactor.redact(error);
-        return error.length() <= 2000 ? error : error.substring(0, 2000);
+        return safe(ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
     }
 
-    static String buildComment(List<MlFinding> findings, BigDecimal quality,
-                               int critical, int major, int minor, String engine) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("## 🔍 automated-code-review-tool Review\n\n");
-        String emoji = quality == null ? "❓"
-                : quality.compareTo(BigDecimal.valueOf(80)) >= 0 ? "✅"
-                : quality.compareTo(BigDecimal.valueOf(60)) >= 0 ? "⚠️" : "❌";
-        sb.append("**Quality Score: ")
-                .append(quality == null ? "?" : quality.toPlainString())
-                .append("/100** ").append(emoji).append("\n\n");
-
-        if (findings == null || findings.isEmpty()) {
-            sb.append("✅ No anti-patterns detected.\n");
-        } else {
-            sb.append("### Findings (")
-                    .append(critical).append(" critical · ")
-                    .append(major).append(" major · ")
-                    .append(minor).append(" minor)\n\n");
-            sb.append("| Severity | Pattern | File | Lines | Confidence |\n");
-            sb.append("|----------|---------|------|-------|------------|\n");
-            for (MlFinding finding : findings) {
-                String severity = finding.severity() == null
-                        ? "minor" : finding.severity().toLowerCase(Locale.ROOT);
-                String icon = switch (severity) {
-                    case "critical" -> "🔴 Critical";
-                    case "major" -> "🟠 Major";
-                    default -> "🟡 Minor";
-                };
-                String lines = (finding.lineStart() == null ? "?" : finding.lineStart().toString())
-                        + (finding.lineEnd() == null || finding.lineEnd().equals(finding.lineStart())
-                        ? "" : "-" + finding.lineEnd());
-                String confidence = finding.confidence() == null ? "?"
-                        : finding.confidence().multiply(BigDecimal.valueOf(100))
-                        .setScale(0, RoundingMode.HALF_UP) + "%";
-                sb.append("| ").append(icon)
-                        .append(" | ").append(nullToDash(finding.antiPattern()))
-                        .append(" | `").append(nullToDash(finding.filePath())).append('`')
-                        .append(" | ").append(lines)
-                        .append(" | ").append(confidence).append(" |\n");
-            }
-        }
-        sb.append("\n---\n");
-        sb.append("*Posted by [automated-code-review-tool](https://github.com/tanmay-alpha/automated-code-review-tool)");
-        if (engine != null && !engine.isBlank()) {
-            sb.append(" · detector: ").append("fallback".equals(engine) ? "rule-based" : engine);
-        }
-        sb.append("*\n");
-        return sb.toString();
-    }
-
-    private static String nullToDash(String value) {
-        return value == null ? "-" : value;
+    private String safe(String error) {
+        String redacted = secretRedactor.redact(error);
+        return redacted.length() <= 2000 ? redacted : redacted.substring(0, 2000);
     }
 }
