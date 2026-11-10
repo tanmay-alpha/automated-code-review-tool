@@ -242,6 +242,10 @@ export async function mockSignedInApi(page: Page): Promise<{ unhandled: string[]
 
 /** Fails with a readable list when axe finds WCAG 2.1 A/AA violations. */
 export async function expectNoA11yViolations(page: Page, include?: string) {
+  // After a client-side redirect Next.js streams <title> in with the RSC
+  // payload; scanning before it lands reports a missing title that users
+  // never see. A non-empty title proves the navigation has settled.
+  await expect(page).toHaveTitle(/\S/);
   let builder = new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]);
   if (include) builder = builder.include(include);
   const { violations } = await builder.analyze();
