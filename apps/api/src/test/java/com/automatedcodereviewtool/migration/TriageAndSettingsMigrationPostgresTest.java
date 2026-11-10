@@ -19,7 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V19–V21 on real PostgreSQL. Migrates to V18 first and seeds a finding
+ * V19–V21 on real PostgreSQL. Migrates to V17 (the last PostgreSQL migration
+ * before V19; V18 exists only in the H2 mirror) first and seeds a finding
  * dismissed under the old schema, so the V19 data migration (disposition_at
  * → triaged_at) and the constraints H2 cannot fully reproduce (btrim-based
  * reason check, regex CHECKs, FK ON DELETE SET NULL, index replacement)
@@ -47,7 +48,7 @@ class TriageAndSettingsMigrationPostgresTest {
                 PG.getJdbcUrl(), PG.getUsername(), PG.getPassword());
         jdbc = new JdbcTemplate(dataSource);
 
-        flyway(dataSource, "18").migrate();
+        flyway(dataSource, "17").migrate();
         jdbc.update("INSERT INTO users (id, github_id, github_username, access_token) VALUES (?, 1, 'u', 'enc')", USER_ID);
         jdbc.update("INSERT INTO repositories (id, github_id, full_name, owner_id) VALUES (?, 1, 'u/app', ?)", REPO_ID, USER_ID);
         jdbc.update("INSERT INTO pull_requests (id, github_pr_number, repo_id, status) VALUES (?, 1, ?, 'reviewed')", PR_ID, REPO_ID);
