@@ -14,7 +14,8 @@ import java.util.UUID;
 
 /**
  * Writes security events (rate limiting, rejected webhooks, oversized
- * requests, logout token revocation) to the {@code SECURITY} logger,
+ * requests, rejected cross-origin requests, logout and session revocation)
+ * to the {@code SECURITY} logger,
  * which logback-spring.xml routes to {@code logs/security-audit.log}.
  */
 @Component
@@ -37,6 +38,21 @@ public class SecurityEventLogger {
         event.put("timestamp", Instant.now());
 
         SECURITY_LOGGER.info("Token blacklisted: {}", formatEvent(event));
+    }
+
+    /**
+     * Logs revocation of every session of a user ("sign out everywhere").
+     *
+     * @param userId the user ID
+     * @param reason why the sessions were revoked
+     */
+    public void logSessionRevocation(UUID userId, String reason) {
+        Map<String, Object> event = createEvent("SESSION_REVOCATION");
+        event.put("userId", userId);
+        event.put("reason", reason);
+        event.put("timestamp", Instant.now());
+
+        SECURITY_LOGGER.info("All sessions revoked: {}", formatEvent(event));
     }
 
     /**

@@ -56,7 +56,7 @@ class ReviewControllerTest {
     static class PassThroughFilter {
         @org.springframework.context.annotation.Bean
         JwtAuthFilter jwtAuthFilter() {
-            return new JwtAuthFilter(null, null, null) {
+            return new JwtAuthFilter(null, null, null, null) {
                 @Override
                 protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res,
                                                 FilterChain chain) throws java.io.IOException, jakarta.servlet.ServletException {
@@ -153,7 +153,9 @@ class ReviewControllerTest {
         Finding f2 = Finding.builder().id(findingId2).pullRequest(pr)
                 .antiPattern("MagicNumber").category("readability")
                 .severity("low").confidence(new BigDecimal("0.80"))
-                .explanation("42 is magic").status("dismissed").build();
+                .explanation("42 is magic").status("dismissed")
+                .triageReason("generated constant table")
+                .triagedAt(Instant.parse("2026-11-01T10:00:00Z")).build();
 
         when(pullRequestRepository.findWithRepoAndOwnerById(prId)).thenReturn(Optional.of(pr));
         when(findingRepository.findAllByPullRequestId(prId)).thenReturn(List.of(f1, f2));
@@ -170,6 +172,8 @@ class ReviewControllerTest {
                 .andExpect(jsonPath("$.findings[0].antiPattern").value("GodClass"))
                 .andExpect(jsonPath("$.findings[0].status").value("open"))
                 .andExpect(jsonPath("$.findings[1].status").value("dismissed"))
+                .andExpect(jsonPath("$.findings[1].triageReason").value("generated constant table"))
+                .andExpect(jsonPath("$.findings[1].triagedAt").value("2026-11-01T10:00:00Z"))
                 .andExpect(jsonPath("$.repoFullName").value("o/r"))
                 .andExpect(jsonPath("$.repoOwnerLogin").value("test-user"));
     }

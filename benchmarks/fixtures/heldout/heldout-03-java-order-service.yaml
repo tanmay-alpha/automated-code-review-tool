@@ -1,0 +1,26 @@
+id: heldout-03-java-order-service
+title: 'Java order service: findById per id, Math.random reset token, reader leak, catch Throwable'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: PERFORMANCE_N_PLUS_ONE
+  file: src/main/java/com/example/orders/OrderService.java
+  lines: [18, 19]
+  severity: major
+  note: Use findAllById.
+- antiPattern: SECURITY_WEAK_CRYPTO
+  file: src/main/java/com/example/orders/OrderService.java
+  lines: [25, 25]
+  severity: major
+  note: Predictable password-reset token.
+- antiPattern: RELIABILITY_BROAD_EXCEPTION
+  file: src/main/java/com/example/orders/OrderService.java
+  lines: [36, 36]
+  severity: major
+  note: Catches Errors and hides validation bugs.
+- antiPattern: unsupported
+  file: src/main/java/com/example/orders/OrderService.java
+  lines: [29, 29]
+  severity: minor
+  defect: resource_leak
+  note: Reader never closed.
+negatives: []

@@ -1,0 +1,18 @@
+{
+  "branch": "demo/java-crypto",
+  "title": "Add legacy fingerprint",
+  "description": "Java change adding SHA-1 and a catch-all exception handler.",
+  "expected": [
+    {
+      "antiPattern": "SECURITY_WEAK_CRYPTO",
+      "file": "src/main/java/demo/Checksums.java"
+    },
+    {
+      "antiPattern": "RELIABILITY_BROAD_EXCEPTION",
+      "file": "src/main/java/demo/Checksums.java"
+    }
+  ],
+  "decoys": [
+    "existing SHA-256 digest is not weak crypto"
+  ]
+}

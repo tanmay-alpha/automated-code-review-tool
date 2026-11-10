@@ -1,0 +1,30 @@
+id: heldout-02-ts-billing-integration
+title: 'TypeScript billing integration: live key in source, fetch without timeout, nested matching loops'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: SECURITY_HARDCODED_SECRET
+  file: src/integrations/billing.ts
+  lines: [1, 1]
+  severity: critical
+  note: Live payment key committed.
+- antiPattern: RELIABILITY_MISSING_TIMEOUT
+  file: src/integrations/billing.ts
+  lines: [7, 9]
+  severity: minor
+  note: No AbortSignal timeout.
+- antiPattern: PERFORMANCE_QUADRATIC_LOOP
+  file: src/integrations/billing.ts
+  lines: [16, 17]
+  severity: major
+  note: Index payments by invoiceId.
+- antiPattern: unsupported
+  file: src/integrations/billing.ts
+  lines: [11, 11]
+  severity: major
+  defect: null_dereference
+  note: Non-null assertion on an optional field.
+negatives:
+- antiPattern: MAINTAINABILITY_PRINT_STATEMENT
+  file: src/integrations/billing.ts
+  lines: [5, 5]
+  reason: Inside a comment.

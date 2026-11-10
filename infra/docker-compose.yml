@@ -82,9 +82,15 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-bG9jYWwtZGV2LWVuY3J5cHRpb24ta2V5LTMyYnl0ZXM=}
       ML_WORKER_URL: http://ml-worker:8000
       ML_WORKER_SECRET: ${ML_WORKER_SECRET:-local-ml-worker-secret-change-me}
+      # The dashboard proxies /api/* to the API, so the browser-facing origin
+      # (cookies, CSRF Origin check, OAuth callback) is the web origin.
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      GITHUB_OAUTH_SCOPES: ${GITHUB_OAUTH_SCOPES:-read:user repo}
+      # GitHub webhooks and API-key clients (VS Code, GitHub Action) call the
+      # API directly; webhooks never pass through the dashboard.
       WEBHOOK_CALLBACK_URL: ${WEBHOOK_CALLBACK_URL:-http://localhost:8080/api/webhook/github}
       API_KEY_RPM: ${API_KEY_RPM:-60}
     ports:
@@ -110,10 +116,10 @@ services:
     build:
       context: ../apps/web
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
     environment:
       NODE_ENV: production
+      # Same-origin proxy target on the Compose network (server-side only).
+      API_INTERNAL_URL: http://api:8080
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

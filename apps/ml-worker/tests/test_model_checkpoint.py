@@ -224,3 +224,42 @@ def test_checkpoint_loading_disables_custom_code_and_unsafe_pickle(
     assert model_loader.call_args.kwargs["trust_remote_code"] is False
     assert model_loader.call_args.kwargs["weights_only"] is True
     assert tokenizer_loader.call_args.kwargs["trust_remote_code"] is False
+
+
+def test_model_findings_carry_guidance_and_model_caveat(
+    taxonomy: Taxonomy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    from unittest.mock import MagicMock
+
+    import torch
+
+    from app import model as model_module
+    from app.finding_guidance import GUIDANCE, MODEL_CAVEAT
+
+    model = MagicMock()
+    model.config = _stub_model(taxonomy, **_promotion_metadata(taxonomy)).config
+    model.to.return_value = model
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(
+        AutoModelForSequenceClassification=SimpleNamespace(
+            from_pretrained=MagicMock(return_value=model)
+        ),
+        AutoTokenizer=SimpleNamespace(from_pretrained=MagicMock()),
+    ))
+    labels = taxonomy.trainable_ids()
+    logits = torch.full((len(labels),), -5.0)
+    logits[0] = 5.0
+    monkeypatch.setattr(
+        model_module, "windowed_model_logits", lambda *_args, **_kwargs: (logits, 1)
+    )
+
+    serving = model_module.AutomatedCodeReviewToolModel(model_name="local-checkpoint")
+    prediction = serving.predict_hunk("@@ -0,0 +1 @@\n+x = 1", "python", file_path="a.py")
+
+    [finding] = prediction.findings
+    assert finding.antiPattern == labels[0]
+    assert finding.explanation == GUIDANCE[labels[0]].explanation
+    assert finding.remediation == GUIDANCE[labels[0]].remediation
+    assert finding.caveat == MODEL_CAVEAT
+    # A hunk-level classifier has no single triggering line.
+    assert finding.evidence is None

@@ -79,40 +79,56 @@ def duplicate_components(
     near_threshold: float = 0.85,
     shingle_size: int = 5,
 ) -> tuple[dict[str, str], list[DuplicatePair]]:
-    """Return sample-to-component IDs and all suspicious duplicate pairs."""
+    """Return sample-to-component IDs and all suspicious duplicate pairs.
+
+    Three signals join groups: identical normalized hunks (``exact``), shingle
+    similarity at or above ``near_threshold`` (``near``), and identical
+    normalized added code (``added_code``). The last catches the same change
+    applied in two pull requests whose surrounding context differs, which the
+    hunk-level signals miss; it needs at least ``shingle_size`` tokens so
+    trivial one-liners such as ``return None`` do not merge unrelated groups.
+    """
     if not 0 < near_threshold <= 1:
         raise ValueError("near_threshold must be in (0, 1]")
     groups = _UnionFind(record.group_key for record in records)
     normalized_hashes: dict[str, list[int]] = defaultdict(list)
+    added_hashes: dict[str, list[int]] = defaultdict(list)
     shingles: list[frozenset[str]] = []
     inverted: dict[str, list[int]] = defaultdict(list)
 
     for idx, record in enumerate(records):
         normalized = normalize_code(record.raw_hunk)
         normalized_hashes[hashlib.sha256(normalized.encode("utf-8")).hexdigest()].append(idx)
+        added = normalize_code(record.added_code)
+        if len(_TOKEN_RE.findall(added)) >= shingle_size:
+            added_hashes[hashlib.sha256(added.encode("utf-8")).hexdigest()].append(idx)
         item_shingles = token_shingles(record.raw_hunk, shingle_size)
         shingles.append(item_shingles)
         for shingle in item_shingles:
             inverted[shingle].append(idx)
 
-    exact_pairs: set[tuple[int, int]] = set()
-    for bucket in normalized_hashes.values():
-        for pos, left in enumerate(bucket):
-            for right in bucket[pos + 1 :]:
-                exact_pairs.add((left, right))
+    def bucket_pairs(buckets: Iterable[list[int]]) -> set[tuple[int, int]]:
+        return {
+            (left, right)
+            for bucket in buckets
+            for pos, left in enumerate(bucket)
+            for right in bucket[pos + 1 :]
+        }
 
-    candidates: set[tuple[int, int]] = set()
-    for bucket in inverted.values():
-        for pos, left in enumerate(bucket):
-            for right in bucket[pos + 1 :]:
-                candidates.add((left, right))
+    exact_pairs = bucket_pairs(normalized_hashes.values())
+    added_pairs = bucket_pairs(added_hashes.values())
+    candidates = bucket_pairs(inverted.values())
 
     pairs: list[DuplicatePair] = []
-    for left, right in sorted(exact_pairs | candidates):
-        similarity = 1.0 if (left, right) in exact_pairs else jaccard(shingles[left], shingles[right])
+    for left, right in sorted(exact_pairs | added_pairs | candidates):
+        if (left, right) in exact_pairs:
+            kind, similarity = "exact", 1.0
+        elif (left, right) in added_pairs:
+            kind, similarity = "added_code", 1.0
+        else:
+            kind, similarity = "near", jaccard(shingles[left], shingles[right])
         if similarity < near_threshold:
             continue
-        kind = "exact" if (left, right) in exact_pairs else "near"
         lrec, rrec = records[left], records[right]
         groups.union(lrec.group_key, rrec.group_key)
         pairs.append(DuplicatePair(lrec.sample_id, rrec.sample_id, kind, similarity))

@@ -1,0 +1,22 @@
+id: heldout-05-js-audit-decoys
+title: 'JavaScript audit helpers: SQL-looking log text, SHA-1 object ids, MD5 password hash'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: SECURITY_WEAK_CRYPTO
+  file: src/lib/audit.js
+  lines: [14, 14]
+  severity: major
+  note: MD5 for password hashing.
+negatives:
+- antiPattern: SECURITY_SQL_INJECTION
+  file: src/lib/audit.js
+  lines: [5, 5]
+  reason: Log message text, no query is run.
+- antiPattern: SECURITY_WEAK_CRYPTO
+  file: src/lib/audit.js
+  lines: [10, 10]
+  reason: Content addressing, not security.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: src/lib/audit.js
+  lines: [17, 17]
+  reason: Numbers inside a string literal.

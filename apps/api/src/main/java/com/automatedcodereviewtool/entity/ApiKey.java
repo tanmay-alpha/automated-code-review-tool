@@ -13,6 +13,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.Instant;
@@ -40,6 +41,7 @@ public class ApiKey {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    @ToString.Exclude
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
@@ -51,7 +53,8 @@ public class ApiKey {
     @Column(name = "prefix", nullable = false, length = 16, unique = true)
     private String prefix;
 
-    /** bcrypt hash of the full key. */
+    /** bcrypt hash of the full key. Never part of toString(). */
+    @ToString.Exclude
     @Column(name = "key_hash", nullable = false, length = 80)
     private String keyHash;
 

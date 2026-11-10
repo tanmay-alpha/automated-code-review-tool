@@ -1,0 +1,33 @@
+id: dev-02-ts-profile-client
+title: 'TypeScript profile client: real console.log next to comment/string decoys, fetch without timeout'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: MAINTAINABILITY_PRINT_STATEMENT
+  file: src/api/profile.ts
+  lines: [10, 10]
+  severity: minor
+  note: Debug output of a response in production code.
+- antiPattern: RELIABILITY_MISSING_TIMEOUT
+  file: src/api/profile.ts
+  lines: [7, 9]
+  severity: minor
+  note: fetch has no AbortSignal/timeout.
+- antiPattern: unsupported
+  file: src/api/profile.ts
+  lines: [12, 12]
+  severity: major
+  defect: null_dereference
+  note: The profile API omits user for deleted accounts; body.user may be undefined.
+negatives:
+- antiPattern: MAINTAINABILITY_PRINT_STATEMENT
+  file: src/api/profile.ts
+  lines: [3, 3]
+  reason: console.log inside a comment.
+- antiPattern: MAINTAINABILITY_PRINT_STATEMENT
+  file: src/api/profile.ts
+  lines: [4, 4]
+  reason: console.log inside a string literal.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: src/api/config.ts
+  lines: [1, 1]
+  reason: Port inside a string literal.

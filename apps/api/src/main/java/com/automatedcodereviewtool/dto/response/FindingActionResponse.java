@@ -1,17 +1,21 @@
 package com.automatedcodereviewtool.dto.response;
 
+import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Response body for {@code POST /api/scan/action}.
+ * Response body for {@code POST /api/scan/action}: the finding's triage
+ * state after the action, so the UI can update without a refetch.
  *
- * <p>Confirms the action was recorded. The finding itself is updated
- * by the controller (status + audit timestamp) — we just echo the ID
- * and the applied action so the UI can update without a refetch.</p>
+ * @param status    stored status: open, accepted, dismissed, fixed or false_positive
+ * @param reason    trimmed reason recorded with this action (null when none was given)
+ * @param triagedBy GitHub login of the user who performed the action
  */
 public record FindingActionResponse(
         UUID findingId,
-        String action,
-        String status
+        String status,
+        String reason,
+        Instant triagedAt,
+        String triagedBy
 ) {
 }

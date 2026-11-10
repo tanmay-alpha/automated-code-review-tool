@@ -59,6 +59,14 @@ export interface PullRequestSummary {
 
 // ---------- /api/reviews/{prId} → ReviewResponse.java ----------
 
+/** Stored triage state of a finding (`findings.status`). */
+export type FindingStatus =
+  | "open"
+  | "accepted"
+  | "dismissed"
+  | "fixed"
+  | "false_positive";
+
 export interface FindingDto {
   id: string;
   filePath: string;
@@ -71,7 +79,16 @@ export interface FindingDto {
   explanation: string | null;
   codeSnippet: string | null;
   /** Saved developer disposition; "open" until an action is recorded. */
-  status: "open" | FindingDisposition;
+  status: FindingStatus;
+  /** Reason recorded with the latest triage action (required for dismiss / false_positive). */
+  triageReason: string | null;
+  triagedAt: string | null;
+  /** The added line that triggered the finding, secret-redacted (≤200 chars). */
+  evidence: string | null;
+  /** How to fix it (≤300 chars). */
+  remediation: string | null;
+  /** When the finding may not apply (≤300 chars). */
+  caveat: string | null;
 }
 
 export interface ReviewDetailResponse {
@@ -93,19 +110,103 @@ export interface ReviewDetailResponse {
   findings: FindingDto[];
 }
 
+// ---------- /api/reviews/{prId}/runs ----------
+
+export interface ReviewRunPublication {
+  status: string;
+  commentUrl: string | null;
+  publishedHeadSha: string | null;
+}
+
+/** One webhook delivery processed for a pull request (newest first, max 50). */
+export interface ReviewRun {
+  deliveryId: string;
+  headSha: string | null;
+  action: string | null;
+  status: string;
+  attemptCount: number;
+  lastError: string | null;
+  receivedAt: string;
+  completedAt: string | null;
+  publication: ReviewRunPublication | null;
+}
+
 // ---------- /api/scan/action ----------
 
-/** Verb accepted by POST /api/scan/action (FindingActionRequest.java). */
-export type FindingAction = "accept" | "dismiss" | "fix";
+/** Verb accepted by POST /api/scan/action. */
+export type FindingAction =
+  | "accept"
+  | "dismiss"
+  | "fix"
+  | "false_positive"
+  | "reopen";
 
-/** Value the API stores in `findings.status` for each action. */
-export type FindingDisposition = "accepted" | "dismissed" | "fixed";
-
-/** POST /api/scan/action → FindingActionResponse.java */
-export interface FindingActionResponse {
+/** POST /api/scan/action body. `reason` is required for dismiss and false_positive. */
+export interface FindingActionRequest {
   findingId: string;
   action: FindingAction;
-  status: FindingDisposition;
+  reason?: string;
+}
+
+/** POST /api/scan/action → FindingActionResponse */
+export interface FindingActionResponse {
+  findingId: string;
+  status: FindingStatus;
+  reason: string | null;
+  triagedAt: string | null;
+  triagedBy: string | null;
+}
+
+// ---------- /api/repos/{id}/settings ----------
+
+export type SeverityLevel = "minor" | "major" | "critical";
+export type ReviewLanguage = "python" | "javascript" | "typescript" | "java";
+
+export interface RepoSettings {
+  /** Taxonomy IDs to report; empty means every rule. */
+  enabledRules: string[];
+  minSeverity: SeverityLevel;
+  /** 0..1 */
+  minConfidence: number;
+  postComments: boolean;
+  inlineComments: boolean;
+  languages: ReviewLanguage[];
+}
+
+// ---------- /api/diagnostics ----------
+
+export type HealthStatus = "up" | "degraded" | "down";
+
+export interface ComponentHealth {
+  status: HealthStatus;
+  detail: string | null;
+}
+
+export interface MlWorkerHealth extends ComponentHealth {
+  engine: string | null;
+}
+
+/** Counts are scoped to the caller's repositories. */
+export interface DiagnosticsQueue {
+  webhooksPending: number;
+  webhooksRetrying: number;
+  webhooksDeadLetter: number;
+  oldestPendingSeconds: number | null;
+  outboxPending: number;
+  outboxFailed: number;
+}
+
+export interface DiagnosticsResponse {
+  status: HealthStatus;
+  checkedAt: string;
+  components: {
+    database: ComponentHealth;
+    redis: ComponentHealth;
+    mlWorker: MlWorkerHealth;
+    github: ComponentHealth;
+  };
+  /** Null when the database could not be queried. */
+  queue: DiagnosticsQueue | null;
 }
 
 // ---------- /api/metrics/* ----------
@@ -125,6 +226,29 @@ export interface QualityTrendPoint {
   criticalCount: number;
   majorCount: number;
   minorCount: number;
+}
+
+export interface FindingSummaryByRule {
+  antiPattern: string;
+  total: number;
+  open: number;
+  accepted: number;
+  dismissed: number;
+  fixed: number;
+  falsePositive: number;
+}
+
+export interface FindingSummaryByEngine {
+  engine: string;
+  total: number;
+}
+
+/** GET /api/metrics/finding-summary?repo=…&days=… */
+export interface FindingSummaryResponse {
+  repoId: string;
+  days: number;
+  byRule: FindingSummaryByRule[];
+  byEngine: FindingSummaryByEngine[];
 }
 
 // ---------- /api/auth/api-keys ----------

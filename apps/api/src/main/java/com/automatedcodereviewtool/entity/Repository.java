@@ -1,6 +1,9 @@
 package com.automatedcodereviewtool.entity;
 
+import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
+import jakarta.persistence.Converter;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
@@ -18,6 +21,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -71,6 +75,40 @@ public class Repository {
     @Column(name = "consent_recorded_at")
     private Instant consentRecordedAt;
 
+    // --- review settings (GET/PUT /api/repos/{id}/settings, RepoReviewPolicy) ---
+
+    /** Taxonomy ids whose findings are reported; empty means every rule. */
+    @Convert(converter = CommaSeparatedListConverter.class)
+    @Column(name = "review_enabled_rules", nullable = false, length = 2000)
+    @Builder.Default
+    private List<String> reviewEnabledRules = List.of();
+
+    /** Lowest severity reported: {@code minor}, {@code major} or {@code critical}. */
+    @Column(name = "review_min_severity", nullable = false, length = 10)
+    @Builder.Default
+    private String reviewMinSeverity = "minor";
+
+    /** Findings below this confidence (0..1) are dropped. */
+    @Column(name = "review_min_confidence", nullable = false, precision = 4, scale = 3)
+    @Builder.Default
+    private BigDecimal reviewMinConfidence = BigDecimal.ZERO;
+
+    /** Whether the review summary is posted to the pull request. */
+    @Column(name = "review_post_comments", nullable = false)
+    @Builder.Default
+    private boolean reviewPostComments = true;
+
+    /** Whether findings are posted as inline review comments. */
+    @Column(name = "review_inline_comments", nullable = false)
+    @Builder.Default
+    private boolean reviewInlineComments = false;
+
+    /** Subset of {@link #REVIEW_LANGUAGES} whose files are reviewed. */
+    @Convert(converter = CommaSeparatedListConverter.class)
+    @Column(name = "review_languages", nullable = false, length = 100)
+    @Builder.Default
+    private List<String> reviewLanguages = REVIEW_LANGUAGES;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
@@ -78,4 +116,25 @@ public class Repository {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    /** Languages a repository can enable, in canonical order (also the default). */
+    public static final List<String> REVIEW_LANGUAGES = List.of("python", "javascript", "typescript", "java");
+
+    /**
+     * Stores a list of identifiers as one comma-separated column. Both
+     * vocabularies (taxonomy ids, language names) are {@code [A-Za-z0-9_]},
+     * which the V20 CHECK constraints enforce.
+     */
+    @Converter
+    public static class CommaSeparatedListConverter implements AttributeConverter<List<String>, String> {
+        @Override
+        public String convertToDatabaseColumn(List<String> values) {
+            return values == null ? "" : String.join(",", values);
+        }
+
+        @Override
+        public List<String> convertToEntityAttribute(String column) {
+            return column == null || column.isEmpty() ? List.of() : List.of(column.split(","));
+        }
+    }
 }

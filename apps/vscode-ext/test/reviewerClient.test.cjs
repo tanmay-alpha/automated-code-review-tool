@@ -9,6 +9,7 @@ const {
   exceedsContentLimit,
   mapFindingToDiagnosticData,
   postScan,
+  scanFilePath,
 } = require("../out/reviewerClient.js");
 
 const payload = {
@@ -188,4 +189,96 @@ test("real HTTP redirects cannot forward source code to another endpoint", async
   } finally {
     await Promise.all([close(origin), close(destination)]);
   }
+});
+
+const finding = {
+  antiPattern: "SECURITY_HARDCODED_SECRET",
+  severity: "critical",
+  confidence: 0.9,
+  lineStart: 2,
+  lineEnd: 2,
+  explanation: "Credential-like value detected.",
+};
+
+test("appends evidence, fix and caveat lines when present", () => {
+  const mapped = mapFindingToDiagnosticData({
+    ...finding,
+    evidence: ' password = "[REDACTED]" ',
+    remediation: "Load the secret from the environment.",
+    caveat: "May be a test fixture.",
+  });
+  assert.equal(
+    mapped.message,
+    "Security Hardcoded Secret (90% confidence): Credential-like value detected.\n" +
+      'Evidence: password = "[REDACTED]"\n' +
+      "Fix: Load the secret from the environment.\n" +
+      "Caveat: May be a test fixture.",
+  );
+});
+
+test("omits blank or missing explanation fields", () => {
+  for (const extra of [{}, { evidence: null, remediation: "  ", caveat: undefined }]) {
+    const mapped = mapFindingToDiagnosticData({ ...finding, ...extra });
+    assert.equal(mapped.message, "Security Hardcoded Secret (90% confidence): Credential-like value detected.");
+  }
+});
+
+test("missing or null severity maps to information instead of throwing", () => {
+  assert.equal(mapFindingToDiagnosticData({ ...finding, severity: null }).severity, "information");
+  const { severity: _omitted, ...withoutSeverity } = finding;
+  assert.equal(mapFindingToDiagnosticData(withoutSeverity).severity, "information");
+});
+
+test("explains rejected API keys, rate limits and oversized bodies", async () => {
+  const cases = [
+    [401, {}, /API key rejected.*Set API Key/],
+    [403, {}, /API key rejected/],
+    [429, { "retry-after": "17" }, /Rate limited.*17 seconds/],
+    [429, {}, /Rate limited/],
+    [413, {}, /too large/],
+  ];
+  for (const [status, headers, pattern] of cases) {
+    await assert.rejects(
+      postScan(payload, {
+        apiUrl: "https://review.example.test",
+        apiKey: "test-key",
+        fetchImpl: async () => new Response("body", { status, headers }),
+      }),
+      (error) => {
+        assert.ok(error instanceof ReviewerClientError);
+        assert.equal(error.status, status);
+        assert.match(error.message, pattern);
+        return true;
+      },
+    );
+  }
+});
+
+test("reports a timeout when the abort fires while reading the body", async () => {
+  await assert.rejects(
+    postScan(payload, {
+      apiUrl: "https://review.example.test",
+      apiKey: "test-key",
+      timeoutMs: 5,
+      fetchImpl: async (_url, init) => {
+        const body = new ReadableStream({
+          start(controller) {
+            init.signal.addEventListener("abort", () => controller.error(new Error("aborted")));
+          },
+        });
+        return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+      },
+    }),
+    /timed out after 5 ms/,
+  );
+});
+
+test("scanFilePath keeps relative paths and clamps overlong ones to the basename", () => {
+  assert.equal(scanFilePath("src/app.ts"), "src/app.ts");
+  const exact = "a/".repeat(511) + "bc";
+  assert.equal(exact.length, 1024);
+  assert.equal(scanFilePath(exact), exact);
+  assert.equal(scanFilePath("deep/".repeat(300) + "main.py"), "main.py");
+  assert.equal(scanFilePath("dir\\".repeat(300) + "Main.java"), "Main.java");
+  assert.equal(scanFilePath("x".repeat(2000)).length, 1024);
 });

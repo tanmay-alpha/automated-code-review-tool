@@ -12,14 +12,17 @@ import com.automatedcodereviewtool.entity.PredictionEvent;
 import com.automatedcodereviewtool.entity.PullRequestEntity;
 import com.automatedcodereviewtool.entity.QualityMetric;
 import com.automatedcodereviewtool.entity.Repository;
+import com.automatedcodereviewtool.entity.ReviewPublication;
 import com.automatedcodereviewtool.exception.InvalidDiffException;
 import com.automatedcodereviewtool.exception.MlWorkerException;
 import com.automatedcodereviewtool.repository.FindingRepository;
 import com.automatedcodereviewtool.repository.IngestionOutboxRepository;
 import com.automatedcodereviewtool.repository.PredictionEventRepository;
+import com.automatedcodereviewtool.repository.ProcessedWebhookRepository;
 import com.automatedcodereviewtool.repository.PullRequestRepository;
 import com.automatedcodereviewtool.repository.QualityMetricRepository;
 import com.automatedcodereviewtool.repository.RepositoryRepository;
+import com.automatedcodereviewtool.repository.ReviewPublicationRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -31,25 +34,37 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Orchestrates a single review: call ML worker → persist findings →
- * record rejected predictions → insert outbox event → update PR state.
+ * record rejected predictions → insert outbox event → queue the GitHub
+ * publication → update PR state.
  *
  * <p>Dataset capture is decoupled via the outbox: the review transaction
  * inserts an outbox event; a background worker consumes it. This ensures
  * dataset capture failure cannot affect normal PR review completion.</p>
+ *
+ * <p>Every write is fenced twice inside its transaction: the delivery row
+ * must still be leased by this attempt, and the locked PR row must still
+ * point at the head that was analysed. A stale worker or an older head
+ * therefore never overwrites newer review state.</p>
  */
 @Service
 public class ReviewService {
@@ -65,7 +80,20 @@ public class ReviewService {
     static final int MAX_DIFF_CHARS = 200_000;
     /** Upper bound for an error message stored on the PR row. */
     private static final int MAX_ERROR_CHARS = 2000;
+    /** Bounds from the worker contract for the explainability fields. */
+    static final int MAX_EVIDENCE_CHARS = 200;
+    static final int MAX_REMEDIATION_CHARS = 300;
+    static final int MAX_CAVEAT_CHARS = 300;
+    /** Inline review comments per PR head. */
+    static final int MAX_INLINE_COMMENTS = 10;
     private static final java.util.Set<String> SEVERITIES = java.util.Set.of("critical", "major", "minor");
+    /** Prediction-event status for worker findings the repository's settings exclude (V23). */
+    static final String STATUS_FILTERED_BY_SETTINGS = "filtered_by_repo_settings";
+    /**
+     * Developer dispositions that are never shown again on GitHub. They carry
+     * over to the same finding on later pushes (see {@link #carryTriage}).
+     */
+    public static final java.util.Set<String> SUPPRESSED_STATUSES = java.util.Set.of("dismissed", "false_positive");
 
     private final MlWorkerService mlWorkerService;
     private final FindingRepository findingRepository;
@@ -75,9 +103,12 @@ public class ReviewService {
     private final ReviewSampleBridge reviewSampleBridge;
     private final IngestionOutboxRepository outboxRepository;
     private final PredictionEventRepository predictionEventRepository;
+    private final ProcessedWebhookRepository processedWebhookRepository;
+    private final ReviewPublicationRepository publicationRepository;
     private final ObjectMapper objectMapper;
     private final SecretRedactor secretRedactor;
     private final TaxonomyService taxonomyService;
+    private final RepoReviewPolicy reviewPolicy;
     private final TransactionTemplate transactionTemplate;
 
     public ReviewService(MlWorkerService mlWorkerService,
@@ -88,9 +119,12 @@ public class ReviewService {
                          ReviewSampleBridge reviewSampleBridge,
                          IngestionOutboxRepository outboxRepository,
                          PredictionEventRepository predictionEventRepository,
+                         ProcessedWebhookRepository processedWebhookRepository,
+                         ReviewPublicationRepository publicationRepository,
                          ObjectMapper objectMapper,
                          SecretRedactor secretRedactor,
                          TaxonomyService taxonomyService,
+                         RepoReviewPolicy reviewPolicy,
                          PlatformTransactionManager transactionManager) {
         this.mlWorkerService = mlWorkerService;
         this.findingRepository = findingRepository;
@@ -100,32 +134,37 @@ public class ReviewService {
         this.reviewSampleBridge = reviewSampleBridge;
         this.outboxRepository = outboxRepository;
         this.predictionEventRepository = predictionEventRepository;
+        this.processedWebhookRepository = processedWebhookRepository;
+        this.publicationRepository = publicationRepository;
         this.objectMapper = objectMapper;
         this.secretRedactor = secretRedactor;
         this.taxonomyService = taxonomyService;
+        this.reviewPolicy = reviewPolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     /**
-     * Full review pipeline for a PR.
+     * Full review pipeline for the PR head of {@code run}.
      *
      * <p>Every worker prediction is recorded as a prediction event. Those
      * that can be located on a new-side line of the diff become findings;
      * the rest are stored as rejected events instead of being dropped.</p>
      *
      * <p>The worker call runs without a database transaction. Persistence of
-     * findings, redacted samples, and their outbox references is atomic.</p>
+     * findings, redacted samples, their outbox references and the GitHub
+     * publication is atomic, so a crash after the commit never loses the
+     * comment: the publication worker picks it up.</p>
      */
-    public ReviewResult orchestrateReview(PullRequestEntity pr, String diff) {
+    public ReviewResult orchestrateReview(PullRequestEntity pr, String diff, ReviewRun run) {
         if (diff == null || diff.isBlank()) {
             diff = "";
         }
 
         if (diff.length() > MAX_DIFF_CHARS) {
-            String message = "Diff too large to review (" + diff.length()
+            String message = "diff_too_large: Diff too large to review (" + diff.length()
                     + " characters; limit " + MAX_DIFF_CHARS + ")";
             log.warn("PR #{}: {}", pr.getGithubPrNumber(), message);
-            return failReview(pr, message, false);
+            return failReview(pr, run, message, false);
         }
 
         String language = MlWorkerService.detectLanguage(diff);
@@ -139,15 +178,16 @@ public class ReviewService {
             // retrying the same diff cannot help.
             String safeError = safeError(ex.getMessage(), "ML worker call failed");
             log.error("ML worker failed for PR #{}: {}", pr.getGithubPrNumber(), safeError);
-            return failReview(pr, safeError, !(ex instanceof InvalidDiffException));
+            return failReview(pr, run, safeError, !(ex instanceof InvalidDiffException));
         }
 
         Map<String, Map<Integer, String>> newLines = newSideLinesByFile(diff);
+        Map<String, Set<Integer>> addedLines = addedLinesByFile(diff);
         String reviewDiff = diff;
 
         try {
             ReviewResult persisted = transactionTemplate.execute(ignored ->
-                    persistReview(pr, reviewDiff, mlResponse, newLines));
+                    persistReview(pr.getId(), run, reviewDiff, mlResponse, newLines, addedLines));
             return Objects.requireNonNull(persisted, "review transaction returned no result");
         } catch (RuntimeException ex) {
             String safeError = safeError(ex.getMessage(), "review persistence failed");
@@ -156,15 +196,44 @@ public class ReviewService {
             boolean retryable = !isConstraintViolation(ex);
             log.error("Review persistence failed for PR #{} (retryable={}): {}",
                     pr.getGithubPrNumber(), retryable, safeError);
-            return failReview(pr, safeError, retryable);
+            return failReview(pr, run, safeError, retryable);
         }
     }
 
-    private ReviewResult failReview(PullRequestEntity pr, String safeError, boolean retryable) {
-        pr.setStatus(WebhookService.STATUS_FAILED);
-        pr.setErrorMessage(safeError);
-        pullRequestRepository.save(pr);
+    private ReviewResult failReview(PullRequestEntity pr, ReviewRun run, String safeError, boolean retryable) {
+        failPullRequest(pr.getId(), run, safeError);
         return ReviewResult.failed(safeError, retryable);
+    }
+
+    /**
+     * Mark the PR {@code failed} with an explainable message, but only while
+     * {@code run} still owns its delivery and the PR still points at the
+     * reviewed head: a stale failure never hides a newer review.
+     *
+     * @return whether the PR row was updated
+     */
+    public boolean failPullRequest(java.util.UUID prId, ReviewRun run, String message) {
+        String safe = safeError(message, "review failed");
+        Boolean updated = transactionTemplate.execute(ignored -> {
+            if (!ownsDelivery(run)) {
+                return false;
+            }
+            PullRequestEntity current = pullRequestRepository.findForUpdateById(prId).orElse(null);
+            if (current == null || !run.headSha().equals(current.getHeadSha())) {
+                return false;
+            }
+            current.setStatus(WebhookService.STATUS_FAILED);
+            current.setErrorMessage(safe);
+            return true;
+        });
+        return Boolean.TRUE.equals(updated);
+    }
+
+    /** Locks the delivery row; true while {@code run}'s attempt still holds the lease. */
+    private boolean ownsDelivery(ReviewRun run) {
+        return processedWebhookRepository.lockProcessingAttempt(run.deliveryId())
+                .map(attempt -> attempt == run.attempt())
+                .orElse(false);
     }
 
     /** Redacted and bounded: this text is stored on the PR row, logged, and returned by the API. */
@@ -187,54 +256,101 @@ public class ReviewService {
         return false;
     }
 
-    private ReviewResult persistReview(PullRequestEntity pr,
+    private ReviewResult persistReview(java.util.UUID prId,
+                                       ReviewRun run,
                                        String diff,
                                        MlReviewResponse mlResponse,
-                                       Map<String, Map<Integer, String>> newLines) {
-        // A re-review (new head SHA) replaces the previous findings.
+                                       Map<String, Map<Integer, String>> newLines,
+                                       Map<String, Set<Integer>> addedLines) {
+        // Fence 1: the delivery row is locked and must still be leased by this
+        // attempt. A worker whose lease expired and was re-claimed writes nothing.
+        if (!ownsDelivery(run)) {
+            log.warn("Delivery {} attempt {} lost its lease during analysis; review discarded",
+                    run.deliveryId(), run.attempt());
+            return ReviewResult.leaseLost();
+        }
+        // Fence 2: the PR row is locked and must still point at the analysed
+        // head. A push that arrived during analysis wins; its own delivery
+        // reviews the new head. This is also the managed entity every write
+        // below goes through, so no stale detached copy is merged back.
+        PullRequestEntity pr = pullRequestRepository.findForUpdateById(prId)
+                .orElseThrow(() -> new IllegalStateException("pull request state is missing"));
+        if (!run.headSha().equals(pr.getHeadSha())) {
+            log.info("PR #{} moved from {} to {} during analysis; review of the old head discarded",
+                    pr.getGithubPrNumber(), run.headSha(), pr.getHeadSha());
+            return ReviewResult.superseded("A newer PR head (" + pr.getHeadSha() + ") arrived during analysis");
+        }
+
+        // A re-review replaces the previous findings, but the developer's
+        // triage of a finding that is still there carries over to its successor.
+        Map<String, java.util.ArrayDeque<Finding>> triaged = triagedByIdentity(
+                findingRepository.findAllByPullRequestId(pr.getId()));
         findingRepository.deleteAllByPullRequestId(pr.getId());
 
         List<Finding> saved = new ArrayList<>();
         List<PredictionEvent> predictionEvents = new ArrayList<>();
         int rejected = 0;
-        BigDecimal score = MlWorkerService.computeQualityScore(mlResponse);
+        int filtered = 0;
+        List<MlFinding> reported = mlResponse.findings() == null ? List.of() : mlResponse.findings();
+        // Repository settings (rules, severity, confidence, languages). Excluded
+        // predictions are still recorded as events so the dataset stays complete.
+        java.util.Set<MlFinding> allowed = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        allowed.addAll(reviewPolicy.apply(pr.getRepo(), reported));
+        BigDecimal score = allowed.size() == reported.size()
+                ? MlWorkerService.computeQualityScore(mlResponse)
+                : MlWorkerService.computeQualityScore(new MlReviewResponse(
+                        reported.stream().filter(allowed::contains).toList(), null,
+                        mlResponse.processingTimeMs(), mlResponse.windowsProcessed(), mlResponse.engine(),
+                        mlResponse.modelVersion(), mlResponse.taxonomyVersion()));
 
-        if (mlResponse.findings() != null) {
-            for (MlFinding ml : mlResponse.findings()) {
-                AntiPattern taxonomy = taxonomyService.find(ml.antiPattern()).orElse(null);
-                PredictionEvent event = buildPredictionEvent(pr, ml, taxonomy, mlResponse);
-                String resolvedPath = resolveFilePath(ml, newLines);
-                String rejection = classifyRejection(ml, taxonomy, resolvedPath);
-                if (rejection != null) {
-                    event.setStatus(rejection);
-                    event.setRejectionReason(rejection.replace("rejected_", ""));
-                    rejected++;
-                    log.warn("Rejected prediction: antiPattern={} file={} line={} reason={}",
-                            ml.antiPattern(), ml.filePath(), ml.lineStart(), rejection);
-                } else {
-                    event.setStatus("persisted");
-                    // Category and severity come from the canonical taxonomy row, so a
-                    // worker value outside the findings CHECK constraints cannot fail
-                    // (and roll back) the whole review.
-                    Finding f = Finding.builder()
-                            .pullRequest(pr)
-                            .filePath(resolvedPath)
-                            .lineStart(ml.lineStart())
-                            .lineEnd(ml.lineEnd())
-                            .antiPattern(taxonomy.getId())
-                            .category(taxonomy.getCategory())
-                            .severity(taxonomy.getDefaultSeverity())
-                            .confidence(clampConfidence(ml.confidence()))
-                            .explanation(ml.explanation())
-                            .codeSnippet(extractCodeSnippet(ml, newLines.get(resolvedPath)))
-                            .engine(mlResponse.engine())
-                            .modelVersion(mlResponse.modelVersion())
-                            .taxonomyVersion(mlResponse.taxonomyVersion())
-                            .build();
-                    saved.add(findingRepository.save(f));
+        for (MlFinding ml : reported) {
+            AntiPattern taxonomy = taxonomyService.find(ml.antiPattern()).orElse(null);
+            PredictionEvent event = buildPredictionEvent(pr, ml, taxonomy, mlResponse);
+            String resolvedPath = resolveFilePath(ml, newLines);
+            String rejection = classifyRejection(ml, taxonomy, resolvedPath);
+            if (rejection != null) {
+                event.setStatus(rejection);
+                event.setRejectionReason(rejection.replace("rejected_", ""));
+                rejected++;
+                log.warn("Rejected prediction: antiPattern={} file={} line={} reason={}",
+                        ml.antiPattern(), ml.filePath(), ml.lineStart(), rejection);
+            } else if (!allowed.contains(ml)) {
+                event.setStatus(STATUS_FILTERED_BY_SETTINGS);
+                event.setRejectionReason("repository_settings");
+                filtered++;
+            } else {
+                event.setStatus("persisted");
+                // Category and severity come from the canonical taxonomy row, so a
+                // worker value outside the findings CHECK constraints cannot fail
+                // (and roll back) the whole review.
+                Finding f = Finding.builder()
+                        .pullRequest(pr)
+                        .filePath(resolvedPath)
+                        .lineStart(ml.lineStart())
+                        .lineEnd(ml.lineEnd())
+                        .antiPattern(taxonomy.getId())
+                        .category(taxonomy.getCategory())
+                        .severity(taxonomy.getDefaultSeverity())
+                        .confidence(clampConfidence(ml.confidence()))
+                        .explanation(ml.explanation())
+                        .evidence(bounded(secretRedactor.redact(ml.evidence()), MAX_EVIDENCE_CHARS))
+                        .remediation(bounded(ml.remediation(), MAX_REMEDIATION_CHARS))
+                        .caveat(bounded(ml.caveat(), MAX_CAVEAT_CHARS))
+                        .codeSnippet(extractCodeSnippet(ml, newLines.get(resolvedPath)))
+                        .engine(mlResponse.engine())
+                        .modelVersion(mlResponse.modelVersion())
+                        .taxonomyVersion(mlResponse.taxonomyVersion())
+                        .build();
+                java.util.ArrayDeque<Finding> previous = triaged.get(triageIdentity(f));
+                if (previous != null && !previous.isEmpty()) {
+                    carryTriage(previous.poll(), f);
                 }
-                predictionEvents.add(predictionEventRepository.save(event));
+                saved.add(findingRepository.save(f));
             }
+            predictionEvents.add(predictionEventRepository.save(event));
+        }
+        if (filtered > 0) {
+            log.info("PR #{}: {} prediction(s) excluded by repository settings", pr.getGithubPrNumber(), filtered);
         }
 
         // Persist redacted samples before the outbox. The event contains only
@@ -272,18 +388,124 @@ public class ReviewService {
         IngestionOutbox durableEvent = outboxRepository.save(outbox);
         log.info("Queued outbox event {} for PR #{}", durableEvent.getId(), pr.getGithubPrNumber());
 
+        ReviewPublication publication = queuePublication(pr, run, mlResponse.engine(), saved, addedLines);
+
         pr.setQualityScore(score);
         pr.setStatus(WebhookService.STATUS_REVIEWED);
         pr.setErrorMessage(null);
         pr.setReviewedAt(Instant.now());
-        pullRequestRepository.save(pr);
 
         updateRepositoryQualityScore(pr.getRepo(), score);
         updateQualityMetric(pr.getRepo(), score, saved);
 
-        log.info("PR #{} reviewed — score={}, findings={}, rejected={}",
-                pr.getGithubPrNumber(), score, saved.size(), rejected);
-        return ReviewResult.of(pr, saved, score, mlResponse.engine());
+        log.info("PR #{} reviewed — score={}, findings={}, rejected={}, publication={}",
+                pr.getGithubPrNumber(), score, saved.size(), rejected, publication.getStatus());
+        return ReviewResult.of(pr, saved, score, mlResponse.engine(), publication.getId());
+    }
+
+    /**
+     * Insert (or, for a re-review of the same delivery, reset) the GitHub
+     * publication of this head, in the review transaction. Pending
+     * publications of older heads of the PR are superseded here.
+     */
+    private ReviewPublication queuePublication(PullRequestEntity pr, ReviewRun run, String engine,
+                                               List<Finding> saved, Map<String, Set<Integer>> addedLines) {
+        Instant now = Instant.now();
+        publicationRepository.supersedeOtherHeads(pr.getId(), run.headSha(),
+                now.minus(ReviewPublisher.LEASE));
+        ReviewPublication publication = publicationRepository.findByDeliveryId(run.deliveryId())
+                .orElseGet(() -> ReviewPublication.builder()
+                        .deliveryId(run.deliveryId())
+                        .prId(pr.getId())
+                        .createdAt(now)
+                        .build());
+        boolean inline = run.postComments() && run.inlineComments();
+        publication.setHeadSha(run.headSha());
+        publication.setStatus(run.postComments() ? ReviewPublication.PENDING : ReviewPublication.SKIPPED);
+        publication.setLastError(run.postComments() ? null : "Comments are disabled for this repository");
+        publication.setInlineComments(inline);
+        publication.setInlineFindingIds(inline ? inlineCandidates(saved, addedLines) : null);
+        publication.setEngine(engine);
+        publication.setAttemptCount(0);
+        publication.setAvailableAt(now);
+        publication.setProcessingStartedAt(null);
+        publication.setReviewId(null);
+        publication.setUpdatedAt(now);
+        return publicationRepository.save(publication);
+    }
+
+    /**
+     * Up to {@link #MAX_INLINE_COMMENTS} finding ids, most severe first,
+     * whose line was added by the PR: GitHub only accepts review comments on
+     * lines of the diff, and context lines would comment on unchanged code.
+     */
+    private String inlineCandidates(List<Finding> saved, Map<String, Set<Integer>> addedLines) {
+        List<String> ids = saved.stream()
+                .filter(f -> f.getLineStart() != null
+                        && !SUPPRESSED_STATUSES.contains(f.getStatus())
+                        && addedLines.getOrDefault(f.getFilePath(), Set.of()).contains(f.getLineStart()))
+                .sorted(ReviewCommentFormatter.SEVERITY_ORDER)
+                .limit(MAX_INLINE_COMMENTS)
+                .map(f -> f.getId().toString())
+                .toList();
+        try {
+            return objectMapper.writeValueAsString(ids);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Could not serialize inline finding ids", e);
+        }
+    }
+
+    private static String bounded(String value, int max) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String trimmed = value.strip();
+        return trimmed.length() <= max ? trimmed : ReviewCommentFormatter.truncate(trimmed, max);
+    }
+
+    // -----------------------------------------------------------------
+    // Triage carry-over
+    // -----------------------------------------------------------------
+
+    /** Previous findings with a developer disposition, grouped by {@link #triageIdentity}. */
+    private static Map<String, java.util.ArrayDeque<Finding>> triagedByIdentity(List<Finding> previous) {
+        Map<String, java.util.ArrayDeque<Finding>> byIdentity = new HashMap<>();
+        for (Finding f : previous) {
+            if (f.getStatus() != null && !"open".equals(f.getStatus())) {
+                byIdentity.computeIfAbsent(triageIdentity(f), k -> new java.util.ArrayDeque<>()).add(f);
+            }
+        }
+        return byIdentity;
+    }
+
+    /**
+     * The same finding across pushes: file, rule and the flagged code — the
+     * redacted triggering line when the worker reported one, else the snippet
+     * around it. Line numbers are left out so the identity survives edits
+     * elsewhere in the file; a change to the flagged code is a new finding.
+     */
+    static String triageIdentity(Finding f) {
+        String source = f.getEvidence() != null && !f.getEvidence().isBlank() ? "e:" + f.getEvidence().strip()
+                : "s:" + (f.getCodeSnippet() == null ? "" : f.getCodeSnippet().strip());
+        String normalized = source.replace("\r\n", "\n").strip();
+        try {
+            String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(normalized.getBytes(StandardCharsets.UTF_8)));
+            return f.getFilePath() + '\u0000' + f.getAntiPattern() + '\u0000' + hash;
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("JDK must support SHA-256", ex);
+        }
+    }
+
+    /**
+     * Copies the developer's disposition to unchanged code on a later push:
+     * status, reason, when and by whom it was triaged.
+     */
+    static void carryTriage(Finding from, Finding to) {
+        to.setStatus(from.getStatus());
+        to.setTriageReason(from.getTriageReason());
+        to.setTriagedAt(from.getTriagedAt());
+        to.setTriagedBy(from.getTriagedBy());
     }
 
     // -----------------------------------------------------------------
@@ -462,31 +684,27 @@ public class ReviewService {
         return snippet.isEmpty() ? null : snippet;
     }
 
-    // -----------------------------------------------------------------
-    // GitHub comment markdown
-    // -----------------------------------------------------------------
-
-    String formatGithubComment(List<Finding> findings, BigDecimal score, String engine) {
-        int critical = 0, major = 0, minor = 0;
-        for (Finding f : findings) {
-            String sev = f.getSeverity() == null ? "minor" : f.getSeverity().toLowerCase(Locale.ROOT);
-            if ("critical".equals(sev)) critical++;
-            else if ("major".equals(sev)) major++;
-            else minor++;
+    /** New-file line numbers of lines the diff adds ({@code +}), per file path. */
+    static Map<String, Set<Integer>> addedLinesByFile(String diff) {
+        Map<String, Set<Integer>> byFile = new LinkedHashMap<>();
+        for (HunkParser.FileDiff file : HunkParser.parse(diff).files()) {
+            Set<Integer> added = byFile.computeIfAbsent(file.newPath(), k -> new HashSet<>());
+            for (HunkParser.FileHunk hunk : file.hunks()) {
+                String[] raw = hunk.rawHunk().split("\n", -1);
+                int lineNo = hunk.newStart();
+                for (int i = 1; i < raw.length; i++) {
+                    String line = raw[i];
+                    if (line.startsWith("-") || line.startsWith("\\")) {
+                        continue;
+                    }
+                    if (line.startsWith("+")) {
+                        added.add(lineNo);
+                    }
+                    lineNo++;
+                }
+            }
         }
-        return WebhookService.buildComment(findings.stream()
-                        .map(f -> new MlFinding(
-                                f.getFilePath(),
-                                null,
-                                f.getLineStart(),
-                                f.getLineEnd(),
-                                f.getAntiPattern(),
-                                f.getCategory(),
-                                f.getSeverity(),
-                                f.getConfidence(),
-                                f.getExplanation()))
-                        .toList(),
-                score, critical, major, minor, engine);
+        return byFile;
     }
 
     // -----------------------------------------------------------------

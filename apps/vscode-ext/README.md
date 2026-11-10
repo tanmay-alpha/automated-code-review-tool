@@ -67,12 +67,25 @@ Open Settings and search for `automated-code-review-tool`:
 - `automated-code-review-tool: Set API Key`
 - `automated-code-review-tool: Clear API Key`
 
+Each diagnostic shows the rule, confidence and explanation, followed — when
+the API provides them — by `Evidence:` (the triggering line, secret-redacted),
+`Fix:` (remediation) and `Caveat:` (when the finding may not apply) lines.
+
 The client skips files longer than 200,000 characters (the API's request
 limit), applies a 15-second request timeout, clears stale diagnostics after
-failures, and deduplicates repeated findings.
+failures, and deduplicates repeated findings. When a file is saved again while
+a scan is in flight, only the newest scan's result is applied. The file path
+sent to the API is workspace-relative (never the absolute local path), and only
+the file name is sent if that path exceeds the API's 1,024-character limit.
+
+The workspace scan checks the API key once, runs in a cancellable progress
+notification, does not show a popup per file, stops at the first rejected key
+(401/403) or rate limit (429), and ends with one scanned/failed/skipped summary.
+
 Redirects are rejected so source code cannot be forwarded to another endpoint.
 API URLs cannot contain credentials, queries or fragments. HTTP failures show
-status only, never response bodies that might echo source code or credentials.
+the status and a hint (key rejected, rate limited with `Retry-After`, request
+too large), never response bodies that might echo source code or credentials.
 The server decides which concrete taxonomy IDs are detected; the extension does
 not contain a separate label list.
 

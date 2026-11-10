@@ -1,0 +1,15 @@
+id: dev-13-py-unicode-path
+title: 'Python file with a non-ASCII path (git C-quoted header): committed key and debug print'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: SECURITY_HARDCODED_SECRET
+  file: app/services/café.py
+  lines: [4, 4]
+  severity: critical
+  note: Key committed in source.
+- antiPattern: MAINTAINABILITY_PRINT_STATEMENT
+  file: app/services/café.py
+  lines: [8, 8]
+  severity: minor
+  note: Debug output in a service.
+negatives: []

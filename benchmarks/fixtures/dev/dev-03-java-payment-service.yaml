@@ -1,0 +1,30 @@
+id: dev-03-java-payment-service
+title: 'Java payment service: swallowed exception, MD5 signature, client without timeout, stream leak'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: RELIABILITY_MISSING_TIMEOUT
+  file: src/main/java/com/example/payments/PaymentService.java
+  lines: [12, 12]
+  severity: minor
+  note: newHttpClient() has no connect timeout.
+- antiPattern: RELIABILITY_BROAD_EXCEPTION
+  file: src/main/java/com/example/payments/PaymentService.java
+  lines: [22, 22]
+  severity: major
+  note: Every charge failure, including bugs, becomes `false`.
+- antiPattern: SECURITY_WEAK_CRYPTO
+  file: src/main/java/com/example/payments/PaymentService.java
+  lines: [28, 28]
+  severity: major
+  note: MD5 used for a payload signature.
+- antiPattern: unsupported
+  file: src/main/java/com/example/payments/PaymentService.java
+  lines: [33, 33]
+  severity: minor
+  defect: resource_leak
+  note: Stream never closed; needs try-with-resources.
+negatives:
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: src/main/java/com/example/payments/PaymentService.java
+  lines: [42, 42]
+  reason: Format string literal.

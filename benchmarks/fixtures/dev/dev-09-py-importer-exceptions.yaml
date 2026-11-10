@@ -1,0 +1,25 @@
+id: dev-09-py-importer-exceptions
+title: 'Python importer: swallowed broad exceptions, a log-and-reraise handler, and a silent wrong default'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: RELIABILITY_BROAD_EXCEPTION
+  file: app/importer.py
+  lines: [23, 23]
+  severity: major
+  note: Any read failure silently reports 0 imported rows.
+- antiPattern: RELIABILITY_BROAD_EXCEPTION
+  file: app/importer.py
+  lines: [38, 38]
+  severity: major
+  note: Bare except swallows everything, including KeyboardInterrupt.
+- antiPattern: unsupported
+  file: app/importer.py
+  lines: [16, 17]
+  severity: major
+  defect: incorrect_exception_handling
+  note: A malformed amount silently becomes 0.
+negatives:
+- antiPattern: RELIABILITY_BROAD_EXCEPTION
+  file: app/importer.py
+  lines: [29, 29]
+  reason: Logs with context and re-raises.

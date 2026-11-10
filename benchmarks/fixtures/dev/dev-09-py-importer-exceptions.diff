@@ -1,0 +1,44 @@
+diff --git a/app/importer.py b/app/importer.py
+index 2222222..3333333 100644
+--- a/app/importer.py
++++ b/app/importer.py
+@@ -1,5 +1,6 @@
+ import csv
+ import logging
++from decimal import Decimal, InvalidOperation
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -7,3 +8,32 @@
+ def read_rows(path):
+     with open(path, newline="") as handle:
+         return list(csv.DictReader(handle))
++
++
++def parse_amount(raw):
++    try:
++        return Decimal(raw)
++    except InvalidOperation:
++        return Decimal(0)
++
++
++def import_file(path, validate):
++    try:
++        rows = read_rows(path)
++    except Exception:
++        return 0
++    validated = []
++    for row in rows:
++        try:
++            validated.append(validate(row))
++        except Exception as exc:
++            logger.exception("invalid row %s: %s", row.get("id"), exc)
++            raise
++    return len(validated)
++
++
++def cleanup(path):
++    try:
++        path.unlink()
++    except:
++        pass

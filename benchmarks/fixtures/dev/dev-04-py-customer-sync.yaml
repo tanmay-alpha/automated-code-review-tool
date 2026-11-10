@@ -1,0 +1,35 @@
+id: dev-04-py-customer-sync
+title: 'Python sync job: per-order ORM and HTTP calls, no timeout, unlocked cache'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: PERFORMANCE_N_PLUS_ONE
+  file: app/sync/customers.py
+  lines: [12, 13]
+  severity: major
+  note: One customer query per order.
+- antiPattern: PERFORMANCE_N_PLUS_ONE
+  file: app/sync/customers.py
+  lines: [12, 14]
+  severity: major
+  note: One CRM HTTP call per order.
+- antiPattern: RELIABILITY_MISSING_TIMEOUT
+  file: app/sync/customers.py
+  lines: [14, 14]
+  severity: minor
+  note: requests has no default timeout.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: app/sync/customers.py
+  lines: [26, 26]
+  severity: minor
+  note: Unnamed batch size.
+- antiPattern: unsupported
+  file: app/sync/customers.py
+  lines: [20, 21]
+  severity: major
+  defect: race_condition
+  note: Check-then-set on a shared dict without the lock defined above.
+negatives:
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: app/sync/customers.py
+  lines: [15, 15]
+  reason: HTTP status code.

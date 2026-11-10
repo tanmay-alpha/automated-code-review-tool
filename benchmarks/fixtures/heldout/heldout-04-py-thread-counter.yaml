@@ -1,0 +1,25 @@
+id: heldout-04-py-thread-counter
+title: 'Python threaded counter: lost-update race, swallowed BaseException, unnamed join timeout'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: unsupported
+  file: app/metrics/counter.py
+  lines: [8, 10]
+  severity: major
+  defect: race_condition
+  note: Read-modify-write across threads without a lock.
+- antiPattern: RELIABILITY_BROAD_EXCEPTION
+  file: app/metrics/counter.py
+  lines: [24, 24]
+  severity: major
+  note: Swallows KeyboardInterrupt/SystemExit.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: app/metrics/counter.py
+  lines: [18, 18]
+  severity: minor
+  note: Unnamed join timeout.
+negatives:
+- antiPattern: PERFORMANCE_QUADRATIC_LOOP
+  file: app/metrics/counter.py
+  lines: [17, 17]
+  reason: Sequential loops, not nested.

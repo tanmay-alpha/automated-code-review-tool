@@ -12,6 +12,13 @@ public class GitHubConfig {
     private String clientSecret;
     private String oauthRedirectUri;
 
+    /**
+     * Space-separated OAuth scopes requested at login. The default keeps
+     * private-repository support ({@code repo}); public-only deployments can
+     * use {@code public_repo admin:repo_hook}. See docs/security-review.md.
+     */
+    private String oauthScopes = "read:user repo";
+
     public String getClientId() {
         return clientId;
     }
@@ -34,5 +41,13 @@ public class GitHubConfig {
 
     public void setOauthRedirectUri(String oauthRedirectUri) {
         this.oauthRedirectUri = oauthRedirectUri;
+    }
+
+    public String getOauthScopes() {
+        return oauthScopes;
+    }
+
+    public void setOauthScopes(String oauthScopes) {
+        this.oauthScopes = oauthScopes;
     }
 }

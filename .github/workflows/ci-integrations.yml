@@ -27,10 +27,11 @@ jobs:
   github-action:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          # Matches the action's `runs.using: node24` runtime.
+          node-version: "24"
           cache: npm
           cache-dependency-path: github-action/package-lock.json
       - name: Install dependencies
@@ -51,10 +52,10 @@ jobs:
   vscode-extension:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: apps/vscode-ext/package-lock.json
       - name: Install dependencies

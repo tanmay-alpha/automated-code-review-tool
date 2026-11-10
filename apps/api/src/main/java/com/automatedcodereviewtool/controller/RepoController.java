@@ -1,8 +1,10 @@
 package com.automatedcodereviewtool.controller;
 
 import com.automatedcodereviewtool.dto.request.ConnectRepoRequest;
+import com.automatedcodereviewtool.dto.request.RepoSettingsRequest;
 import com.automatedcodereviewtool.dto.response.PullRequestSummary;
 import com.automatedcodereviewtool.dto.response.RepoResponse;
+import com.automatedcodereviewtool.dto.response.RepoSettingsResponse;
 import com.automatedcodereviewtool.entity.User;
 import com.automatedcodereviewtool.security.JwtAuthFilter;
 import com.automatedcodereviewtool.service.RepoService;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -24,9 +27,10 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Repo management: connect / disconnect / list. All endpoints
- * require JWT auth (handled by {@link JwtAuthFilter}) and operate
- * on the {@link User} bound to the request.
+ * Repo management: connect / disconnect / list / PR history / review
+ * settings. All endpoints require JWT auth (handled by
+ * {@link JwtAuthFilter}) and operate on the {@link User} bound to the
+ * request; a repo the caller does not own is a 404.
  */
 @RestController
 @RequestMapping("/api/repos")
@@ -82,5 +86,19 @@ public class RepoController {
                 Math.max(0, page),
                 Math.min(100, Math.max(1, size)))
                 .map(PullRequestSummary::from);
+    }
+
+    // GET /api/repos/{id}/settings
+    @GetMapping("/{id}/settings")
+    public RepoSettingsResponse getSettings(@AuthenticationPrincipal User user, @PathVariable UUID id) {
+        return RepoSettingsResponse.from(repoService.getSettings(user, id));
+    }
+
+    // PUT /api/repos/{id}/settings
+    @PutMapping("/{id}/settings")
+    public RepoSettingsResponse updateSettings(@AuthenticationPrincipal User user,
+                                               @PathVariable UUID id,
+                                               @Valid @RequestBody RepoSettingsRequest request) {
+        return RepoSettingsResponse.from(repoService.updateSettings(user, id, request));
     }
 }

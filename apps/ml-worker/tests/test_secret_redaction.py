@@ -117,6 +117,8 @@ def test_prefixed_secret_keys_are_redacted():
         ('DB_PASSWORD="s3cr3tvalue"', "s3cr3tvalue"),
         ('client_secret = "abcd1234efgh5678"', "abcd1234efgh5678"),
         ('aws_secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"', "wJalrXUtnFEMI"),
+        ("SECRET_KEY = 'django-insecure-0a9b8c7d6e5f'", "django-insecure-0a9b8c7d6e5f"),
+        ('private_key: "q8Wm2Lx9Rt4Yp7Kd"', "q8Wm2Lx9Rt4Yp7Kd"),
     ):
         result = redact_secrets(line)
         assert value not in result.text, line

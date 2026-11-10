@@ -37,10 +37,10 @@ function DashboardContent() {
   const stats = computeStats(repos);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 p-8">
+    <div className="mx-auto max-w-6xl space-y-8 p-4 md:p-8">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Dashboard</h1>
           <p className="mt-1 text-muted-foreground">
             Connected repositories and their code quality trends.
           </p>

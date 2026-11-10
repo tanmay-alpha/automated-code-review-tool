@@ -1,0 +1,25 @@
+id: dev-07-java-user-repository
+title: 'Java repository: concatenated JDBC queries; controller dereferences a now-nullable result (cross-file)'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: SECURITY_SQL_INJECTION
+  file: src/main/java/com/example/users/UserRepository.java
+  lines: [28, 28]
+  severity: critical
+  note: email comes straight from the controller argument (cross-file).
+- antiPattern: SECURITY_SQL_INJECTION
+  file: src/main/java/com/example/users/UserRepository.java
+  lines: [34, 36]
+  severity: major
+  note: Query string built on one line, executed two lines later.
+- antiPattern: unsupported
+  file: src/main/java/com/example/users/UserController.java
+  lines: [14, 14]
+  severity: major
+  defect: null_dereference
+  note: findByEmail returns null when no row matches (UserRepository.java).
+negatives:
+- antiPattern: RELIABILITY_BROAD_EXCEPTION
+  file: src/main/java/com/example/users/UserRepository.java
+  lines: [26, 26]
+  reason: Declares a checked exception; nothing is caught.

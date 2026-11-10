@@ -1,0 +1,30 @@
+id: heldout-01-py-search-endpoint
+title: 'Python search endpoint: %-formatted SQL, debug print, analytics call without timeout, MD5 passwords'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected:
+- antiPattern: SECURITY_SQL_INJECTION
+  file: app/routes/search.py
+  lines: [12, 12]
+  severity: critical
+  note: Query parameter formatted into SQL with %.
+- antiPattern: MAINTAINABILITY_PRINT_STATEMENT
+  file: app/routes/search.py
+  lines: [14, 14]
+  severity: minor
+  note: Debug output of user input.
+- antiPattern: RELIABILITY_MISSING_TIMEOUT
+  file: app/routes/search.py
+  lines: [15, 15]
+  severity: minor
+  note: No timeout on the analytics call in the request path.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: app/routes/search.py
+  lines: [16, 16]
+  severity: minor
+  note: Unnamed page size.
+- antiPattern: SECURITY_WEAK_CRYPTO
+  file: app/routes/search.py
+  lines: [20, 20]
+  severity: major
+  note: MD5 for password hashing.
+negatives: []

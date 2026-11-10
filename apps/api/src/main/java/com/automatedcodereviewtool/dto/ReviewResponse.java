@@ -34,10 +34,12 @@ public record ReviewResponse(
 ) {
 
     /**
-     * One finding. {@code status} is the developer's disposition:
-     * {@code open} (untouched), {@code accepted}, {@code dismissed} or
-     * {@code fixed} — the values allowed by the {@code findings.status}
-     * CHECK constraint and written by {@code POST /api/scan/action}.
+     * One finding. {@code status} is the triage state: {@code open}
+     * (untouched or reopened), {@code accepted}, {@code dismissed},
+     * {@code fixed} or {@code false_positive} — the values allowed by the
+     * {@code findings.status} CHECK constraint and written by
+     * {@code POST /api/scan/action}, together with {@code triageReason}
+     * and {@code triagedAt}.
      */
     public record FindingDto(
             UUID id,
@@ -50,7 +52,13 @@ public record ReviewResponse(
             BigDecimal confidence,
             String explanation,
             String codeSnippet,
-            String status
+            String status,
+            String triageReason,
+            Instant triagedAt,
+            // Explainability (worker contract): redacted triggering line, fix, applicability caveat.
+            String evidence,
+            String remediation,
+            String caveat
     ) {
     }
 }

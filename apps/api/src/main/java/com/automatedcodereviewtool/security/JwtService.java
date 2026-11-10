@@ -24,6 +24,9 @@ import java.util.UUID;
  *   <li>{@code type} = {@code "access"} or {@code "refresh"}</li>
  *   <li>{@code username} = GitHub login (access tokens only)</li>
  *   <li>{@code jti} = unique token ID, used to blacklist access tokens on logout</li>
+ *   <li>{@code ver} = the user's {@code token_version} when issued; a token
+ *       whose {@code ver} differs from the current value was revoked by
+ *       "sign out everywhere"</li>
  * </ul>
  *
  * <p>Throws {@link JwtException} on any parse/verify failure (bad signature,
@@ -36,6 +39,7 @@ public class JwtService {
     public static final String CLAIM_TYPE = "type";
     public static final String CLAIM_USERNAME = "username";
     public static final String CLAIM_JTI = "jti";
+    public static final String CLAIM_VERSION = "ver";
     public static final String TYPE_ACCESS = "access";
     public static final String TYPE_REFRESH = "refresh";
 
@@ -68,7 +72,7 @@ public class JwtService {
         return io.jsonwebtoken.security.Keys.hmacShaKeyFor(raw);
     }
 
-    public String generateAccessToken(UUID userId, String githubUsername) {
+    public String generateAccessToken(UUID userId, String githubUsername, int tokenVersion) {
         Instant now = Instant.now();
         String jti = UUID.randomUUID().toString();
         return Jwts.builder()
@@ -76,19 +80,21 @@ public class JwtService {
                 .claim(CLAIM_TYPE, TYPE_ACCESS)
                 .claim(CLAIM_USERNAME, githubUsername)
                 .claim(CLAIM_JTI, jti)
+                .claim(CLAIM_VERSION, tokenVersion)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(config.getAccessTokenExpiry())))
                 .signWith(signingKey)
                 .compact();
     }
 
-    public String generateRefreshToken(UUID userId) {
+    public String generateRefreshToken(UUID userId, int tokenVersion) {
         Instant now = Instant.now();
         String jti = UUID.randomUUID().toString();
         return Jwts.builder()
                 .subject(userId.toString())
                 .claim(CLAIM_TYPE, TYPE_REFRESH)
                 .claim(CLAIM_JTI, jti)
+                .claim(CLAIM_VERSION, tokenVersion)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(config.getRefreshTokenExpiry())))
                 .signWith(signingKey)
@@ -106,6 +112,19 @@ public class JwtService {
                 .build()
                 .parseSignedClaims(token);
         return jws.getPayload();
+    }
+
+    /**
+     * True when the token's {@code ver} claim equals the user's current
+     * {@code tokenVersion}. Tokens issued before the claim existed carry no
+     * {@code ver} and count as version 0.
+     */
+    public static boolean isCurrentVersion(Claims claims, int currentVersion) {
+        Object ver = claims.get(CLAIM_VERSION);
+        if (ver == null) {
+            return currentVersion == 0;
+        }
+        return ver instanceof Number n && n.intValue() == currentVersion;
     }
 
     /**

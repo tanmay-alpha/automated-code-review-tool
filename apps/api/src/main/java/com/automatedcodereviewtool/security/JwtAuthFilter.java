@@ -1,12 +1,12 @@
 package com.automatedcodereviewtool.security;
 
+import com.automatedcodereviewtool.config.AppConfig;
 import com.automatedcodereviewtool.entity.User;
 import com.automatedcodereviewtool.repository.UserRepository;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
-import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -26,28 +26,31 @@ import java.util.UUID;
 
 /**
  * Authenticates dashboard requests from the {@code accessToken} cookie
- * (or an {@code Authorization: Bearer <jwt>} header). Only access tokens
- * that are not blacklisted (logged out) and whose user still exists are
- * accepted; anything else leaves the request anonymous. If the blacklist
+ * (see {@link AuthCookies} for its wire name) or an
+ * {@code Authorization: Bearer <jwt>} header. Only access tokens that are not
+ * blacklisted (logged out), whose user still exists and whose {@code ver}
+ * claim matches the user's token version (not revoked by "sign out
+ * everywhere") are accepted; anything else leaves the request anonymous. If the blacklist
  * cannot be checked (Redis down) the request gets 503.
  */
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
-
-    public static final String ACCESS_TOKEN_COOKIE = "accessToken";
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
 
     private final JwtService jwtService;
     private final JwtBlacklistService jwtBlacklistService;
     private final UserRepository userRepository;
+    private final AuthCookies authCookies;
 
     public JwtAuthFilter(JwtService jwtService,
                          JwtBlacklistService jwtBlacklistService,
-                         UserRepository userRepository) {
+                         UserRepository userRepository,
+                         AppConfig appConfig) {
         this.jwtService = jwtService;
         this.jwtBlacklistService = jwtBlacklistService;
         this.userRepository = userRepository;
+        this.authCookies = appConfig == null ? null : new AuthCookies(appConfig);
     }
 
     @Override
@@ -56,7 +59,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                                     @NonNull FilterChain chain)
             throws ServletException, IOException {
 
-        String token = readAccessTokenCookie(request);
+        String token = authCookies.read(request, AuthCookies.ACCESS_TOKEN);
         if (token == null) {
             String bearerToken = request.getHeader("Authorization");
             if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
@@ -97,7 +100,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 // uses). If the user vanished (account deleted, DB reset),
                 // fall through as anonymous — SecurityConfig will reject.
                 User user = userRepository.findById(userId).orElse(null);
-                if (user == null) {
+                if (user == null || !JwtService.isCurrentVersion(claims, user.getTokenVersion())) {
                     SecurityContextHolder.clearContext();
                 } else {
                     // Pass the JPA User as principal so controllers can use
@@ -126,17 +129,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         response.getWriter().write("{\"error\":\"AUTH_UNAVAILABLE\","
                 + "\"message\":\"Session store unavailable; try again shortly\","
                 + "\"status\":503,\"timestamp\":\"" + Instant.now() + "\"}");
-    }
-
-    private static String readAccessTokenCookie(HttpServletRequest request) {
-        Cookie[] cookies = request.getCookies();
-        if (cookies == null) return null;
-        for (Cookie c : cookies) {
-            if (ACCESS_TOKEN_COOKIE.equals(c.getName())) {
-                return c.getValue();
-            }
-        }
-        return null;
     }
 
     /** Wrap the User in a UserDetails so controllers can do

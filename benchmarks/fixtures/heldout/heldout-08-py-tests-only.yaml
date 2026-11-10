@@ -1,0 +1,25 @@
+id: heldout-08-py-tests-only
+title: 'Test-only PR: fake token, literal expectations and a debug print in tests'
+provenance: Synthetic. Hand-written for this benchmark; not copied from any repository or prior benchmark.
+expected: []
+negatives:
+- antiPattern: SECURITY_HARDCODED_SECRET
+  file: tests/test_billing.py
+  lines: [5, 5]
+  reason: Fake token in a test module.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: tests/test_billing.py
+  lines: [8, 8]
+  reason: Test case data.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: tests/test_billing.py
+  lines: [11, 11]
+  reason: Test call arguments.
+- antiPattern: READABILITY_MAGIC_NUMBER
+  file: tests/test_billing.py
+  lines: [16, 16]
+  reason: Test call arguments.
+- antiPattern: MAINTAINABILITY_PRINT_STATEMENT
+  file: tests/test_billing.py
+  lines: [10, 10]
+  reason: Test output.

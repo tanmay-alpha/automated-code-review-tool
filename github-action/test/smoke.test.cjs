@@ -18,6 +18,8 @@ test('action.yml declares required fields and inputs', () => {
   for (const input of ['api-url:', 'api-key:', 'github-token:', 'max-files:']) {
     assert.ok(txt.includes(input), `action.yml must declare input "${input}"`);
   }
+  // Node 20 reached end of life in April 2026; GitHub runs actions on node24.
+  assert.match(txt, /^\s*using:\s*'node24'\s*$/m, 'action must run on the node24 runtime');
 });
 
 test('package.json declares required dependencies', () => {
@@ -407,4 +409,142 @@ test('real Actions annotations escape attacker-controlled command delimiters', (
   assert.ok(child.stdout.includes('%0A::error::injected'), child.stdout);
   assert.ok(child.stdout.includes('%2Cfield=value'), child.stdout);
   assert.ok(!child.stdout.split(/\r?\n/).some((line) => line.startsWith('::error::injected')));
+});
+
+test('annotationRange narrows a finding to the added lines within its range', async () => {
+  const { annotationRange } = await import('../index.js');
+  const added = new Set([4, 5, 9]);
+  assert.deepEqual(annotationRange({ lineStart: 1, lineEnd: 7 }, added), { startLine: 4, endLine: 5 });
+  assert.deepEqual(annotationRange({ lineStart: 5, lineEnd: 12 }, added), { startLine: 5, endLine: 9 });
+  assert.deepEqual(annotationRange({ lineStart: 9, lineEnd: null }, added), { startLine: 9, endLine: 9 });
+});
+
+test('action annotates only added lines and includes evidence, fix and caveat', async () => {
+  const { run } = await import('../index.js');
+  const harness = actionHarness({
+    files: [{ filename: 'a.py', status: 'modified', patch: '@@ -1,4 +1,5 @@\n def f():\n+    x = 1\n+    y = 2\n     z = 3\n     return z' }],
+    contents: { 'a.py': 'def f():\n    x = 1\n    y = 2\n    z = 3\n    return z\n' },
+  });
+  const fetch = async () => jsonResponse({ findings: [
+    {
+      antiPattern: 'RELIABILITY_X', severity: 'major', confidence: 0.5, lineStart: 1, lineEnd: 5,
+      explanation: 'Explained.', evidence: 'x = 1', remediation: 'Do better.', caveat: ' ',
+    },
+  ] });
+
+  await run({ ...harness, fetch });
+
+  assert.equal(harness.calls.warnings.length, 1);
+  const [message, annotation] = harness.calls.warnings[0];
+  assert.deepEqual(annotation, { file: 'a.py', startLine: 2, endLine: 3, title: 'RELIABILITY_X (major)' });
+  assert.equal(message, 'Explained.\nEvidence: x = 1\nFix: Do better.\nconfidence: 50%');
+});
+
+test('annotationMessage adds the caveat line and omits missing fields', async () => {
+  const { annotationMessage } = await import('../index.js');
+  assert.equal(annotationMessage({ explanation: 'E', confidence: 1 }), 'E\nconfidence: 100%');
+  assert.equal(
+    annotationMessage({ explanation: 'E', caveat: 'Maybe a test.', evidence: null, confidence: 0.9 }),
+    'E\nCaveat: Maybe a test.\nconfidence: 90%',
+  );
+});
+
+test('action writes an escaped job summary of all findings and warns past the annotation cap', async () => {
+  const { run } = await import('../index.js');
+  const lines = Array.from({ length: 12 }, (_, i) => `x${i} = 1`);
+  const harness = actionHarness({
+    inputs: { 'fail-threshold': '0' },
+    files: [{ filename: 'a.py', status: 'added', patch: `@@ -0,0 +1,12 @@\n${lines.map((l) => `+${l}`).join('\n')}` }],
+    contents: { 'a.py': `${lines.join('\n')}\n` },
+  });
+  let written = '';
+  harness.core.summary = {
+    addRaw(text) { written += text; return this; },
+    write: async () => {},
+  };
+  const fetch = async () => jsonResponse({ findings: lines.map((_, i) => ({
+    antiPattern: 'READABILITY_X', severity: 'minor', confidence: 1, lineStart: i + 1, lineEnd: i + 1,
+    explanation: i === 0 ? 'pipe | <img src=x onerror=alert(1)>\n## heading [link](http://evil)' : `Finding ${i}.`,
+    remediation: 'Fix it.',
+  })) });
+
+  await run({ ...harness, fetch });
+
+  assert.equal(harness.calls.notices.length, 12);
+  const tableRows = written.split('\n').filter((line) => line.startsWith('| a.py'));
+  assert.equal(tableRows.length, 12);
+  assert.ok(!written.includes('<img'));
+  assert.ok(!written.includes('[link]'));
+  assert.ok(!written.includes('\n## heading'));
+  assert.equal(tableRows[0].split('|').length, 8, 'a | inside text must not add table columns');
+  assert.ok(harness.calls.warnings.some(([message]) => /12 notice annotations.*job summary/.test(message)));
+  assert.deepEqual(harness.calls.failed, []);
+});
+
+test('summary write failures do not fail the action', async () => {
+  const { run } = await import('../index.js');
+  const harness = actionHarness({
+    files: [{ filename: 'a.py', status: 'added', patch: '@@ -0,0 +1 @@\n+x = 1' }],
+    contents: { 'a.py': 'x = 1\n' },
+  });
+  harness.core.summary = {
+    addRaw() { return this; },
+    write: async () => { throw new Error('Unable to find environment variable for $GITHUB_STEP_SUMMARY'); },
+  };
+  await run({ ...harness, fetch: async () => jsonResponse({ findings: [] }) });
+  assert.deepEqual(harness.calls.failed, []);
+  assert.equal(harness.calls.outputs['quality-score'], '100');
+});
+
+test('action explains rejected keys, rate limits and oversized bodies without echoing bodies', async () => {
+  const { run } = await import('../index.js');
+  for (const [status, pattern] of [
+    [401, /HTTP 401 for a\.py: API key rejected/],
+    [403, /API key rejected/],
+    [429, /rate limited; lower max-files or raise API_KEY_RPM/],
+    [413, /too large/],
+  ]) {
+    const harness = actionHarness({
+      files: [{ filename: 'a.py', status: 'added', patch: '@@ -0,0 +1 @@\n+x = 1' }],
+      contents: { 'a.py': 'x = 1\n' },
+    });
+    await run({ ...harness, fetch: async () => ({ ok: false, status, text: async () => 'secret-body' }) });
+    assert.equal(harness.calls.failed.length, 1);
+    assert.match(harness.calls.failed[0], pattern);
+    assert.ok(!harness.calls.failed[0].includes('secret-body'));
+  }
+});
+
+test('action reports scan timeouts with the file path', async () => {
+  const { run } = await import('../index.js');
+  const harness = actionHarness({
+    inputs: { 'fetch-timeout-ms': '1000' },
+    files: [{ filename: 'slow.py', status: 'added', patch: '@@ -0,0 +1 @@\n+x = 1' }],
+    contents: { 'slow.py': 'x = 1\n' },
+  });
+  const fetch = (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener('abort', () => {
+      const error = new Error('This operation was aborted');
+      error.name = 'AbortError';
+      reject(error);
+    });
+  });
+  await run({ ...harness, fetch });
+  assert.deepEqual(harness.calls.failed, ['timed out after 1000 ms scanning slow.py']);
+});
+
+test('action rejects non-integer numeric inputs', async () => {
+  const { run } = await import('../index.js');
+  for (const [name, value, pattern] of [
+    ['fail-threshold', '60abc', /Invalid fail-threshold/],
+    ['fail-threshold', '6.5', /Invalid fail-threshold/],
+    ['fetch-timeout-ms', '1e4', /Invalid fetch-timeout-ms/],
+    ['max-files', '5files', /Invalid max-files/],
+    ['max-files', '-3', /Invalid max-files/],
+  ]) {
+    const harness = actionHarness({ inputs: { [name]: value } });
+    await run({ ...harness, fetch: async () => { assert.fail('unexpected request'); } });
+    assert.equal(harness.calls.failed.length, 1, `${name}=${value}`);
+    assert.match(harness.calls.failed[0], pattern);
+  }
 });

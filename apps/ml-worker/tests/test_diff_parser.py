@@ -303,3 +303,36 @@ def test_shared_hunk_identity_contract() -> None:
     hunk = parse_diff(diff)[0]
     assert hunk.raw_hunk == case["rawHunk"]
     assert hunk.hunk_sha256 == case["hunkSha256"]
+
+
+def test_git_quoted_non_ascii_path_is_decoded_and_reviewed():
+    # git's default core.quotePath writes non-ASCII paths as C-quoted octal.
+    diff = (
+        'diff --git "a/app/caf\\303\\251.py" "b/app/caf\\303\\251.py"\n'
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        '+++ "b/app/caf\\303\\251.py"\n'
+        "@@ -0,0 +1 @@\n"
+        "+print(1)\n"
+    )
+    [hunk] = parse_diff(diff)
+    assert hunk.file_path == "app/café.py"
+    assert hunk.language == "python"
+
+
+def test_quoted_path_escapes_and_unquoted_paths_with_spaces():
+    [quoted] = parse_diff(
+        'diff --git "a/dir/tab\\there.js" "b/dir/tab\\there.js"\n@@ -0,0 +1 @@\n+x;\n'
+    )
+    assert quoted.file_path == "dir/tab\there.js"
+    [spaced] = parse_diff("diff --git a/my dir/a.py b/my dir/a.py\n@@ -0,0 +1 @@\n+x = 1\n")
+    assert spaced.file_path == "my dir/a.py"
+
+
+def test_binary_marker_does_not_hide_the_next_plain_diff_file():
+    diff = (
+        "Binary files a/logo.png and b/logo.png differ\n"
+        "--- a/app.py\n+++ b/app.py\n@@ -1 +1,2 @@\n x = 1\n+y = 2\n"
+    )
+    [hunk] = parse_diff(diff)
+    assert hunk.file_path == "app.py"

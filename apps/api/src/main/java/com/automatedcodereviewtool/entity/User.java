@@ -10,6 +10,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -37,9 +38,18 @@ public class User {
     @Column(name = "avatar_url")
     private String avatarUrl;
 
-    /** GitHub OAuth access token, AES-encrypted at rest. */
+    /** GitHub OAuth access token, AES-encrypted at rest. Never part of toString(). */
+    @ToString.Exclude
     @Column(name = "access_token", nullable = false, columnDefinition = "TEXT")
     private String accessToken;
+
+    /**
+     * Session generation, copied into every JWT as the {@code ver} claim.
+     * Incrementing it ("sign out everywhere") invalidates all outstanding
+     * access and refresh tokens.
+     */
+    @Column(name = "token_version", nullable = false)
+    private int tokenVersion;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
