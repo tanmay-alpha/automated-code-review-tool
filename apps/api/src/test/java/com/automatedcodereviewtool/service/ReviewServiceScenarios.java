@@ -33,15 +33,15 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link ReviewService#orchestrateReview} against a real database with only
- * the ML worker mocked. Run on H2 ({@link ReviewServiceIntegrationTest}) and
+ * {@link ReviewService#orchestrateReview} against a real database with the
+ * ML worker mocked; repository settings go through the real
+ * {@link RepoReviewPolicy}. Run on H2 ({@link ReviewServiceIntegrationTest}) and
  * on Postgres ({@link ReviewServicePostgresTest}), where the findings /
  * prediction_events CHECK constraints are actually enforced.
  */
@@ -74,12 +74,6 @@ abstract class ReviewServiceScenarios {
 
     @MockBean private MlWorkerService mlWorkerService;
     @MockBean private GitHubService gitHubService;
-    @MockBean private ReviewPipelinePolicy reviewPolicy;
-
-    @BeforeEach
-    void allFindingsAllowed() {
-        when(reviewPolicy.apply(any(), any())).thenAnswer(inv -> inv.getArgument(1));
-    }
 
     @Test
     void findingCategoryAndSeverityComeFromTheTaxonomy_andUnknownPatternsAreRejected() {
@@ -281,12 +275,14 @@ abstract class ReviewServiceScenarios {
     @Test
     void repositorySettingsExcludeFindingsButKeepTheirPredictionEvents() {
         PullRequestEntity pr = savePullRequest();
+        Repository repo = pr.getRepo();
+        repo.setReviewEnabledRules(List.of("SECURITY_HARDCODED_SECRET")); // print rule disabled
+        repositoryRepository.save(repo);
         MlFinding secret = new MlFinding("src/a.py", null, 2, 2, "SECURITY_HARDCODED_SECRET",
                 "SECURITY", "critical", new BigDecimal("0.9"), "hard-coded key");
         MlFinding print = new MlFinding("src/a.py", null, 3, 3, "MAINTAINABILITY_PRINT_STATEMENT",
                 "MAINTAINABILITY", "minor", new BigDecimal("0.5"), "print");
         when(mlWorkerService.review(anyString(), anyString())).thenReturn(response("fallback", secret, print));
-        when(reviewPolicy.apply(any(), any())).thenReturn(List.of(secret));
 
         assertThat(reviewService.orchestrateReview(pr, diff(pr), run(pr)).success()).isTrue();
 
@@ -337,6 +333,39 @@ abstract class ReviewServiceScenarios {
                 .findFirst().orElseThrow().getId().toString();
         assertThat(ids(publicationRepository.findById(result.publicationId()).orElseThrow().getInlineFindingIds()))
                 .containsExactly(printId);
+    }
+
+    @Test
+    void falsePositiveWithReasonSurvivesAReReviewOfUnchangedCode() {
+        PullRequestEntity pr = savePullRequest();
+        MlFinding secret = new MlFinding("src/a.py", null, 2, 2, "SECURITY_HARDCODED_SECRET", "SECURITY",
+                "critical", new BigDecimal("0.9"), "hard-coded key", "API_KEY = \"<REDACTED_SECRET>\"", null, null);
+        when(mlWorkerService.review(anyString(), anyString())).thenReturn(response("fallback", secret));
+        assertThat(reviewService.orchestrateReview(pr, diff(pr), run(pr)).success()).isTrue();
+        UUID reviewer = pr.getRepo().getOwner().getId();
+        Instant triagedAt = Instant.parse("2026-01-02T03:04:05Z");
+        jdbc.update("UPDATE findings SET status = 'false_positive', triage_reason = ?, triaged_at = ?, triaged_by = ?"
+                        + " WHERE pr_id = ?",
+                "test fixture key", java.sql.Timestamp.from(triagedAt), reviewer, pr.getId());
+
+        // Next push: same flagged code, on a shifted line.
+        String newHead = UUID.randomUUID().toString().replace("-", "") + "12345678";
+        jdbc.update("UPDATE pull_requests SET head_sha = ? WHERE id = ?", newHead, pr.getId());
+        pr.setHeadSha(newHead);
+        when(mlWorkerService.review(anyString(), anyString())).thenReturn(response("fallback",
+                new MlFinding("src/a.py", null, 3, 3, "SECURITY_HARDCODED_SECRET", "SECURITY", "critical",
+                        new BigDecimal("0.9"), "hard-coded key", "API_KEY = \"<REDACTED_SECRET>\"", null, null)));
+        ReviewRun next = new ReviewRun(claimDelivery(pr), 1, newHead, true, true);
+
+        assertThat(reviewService.orchestrateReview(pr, shiftedDiff(newHead), next).success()).isTrue();
+
+        assertThat(findingRepository.findAllByPullRequestId(pr.getId())).singleElement().satisfies(f -> {
+            assertThat(f.getLineStart()).isEqualTo(3);
+            assertThat(f.getStatus()).isEqualTo("false_positive");
+            assertThat(f.getTriageReason()).isEqualTo("test fixture key");
+            assertThat(f.getTriagedAt()).isEqualTo(triagedAt);
+            assertThat(f.getTriagedBy()).isEqualTo(reviewer);
+        });
     }
 
     /** Both lines added, in the opposite order from {@link #diff}. */
