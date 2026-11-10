@@ -211,9 +211,9 @@
     },
     "performance": {
       "runs_per_pr": 5,
-      "latency_ms_p50": 0.499,
-      "latency_ms_p95": 0.692,
-      "peak_python_heap_kib": 19.3,
+      "latency_ms_p50": 0.469,
+      "latency_ms_p95": 0.671,
+      "peak_python_heap_kib": 19.4,
       "note": "Wall-clock on the benchmark host; heap is tracemalloc peak per PR, not RSS."
     },
     "cases": [
