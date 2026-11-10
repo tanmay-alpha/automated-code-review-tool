@@ -82,3 +82,34 @@ export function severityClasses(sev: string | null | undefined): string {
       return "bg-gray-100 text-gray-700 border-gray-300";
   }
 }
+
+/** Untrusted comment links must be HTTPS github.com URLs (PR/issue comments). */
+export function githubCommentUrl(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== "github.com" ||
+      url.port ||
+      url.username ||
+      url.password ||
+      !/^\/[^/]+\/[^/]+\/(pull|issues)\/[1-9]\d*\/?$/.test(url.pathname)
+    ) return undefined;
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
+/** First 7 characters of a commit SHA, or "—". */
+export function shortSha(sha: string | null | undefined): string {
+  return sha ? sha.slice(0, 7) : "—";
+}
+
+/** Formats an ISO instant as an absolute local date-time for tooltips. */
+export function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+}

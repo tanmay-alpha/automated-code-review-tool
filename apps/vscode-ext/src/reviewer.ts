@@ -11,6 +11,7 @@ import {
   TextDocument,
   Uri,
   window,
+  workspace,
 } from "vscode";
 import { getApiKey, getApiUrl, isEnabled } from "./config";
 import {
@@ -18,8 +19,11 @@ import {
   exceedsContentLimit,
   mapFindingToDiagnosticData,
   postScan,
+  ReviewerClientError,
   ScanFileResponse,
+  scanFilePath,
 } from "./reviewerClient";
+import { ScanSequencer } from "./scanSequencer";
 
 let statusBarItem: StatusBarItem | null = null;
 
@@ -48,32 +52,54 @@ function statusBar(): StatusBarItem {
   return statusBarItem;
 }
 
+export type ScanOutcome =
+  | { kind: "scanned" }
+  | { kind: "skipped"; reason: string }
+  | { kind: "stale" }
+  | { kind: "failed"; message: string; status?: number };
+
+export interface ScanFileOptions {
+  /** Show error popups for failures (default true). */
+  notify?: boolean;
+  /** API key already resolved by the caller; skips the secret-storage lookup. */
+  apiKey?: string;
+}
+
+const sequencer = new ScanSequencer();
+
+/** Shows the single "no API key" error with a Set API Key action. */
+export function promptForApiKey(): void {
+  const message =
+    "automated-code-review-tool: no API key. Run 'automated-code-review-tool: Set API Key'.";
+  statusBar().text = "$(error) automated-code-review-tool: no API key";
+  statusBar().tooltip = message;
+  statusBar().show();
+  const setKey = "Set API Key";
+  void window.showErrorMessage(message, setKey).then((choice) => {
+    if (choice === setKey) {
+      void commands.executeCommand("automated-code-review-tool.setApiKey");
+    }
+  });
+}
+
 export async function scanFile(
   doc: TextDocument,
   collection: DiagnosticCollection,
   secrets: SecretStorage,
-): Promise<void> {
+  options: ScanFileOptions = {},
+): Promise<ScanOutcome> {
+  const notify = options.notify ?? true;
   if (!isEnabled()) {
     statusBar().text = "automated-code-review-tool: disabled";
     statusBar().show();
-    return;
+    return { kind: "skipped", reason: "disabled" };
   }
 
-  const { key: apiKey } = await getApiKey(secrets);
+  const apiKey = options.apiKey ?? (await getApiKey(secrets)).key;
   if (!apiKey) {
-    const message =
-      "automated-code-review-tool: no API key. Run 'automated-code-review-tool: Set API Key'.";
-    statusBar().text = "$(error) automated-code-review-tool: no API key";
-    statusBar().tooltip = message;
-    statusBar().show();
     collection.set(doc.uri, []);
-    const setKey = "Set API Key";
-    void window.showErrorMessage(message, setKey).then((choice) => {
-      if (choice === setKey) {
-        void commands.executeCommand("automated-code-review-tool.setApiKey");
-      }
-    });
-    return;
+    if (notify) promptForApiKey();
+    return { kind: "failed", message: "no API key" };
   }
 
   const language = apiLanguage(doc.languageId);
@@ -81,7 +107,7 @@ export async function scanFile(
     statusBar().text = `automated-code-review-tool: ${doc.languageId} not supported`;
     statusBar().tooltip = "Supported: Python, JavaScript, TypeScript, Java.";
     statusBar().show();
-    return;
+    return { kind: "skipped", reason: "unsupported language" };
   }
 
   const content = doc.getText();
@@ -90,10 +116,12 @@ export async function scanFile(
     statusBar().tooltip = "The file exceeds the API's 200,000-character scan limit.";
     statusBar().show();
     collection.set(doc.uri, []);
-    return;
+    return { kind: "skipped", reason: "file too large" };
   }
 
   const apiUrl = getApiUrl();
+  const key = doc.uri.toString();
+  const token = sequencer.begin(key);
   statusBar().text = "$(sync~spin) automated-code-review-tool: scanning…";
   statusBar().show();
 
@@ -102,18 +130,27 @@ export async function scanFile(
       {
         content,
         language,
-        filePath: doc.fileName,
+        filePath: scanFilePath(workspace.asRelativePath(doc.uri, false)),
       },
       { apiUrl, apiKey },
     );
+    if (!sequencer.isLatest(key, token)) return { kind: "stale" };
     applyDiagnostics(doc.uri, response, collection);
+    return { kind: "scanned" };
   } catch (error) {
+    if (!sequencer.isLatest(key, token)) return { kind: "stale" };
     const message = error instanceof Error ? error.message : String(error);
+    const status = error instanceof ReviewerClientError ? error.status : undefined;
     statusBar().text = `$(error) automated-code-review-tool: ${shortError(message)}`;
     statusBar().tooltip = message;
     statusBar().show();
-    void window.showErrorMessage(`automated-code-review-tool scan failed: ${message}`);
+    if (notify) {
+      void window.showErrorMessage(`automated-code-review-tool scan failed: ${message}`);
+    }
     collection.set(doc.uri, []);
+    return { kind: "failed", message, status };
+  } finally {
+    sequencer.finish(key, token);
   }
 }
 

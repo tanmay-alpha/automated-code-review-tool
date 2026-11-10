@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { githubPullRequestUrl, qualityScoreColor, timeAgo, titleCase } from "@/lib/utils";
+import {
+  githubCommentUrl,
+  githubPullRequestUrl,
+  qualityScoreColor,
+  shortSha,
+  timeAgo,
+  titleCase,
+} from "@/lib/utils";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -51,5 +58,26 @@ describe("githubPullRequestUrl", () => {
       "http://github.com/owner/repo/pull/42",
       "https://github.com/owner/repo/issues/42",
     ]) expect(githubPullRequestUrl(value)).toBeUndefined();
+  });
+});
+
+describe("githubCommentUrl", () => {
+  it("accepts only HTTPS GitHub PR or issue comment links", () => {
+    expect(githubCommentUrl("https://github.com/o/r/pull/3#issuecomment-9")).toBe(
+      "https://github.com/o/r/pull/3#issuecomment-9",
+    );
+    expect(githubCommentUrl("https://github.com/o/r/issues/3#issuecomment-9")).toBeDefined();
+    expect(githubCommentUrl("javascript:alert(1)")).toBeUndefined();
+    expect(githubCommentUrl("https://evil.example/o/r/pull/3")).toBeUndefined();
+    expect(githubCommentUrl("http://github.com/o/r/pull/3")).toBeUndefined();
+    expect(githubCommentUrl("https://u:p@github.com/o/r/pull/3")).toBeUndefined();
+    expect(githubCommentUrl(null)).toBeUndefined();
+  });
+});
+
+describe("shortSha", () => {
+  it("abbreviates commit SHAs", () => {
+    expect(shortSha("0123456789abcdef")).toBe("0123456");
+    expect(shortSha(null)).toBe("—");
   });
 });

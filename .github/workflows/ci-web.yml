@@ -6,10 +6,12 @@ on:
     branches: [main]
     paths:
       - "apps/web/**"
+      - "taxonomy/anti_patterns.yaml"
       - ".github/workflows/ci-web.yml"
   pull_request:
     paths:
       - "apps/web/**"
+      - "taxonomy/anti_patterns.yaml"
       - ".github/workflows/ci-web.yml"
 
 permissions:
@@ -22,13 +24,11 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    env:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - name: Install dependencies
@@ -37,7 +37,7 @@ jobs:
       - name: Typecheck
         working-directory: apps/web
         run: npx tsc --noEmit
-      - name: Test
+      - name: Unit and component tests
         working-directory: apps/web
         run: npm test
       - name: Audit all dependencies
@@ -47,15 +47,53 @@ jobs:
         working-directory: apps/web
         run: npm run build
 
-  docker-build:
-    needs: verify
+  e2e:
+    name: e2e + axe (chromium)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+      - name: Install Chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: Build
+        working-directory: apps/web
+        run: npm run build
+      - name: Playwright (API mocked, real same-origin proxy)
+        working-directory: apps/web
+        run: npm run test:e2e
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: web-playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          if-no-files-found: ignore
+
+  docker-build:
+    needs: [verify, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
       - name: Build web image
-        run: >-
-          docker build
-          --build-arg NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
-          -f apps/web/Dockerfile
-          -t automated-code-review-tool-web:ci
-          apps/web
+        run: docker build -f apps/web/Dockerfile -t automated-code-review-tool-web:ci apps/web
+      # trivy-action tags were hijacked in March 2026 (GHSA-69fq-xp46-6x23):
+      # pin the action by commit and the scanner to a verified release.
+      - name: Scan image for fixable critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.69.3
+          scan-type: image
+          image-ref: automated-code-review-tool-web:ci
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

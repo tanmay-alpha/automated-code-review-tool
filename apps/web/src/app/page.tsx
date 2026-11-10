@@ -6,9 +6,24 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { BASE_URL } from "@/lib/api";
+import { LOGIN_PATH } from "@/lib/api";
+
+/** `?authError=<code>` values the API's OAuth callback redirects with. */
+const AUTH_ERRORS: Record<string, string> = {
+  access_denied: "GitHub sign-in was cancelled.",
+  oauth_state_invalid: "The sign-in link expired or was opened in another browser. Try again.",
+  github_unavailable: "GitHub could not be reached. Try again shortly.",
+  github_rejected: "GitHub rejected the sign-in request.",
+  session_unavailable: "The session store is unavailable. Try again shortly.",
+};
+
+function authErrorMessage(code: string | string[] | undefined): string | null {
+  if (typeof code !== "string" || !code) return null;
+  return Object.hasOwn(AUTH_ERRORS, code) ? AUTH_ERRORS[code] : "Sign-in failed. Try again.";
+}
 
 const TAXONOMY_URL =
   "https://github.com/tanmay-alpha/automated-code-review-tool/blob/main/taxonomy/anti_patterns.yaml";
@@ -33,9 +48,14 @@ const FEATURES = [
 
 /**
  * Public landing page (`/`). After GitHub sign-in the API's OAuth callback
- * redirects to /dashboard.
+ * redirects to /dashboard, or back here with `?authError=<code>`.
  */
-export default function LandingPage() {
+export default async function LandingPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const authError = authErrorMessage((await searchParams).authError);
   return (
     <div className="min-h-screen bg-background">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
@@ -45,6 +65,12 @@ export default function LandingPage() {
       <Separator />
 
       <main className="mx-auto max-w-6xl px-6 py-16">
+        {authError ? (
+          <Alert variant="destructive" className="mb-8 max-w-2xl">
+            <AlertTitle>Couldn’t sign you in</AlertTitle>
+            <AlertDescription>{authError}</AlertDescription>
+          </Alert>
+        ) : null}
         <section className="max-w-2xl space-y-6">
           <h1 className="text-4xl font-bold tracking-tight md:text-5xl">
             Automated review for pull requests.
@@ -58,8 +84,8 @@ export default function LandingPage() {
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <Button asChild size="lg">
-              {/* Spring Boot serves /api/auth/github as a 302 to GitHub. */}
-              <a href={`${BASE_URL}/api/auth/github`}>
+              {/* The API answers /api/auth/github with a 302 to GitHub. */}
+              <a href={LOGIN_PATH}>
                 <Github className="mr-2 h-4 w-4" />
                 Login with GitHub
               </a>

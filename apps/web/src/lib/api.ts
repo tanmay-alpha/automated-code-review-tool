@@ -1,44 +1,50 @@
 // =============================================================================
 // Browser-side API client.
 //
-// All requests carry `credentials: "include"` so the browser forwards the
-// httpOnly `accessToken` / `refreshToken` cookies set by Spring Boot's
-// `AuthController`. Tokens are never stored in JS-accessible storage.
-//
-// The base URL defaults to `http://localhost:8080` and can be overridden
-// with NEXT_PUBLIC_API_BASE_URL in `.env.local`.
+// Every request goes to a same-origin relative URL (`/api/...`). The Next.js
+// route handler in `app/api/[...path]/route.ts` forwards it to the Spring API
+// (`API_INTERNAL_URL`), so the httpOnly auth cookies the API sets belong to
+// the dashboard's own origin and are sent on every request. Tokens are never
+// stored in JS-accessible storage.
 // =============================================================================
 
 import type {
   ApiKeyResponse,
   CreatedApiKeyResponse,
+  DiagnosticsResponse,
   FindingAction,
+  FindingActionRequest,
   FindingActionResponse,
+  FindingSummaryResponse,
   PaginatedPRResponse,
   PullRequestSummary,
   QualityTrendResponse,
   RepoResponse,
+  RepoSettings,
   ReviewDetailResponse,
+  ReviewRun,
   UserResponse,
 } from "@/lib/types";
 
-export const BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
-  "http://localhost:8080";
+/** Starts the GitHub OAuth flow (the API answers with a 302 to GitHub). */
+export const LOGIN_PATH = "/api/auth/github";
 
 export class ApiError extends Error {
   readonly status: number;
   readonly url: string;
-  constructor(message: string, status: number, url: string) {
+  /** Machine-readable `error` field of the API's JSON error body, if any. */
+  readonly code: string | null;
+  constructor(message: string, status: number, url: string, code: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.url = url;
+    this.code = code;
   }
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
 }
 
@@ -50,9 +56,9 @@ let refreshInFlight: Promise<boolean> | null = null;
  * rejects reuse of the old one, so concurrent 401s must share one attempt.
  */
 function refreshSession(): Promise<boolean> {
-  refreshInFlight ??= fetch(`${BASE_URL}/api/auth/refresh`, {
+  refreshInFlight ??= fetch("/api/auth/refresh", {
     method: "POST",
-    credentials: "include",
+    credentials: "same-origin",
   })
     .then((res) => res.ok)
     .catch(() => false)
@@ -62,17 +68,42 @@ function refreshSession(): Promise<boolean> {
   return refreshInFlight;
 }
 
+/**
+ * Builds an ApiError from a failed response. The API (and the proxy) answer
+ * with `{error, message, status}`; fall back to a generic message rather than
+ * showing raw bodies such as HTML error pages.
+ */
+async function toApiError(res: Response, method: string, path: string): Promise<ApiError> {
+  const fallback = `${method} ${path} failed with HTTP ${res.status}`;
+  const text = await res.text().catch(() => "");
+  let code: string | null = null;
+  let message = fallback;
+  if (text) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (parsed && typeof parsed === "object") {
+        if ("error" in parsed && typeof parsed.error === "string") code = parsed.error;
+        if ("message" in parsed && typeof parsed.message === "string" && parsed.message.trim()) {
+          message = parsed.message.trim();
+        }
+      }
+    } catch {
+      // Not JSON; keep the generic message.
+    }
+  }
+  return new ApiError(message, res.status, path, code);
+}
+
 async function request<T>(
   path: string,
   opts: RequestOptions = {},
   isRetry = false,
 ): Promise<T> {
   const { method = "GET", body } = opts;
-  const url = `${BASE_URL}${path}`;
 
-  const res = await fetch(url, {
+  const res = await fetch(path, {
     method,
-    credentials: "include",
+    credentials: "same-origin",
     headers: {
       Accept: "application/json",
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
@@ -85,12 +116,7 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new ApiError(
-      text || `${method} ${path} failed with ${res.status}`,
-      res.status,
-      url,
-    );
+    throw await toApiError(res, method, path);
   }
 
   if (res.status === 204) {
@@ -99,6 +125,8 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
+const enc = encodeURIComponent;
+
 // =============================================================================
 // /api/auth
 // =============================================================================
@@ -106,6 +134,11 @@ async function request<T>(
 /** GET /api/auth/me → UserResponse (401 if not signed in). */
 export function getMe(): Promise<UserResponse> {
   return request<UserResponse>("/api/auth/me");
+}
+
+/** POST /api/auth/logout-all → 204. Revokes every session on every device. */
+export async function logoutAll(): Promise<void> {
+  await request<void>("/api/auth/logout-all", { method: "POST" });
 }
 
 /** POST /api/auth/logout → 204. */
@@ -132,14 +165,12 @@ export function connectRepo(fullName: string): Promise<RepoResponse> {
 
 /** DELETE /api/repos/{id} → 204. */
 export async function disconnectRepo(repoId: string): Promise<void> {
-  await request<void>(`/api/repos/${encodeURIComponent(repoId)}`, {
-    method: "DELETE",
-  });
+  await request<void>(`/api/repos/${enc(repoId)}`, { method: "DELETE" });
 }
 
 /** GET /api/repos/{id} → RepoResponse. */
 export function getRepoDetail(repoId: string): Promise<RepoResponse> {
-  return request<RepoResponse>(`/api/repos/${encodeURIComponent(repoId)}`);
+  return request<RepoResponse>(`/api/repos/${enc(repoId)}`);
 }
 
 /** GET /api/repos/{id}/prs?page=N&size=M → one page of pull requests. */
@@ -149,8 +180,24 @@ export function getRepoPRs(
   size = 20,
 ): Promise<PaginatedPRResponse<PullRequestSummary>> {
   return request<PaginatedPRResponse<PullRequestSummary>>(
-    `/api/repos/${encodeURIComponent(repoId)}/prs?page=${page}&size=${size}`,
+    `/api/repos/${enc(repoId)}/prs?page=${page}&size=${size}`,
   );
+}
+
+/** GET /api/repos/{id}/settings → RepoSettings (404 for a repository you do not own). */
+export function getRepoSettings(repoId: string): Promise<RepoSettings> {
+  return request<RepoSettings>(`/api/repos/${enc(repoId)}/settings`);
+}
+
+/** PUT /api/repos/{id}/settings → the saved RepoSettings (400 VALIDATION_FAILED on bad input). */
+export function updateRepoSettings(
+  repoId: string,
+  settings: RepoSettings,
+): Promise<RepoSettings> {
+  return request<RepoSettings>(`/api/repos/${enc(repoId)}/settings`, {
+    method: "PUT",
+    body: settings,
+  });
 }
 
 // =============================================================================
@@ -159,7 +206,12 @@ export function getRepoPRs(
 
 /** GET /api/reviews/{prId} → ReviewDetailResponse. */
 export function getPRReview(prId: string): Promise<ReviewDetailResponse> {
-  return request<ReviewDetailResponse>(`/api/reviews/${encodeURIComponent(prId)}`);
+  return request<ReviewDetailResponse>(`/api/reviews/${enc(prId)}`);
+}
+
+/** GET /api/reviews/{prId}/runs → newest-first webhook deliveries (max 50). */
+export function getReviewRuns(prId: string): Promise<ReviewRun[]> {
+  return request<ReviewRun[]>(`/api/reviews/${enc(prId)}/runs`);
 }
 
 // =============================================================================
@@ -167,18 +219,20 @@ export function getPRReview(prId: string): Promise<ReviewDetailResponse> {
 // =============================================================================
 
 /**
- * POST /api/scan/action → FindingActionResponse. Records a developer
- * disposition on a finding. JWT only; 404 when the finding does not exist
- * or belongs to a repository the caller does not own.
+ * POST /api/scan/action → FindingActionResponse. Records a triage action on a
+ * finding. `reason` is required by the API for `dismiss` and `false_positive`.
+ * 404 when the finding does not exist or belongs to a repository the caller
+ * does not own.
  */
 export function recordFindingAction(
   findingId: string,
   action: FindingAction,
+  reason?: string,
 ): Promise<FindingActionResponse> {
-  return request<FindingActionResponse>("/api/scan/action", {
-    method: "POST",
-    body: { findingId, action },
-  });
+  const body: FindingActionRequest = { findingId, action };
+  const trimmed = reason?.trim();
+  if (trimmed) body.reason = trimmed;
+  return request<FindingActionResponse>("/api/scan/action", { method: "POST", body });
 }
 
 // =============================================================================
@@ -194,8 +248,27 @@ export function getQualityTrend(
   days = 30,
 ): Promise<QualityTrendResponse> {
   return request<QualityTrendResponse>(
-    `/api/metrics/quality-trend?repo=${encodeURIComponent(repoId)}&days=${days}`,
+    `/api/metrics/quality-trend?repo=${enc(repoId)}&days=${days}`,
   );
+}
+
+/** GET /api/metrics/finding-summary?repo=<uuid>&days=<n> → per-rule triage counts. */
+export function getFindingSummary(
+  repoId: string,
+  days = 30,
+): Promise<FindingSummaryResponse> {
+  return request<FindingSummaryResponse>(
+    `/api/metrics/finding-summary?repo=${enc(repoId)}&days=${days}`,
+  );
+}
+
+// =============================================================================
+// /api/diagnostics
+// =============================================================================
+
+/** GET /api/diagnostics → component health and the caller's queue counts. */
+export function getDiagnostics(): Promise<DiagnosticsResponse> {
+  return request<DiagnosticsResponse>("/api/diagnostics");
 }
 
 // =============================================================================
@@ -217,7 +290,5 @@ export function createApiKey(label: string): Promise<CreatedApiKeyResponse> {
 
 /** DELETE /api/auth/api-keys/{id} → 204. */
 export async function revokeApiKey(id: string): Promise<void> {
-  await request<void>(`/api/auth/api-keys/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
+  await request<void>(`/api/auth/api-keys/${enc(id)}`, { method: "DELETE" });
 }

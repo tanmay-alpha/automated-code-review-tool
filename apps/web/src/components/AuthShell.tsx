@@ -46,18 +46,22 @@ export function AuthShell({ children }: AuthShellProps) {
 
   if (error) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-background p-8">
+      <main className="flex min-h-screen items-center justify-center bg-background p-8">
         <Alert variant="destructive" className="max-w-lg">
           <AlertTitle>Couldn’t reach the API</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-      </div>
+      </main>
     );
   }
 
   if (!user) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-background">
+      <div
+        className="flex min-h-screen items-center justify-center bg-background"
+        role="status"
+        aria-label="Loading your session"
+      >
         <div className="space-y-3">
           <Skeleton className="h-4 w-48" />
           <Skeleton className="h-4 w-64" />
@@ -76,9 +80,17 @@ export function AuthShell({ children }: AuthShellProps) {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background">
+    <div className="flex min-h-screen flex-col bg-background md:h-screen md:flex-row md:overflow-hidden">
+      <a
+        href="#main-content"
+        className="sr-only z-50 rounded-md bg-primary px-4 py-2 text-primary-foreground focus:not-sr-only focus:absolute focus:left-4 focus:top-4"
+      >
+        Skip to content
+      </a>
       <Sidebar user={user} onLogout={handleLogout} />
-      <main className="flex-1 overflow-auto">{children}</main>
+      <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 focus:outline-none md:overflow-auto">
+        {children}
+      </main>
     </div>
   );
 }

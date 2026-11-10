@@ -1,6 +1,8 @@
 // Mirrors the @Size(max = 200_000) limit on ScanFileRequest.content in the API.
 export const MAX_CONTENT_CHARS = 200_000;
 export const DEFAULT_TIMEOUT_MS = 15_000;
+// Mirrors the @Size(max = 1024) limit on ScanFileRequest.filePath in the API.
+export const MAX_FILE_PATH_CHARS = 1024;
 
 export interface ScanFileRequest {
   content: string;
@@ -25,9 +27,12 @@ export interface FindingDTO {
   lineEnd: number | null;
   antiPattern: string;
   category?: string | null;
-  severity: string;
+  severity?: string | null;
   confidence: number;
   explanation: string;
+  evidence?: string | null;
+  remediation?: string | null;
+  caveat?: string | null;
 }
 
 export interface ScanFileResponse {
@@ -70,6 +75,17 @@ export function exceedsContentLimit(content: string): boolean {
   return content.length > MAX_CONTENT_CHARS;
 }
 
+/**
+ * Returns the filePath to send to the API: the workspace-relative path, or its
+ * basename when it would exceed the API's filePath length limit.
+ */
+export function scanFilePath(relativePath: string): string {
+  if (relativePath.length <= MAX_FILE_PATH_CHARS) return relativePath;
+  const parts = relativePath.split(/[\\/]/);
+  const base = parts[parts.length - 1] ?? "";
+  return base.length <= MAX_FILE_PATH_CHARS ? base : base.slice(-MAX_FILE_PATH_CHARS);
+}
+
 export function dedupeFindings(findings: FindingDTO[]): FindingDTO[] {
   const seen = new Set<string>();
   return findings.filter((finding) => {
@@ -104,9 +120,38 @@ export function mapFindingToDiagnosticData(finding: FindingDTO): DiagnosticData 
     startLine,
     endLine,
     severity: mapSeverity(finding.severity),
-    message: `${prettify(finding.antiPattern)}${confidenceText}: ${explanation}`,
+    message: [
+      `${prettify(finding.antiPattern)}${confidenceText}: ${explanation}`,
+      detailLine("Evidence", finding.evidence),
+      detailLine("Fix", finding.remediation),
+      detailLine("Caveat", finding.caveat),
+    ].filter((line): line is string => line !== null).join("\n"),
     code: finding.antiPattern,
   };
+}
+
+function detailLine(label: string, value: string | null | undefined): string | null {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text ? `${label}: ${text}` : null;
+}
+
+function httpErrorMessage(response: Response): string {
+  switch (response.status) {
+    case 401:
+    case 403:
+      return `API key rejected (HTTP ${response.status}). Run 'automated-code-review-tool: Set API Key'.`;
+    case 429: {
+      const retryAfter = response.headers.get("retry-after")?.trim();
+      const wait = retryAfter && /^\d+$/.test(retryAfter)
+        ? ` Retry after ${retryAfter} seconds.`
+        : " Try again later.";
+      return `Rate limited by the API (HTTP 429).${wait}`;
+    }
+    case 413:
+      return "File too large for the API (HTTP 413).";
+    default:
+      return `API returned HTTP ${response.status}.`;
+  }
 }
 
 export async function postScan(
@@ -159,10 +204,7 @@ export async function postScan(
     }
 
     if (!response.ok) {
-      throw new ReviewerClientError(
-        `API returned HTTP ${response.status}.`,
-        response.status,
-      );
+      throw new ReviewerClientError(httpErrorMessage(response), response.status);
     }
 
     const contentType = response.headers.get("content-type") ?? "";
@@ -177,6 +219,9 @@ export async function postScan(
     try {
       parsed = await response.json();
     } catch {
+      if (timedOut) {
+        throw new ReviewerClientError(`Request timed out after ${timeoutMs} ms.`);
+      }
       throw new ReviewerClientError("API returned invalid JSON.", response.status);
     }
     if (!isScanFileResponse(parsed)) {
@@ -197,8 +242,8 @@ function isScanFileResponse(value: unknown): value is ScanFileResponse {
   return Array.isArray(findings);
 }
 
-function mapSeverity(severity: string): DiagnosticData["severity"] {
-  switch (severity.toUpperCase()) {
+function mapSeverity(severity: unknown): DiagnosticData["severity"] {
+  switch (typeof severity === "string" ? severity.toUpperCase() : "") {
     case "CRITICAL":
     case "MAJOR":
       return "error";

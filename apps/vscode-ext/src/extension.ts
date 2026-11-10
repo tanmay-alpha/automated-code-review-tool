@@ -13,10 +13,11 @@
  *     migration offer for the deprecated plain-text setting).
  */
 import * as vscode from "vscode";
-import { clearAll, createStatusBar, scanFile } from "./reviewer";
+import { clearAll, createStatusBar, promptForApiKey, scanFile } from "./reviewer";
 import {
   clearLegacyApiKeySetting,
   deleteApiKey,
+  getApiKey,
   offerApiKeyMigration,
   scanOnSave,
   storeApiKey,
@@ -63,19 +64,71 @@ export function activate(context: vscode.ExtensionContext): void {
   // Workspace scan command advertised in package.json.
   context.subscriptions.push(
     vscode.commands.registerCommand("automated-code-review-tool.scanWorkspace", async () => {
+      const { key: apiKey } = await getApiKey(secrets);
+      if (!apiKey) {
+        promptForApiKey();
+        return;
+      }
       const files = await vscode.workspace.findFiles(
         "**/*.{py,js,jsx,ts,tsx,java}",
         "**/{.git,node_modules,out,dist,build}/**",
       );
-      for (const uri of files) {
-        const doc = await vscode.workspace.openTextDocument(uri);
-        if (apiLanguage(doc.languageId)) {
-          await scanFile(doc, diagnosticCollection, secrets);
-        }
-      }
-      void vscode.window.showInformationMessage(
-        `automated-code-review-tool: scanned ${files.length} workspace file${files.length === 1 ? "" : "s"}.`,
+      let scanned = 0;
+      let failed = 0;
+      let skipped = 0;
+      let stopReason: string | null = null;
+      let cancelled = false;
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "automated-code-review-tool: scanning workspace",
+          cancellable: true,
+        },
+        async (progress, token) => {
+          for (let i = 0; i < files.length; i++) {
+            if (token.isCancellationRequested) {
+              cancelled = true;
+              break;
+            }
+            progress.report({
+              message: `${i + 1}/${files.length}`,
+              increment: 100 / files.length,
+            });
+            let doc: vscode.TextDocument;
+            try {
+              doc = await vscode.workspace.openTextDocument(files[i]);
+            } catch {
+              failed++;
+              continue;
+            }
+            const outcome = await scanFile(doc, diagnosticCollection, secrets, {
+              notify: false,
+              apiKey,
+            });
+            if (outcome.kind === "failed") {
+              failed++;
+              if (outcome.status === 401 || outcome.status === 403 || outcome.status === 429) {
+                stopReason = outcome.message;
+                break;
+              }
+            } else if (outcome.kind === "skipped") {
+              skipped++;
+            } else {
+              scanned++;
+            }
+          }
+        },
       );
+      const summary = `scanned ${scanned}, failed ${failed}, skipped ${skipped} of ${files.length} workspace file${files.length === 1 ? "" : "s"}.`;
+      if (stopReason) {
+        void vscode.window.showErrorMessage(
+          `automated-code-review-tool: workspace scan stopped: ${stopReason} (${summary})`,
+        );
+      } else {
+        void vscode.window.showInformationMessage(
+          `automated-code-review-tool: ${cancelled ? "workspace scan cancelled; " : ""}${summary}`,
+        );
+      }
     }),
   );
 
