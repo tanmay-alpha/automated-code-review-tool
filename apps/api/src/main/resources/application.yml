@@ -60,6 +60,8 @@ app:
       client-ip-header: ${AUTH_CLIENT_IP_HEADER:}
 
   github:
+    # REST API root (GitHub Enterprise Server: https://<host>/api/v3).
+    api-base-url: ${GITHUB_API_BASE_URL:https://api.github.com}
     client-id: ${GITHUB_CLIENT_ID}
     client-secret: ${GITHUB_CLIENT_SECRET}
     oauth-redirect-uri: ${APP_BASE_URL:http://localhost:8080}/api/auth/callback
