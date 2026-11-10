@@ -223,120 +223,148 @@ class ScanControllerTest {
 
     // --- POST /api/scan/action ----------------------------------------------
 
-    @Test
-    void recordAction_updatesFindingAndReturns200() throws Exception {
-        UUID findingId = UUID.randomUUID();
-        UUID prId = UUID.randomUUID();
+    static final UUID CALLER_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
+    private Finding ownedFinding(UUID findingId) {
         PullRequestEntity pr = PullRequestEntity.builder()
-                .id(prId).repo(testRepo("o/r"))
+                .id(UUID.randomUUID()).repo(testRepo("o/r"))
                 .githubPrNumber(1).title("t").status("reviewed")
                 .build();
-
         Finding existing = Finding.builder()
                 .id(findingId).pullRequest(pr)
-                .antiPattern("GodClass").category("structural")
-                .severity("high").confidence(new BigDecimal("0.9"))
-                .explanation("big").build();
+                .antiPattern("SECURITY_WEAK_CRYPTO").category("SECURITY")
+                .severity("major").confidence(new BigDecimal("0.9"))
+                .explanation("md5").build();
+        when(findingRepository.findOwnedById(findingId, CALLER_ID)).thenReturn(Optional.of(existing));
+        return existing;
+    }
 
-        when(findingRepository.findById(findingId)).thenReturn(Optional.of(existing));
-
-        String body = """
-                {"findingId":"%s","action":"dismiss"}
-                """.formatted(findingId);
-
-        mockMvc.perform(post("/api/scan/action")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body)
-                        .accept(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.action").value("dismiss"))
-                .andExpect(jsonPath("$.findingId").value(findingId.toString()))
-                .andExpect(jsonPath("$.status").value("dismissed"));
+    private org.springframework.test.web.servlet.ResultActions action(String json) throws Exception {
+        return mockMvc.perform(post("/api/scan/action")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json)
+                .accept(MediaType.APPLICATION_JSON));
     }
 
     @Test
-    void recordAction_returns404_whenFindingUnknown() throws Exception {
-        UUID randomId = UUID.randomUUID();
-        when(findingRepository.findById(any())).thenReturn(Optional.empty());
+    void recordAction_dismissWithReason_storesTrimmedReasonAndAuditFields() throws Exception {
+        UUID findingId = UUID.randomUUID();
+        Finding existing = ownedFinding(findingId);
+        Instant before = Instant.now();
 
-        String body = """
-                {"findingId":"%s","action":"dismiss"}
-                """.formatted(randomId);
+        action("""
+                {"findingId":"%s","action":"dismiss","reason":"  legacy module, scheduled for removal  "}
+                """.formatted(findingId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.findingId").value(findingId.toString()))
+                .andExpect(jsonPath("$.status").value("dismissed"))
+                .andExpect(jsonPath("$.reason").value("legacy module, scheduled for removal"))
+                .andExpect(jsonPath("$.triagedBy").value(TEST_OWNER))
+                .andExpect(jsonPath("$.triagedAt").isNotEmpty());
 
-        mockMvc.perform(post("/api/scan/action")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body)
-                        .accept(MediaType.APPLICATION_JSON))
-                .andExpect(status().isNotFound());
+        org.assertj.core.api.Assertions.assertThat(existing.getStatus()).isEqualTo("dismissed");
+        org.assertj.core.api.Assertions.assertThat(existing.getTriageReason())
+                .isEqualTo("legacy module, scheduled for removal");
+        org.assertj.core.api.Assertions.assertThat(existing.getTriagedBy()).isEqualTo(CALLER_ID);
+        org.assertj.core.api.Assertions.assertThat(existing.getTriagedAt()).isAfterOrEqualTo(before);
+        org.mockito.Mockito.verify(findingRepository).save(existing);
+    }
+
+    @Test
+    void recordAction_falsePositiveWithReason_returns200() throws Exception {
+        UUID findingId = UUID.randomUUID();
+        ownedFinding(findingId);
+
+        action("""
+                {"findingId":"%s","action":"false_positive","reason":"md5 is used as a cache key, not for security"}
+                """.formatted(findingId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("false_positive"));
+    }
+
+    @Test
+    void recordAction_requiresReasonForDismissAndFalsePositive() throws Exception {
+        UUID findingId = UUID.randomUUID();
+        ownedFinding(findingId);
+
+        for (String body : new String[]{
+                "{\"findingId\":\"%s\",\"action\":\"dismiss\"}",
+                "{\"findingId\":\"%s\",\"action\":\"dismiss\",\"reason\":\"   \"}",
+                "{\"findingId\":\"%s\",\"action\":\"false_positive\"}",
+                "{\"findingId\":\"%s\",\"action\":\"false_positive\",\"reason\":\"\"}"}) {
+            action(body.formatted(findingId))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.startsWith("reason:")));
+        }
+        org.mockito.Mockito.verify(findingRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void recordAction_rejectsReasonLongerThan500CharsAfterTrim() throws Exception {
+        UUID findingId = UUID.randomUUID();
+        ownedFinding(findingId);
+
+        action("""
+                {"findingId":"%s","action":"dismiss","reason":"   %s   "}
+                """.formatted(findingId, "x".repeat(500)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reason").value("x".repeat(500)));
+
+        action("""
+                {"findingId":"%s","action":"dismiss","reason":"%s"}
+                """.formatted(findingId, "x".repeat(501)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void recordAction_acceptFixAndReopen_doNotRequireReason() throws Exception {
+        UUID findingId = UUID.randomUUID();
+        Finding existing = ownedFinding(findingId);
+        existing.setTriageReason("old reason");
+
+        action("{\"findingId\":\"%s\",\"action\":\"accept\"}".formatted(findingId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("accepted"));
+        action("{\"findingId\":\"%s\",\"action\":\"FIX\"}".formatted(findingId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("fixed"));
+        action("{\"findingId\":\"%s\",\"action\":\"reopen\"}".formatted(findingId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("open"))
+                .andExpect(jsonPath("$.reason").doesNotExist());
+
+        org.assertj.core.api.Assertions.assertThat(existing.getStatus()).isEqualTo("open");
+        org.assertj.core.api.Assertions.assertThat(existing.getTriageReason()).isNull();
+        org.assertj.core.api.Assertions.assertThat(existing.getTriagedAt()).isNotNull();
+    }
+
+    @Test
+    void recordAction_returns404_whenFindingUnknownOrNotOwned() throws Exception {
+        // findOwnedById applies the owner predicate in SQL, so a foreign
+        // finding and a missing one look identical here (see
+        // OwnershipIsolationTest for the database-backed proof).
+        when(findingRepository.findOwnedById(any(), any())).thenReturn(Optional.empty());
+
+        action("""
+                {"findingId":"%s","action":"dismiss","reason":"noise"}
+                """.formatted(UUID.randomUUID()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("NOT_FOUND"));
+        org.mockito.Mockito.verify(findingRepository, org.mockito.Mockito.never()).save(any());
     }
 
     @Test
     void recordAction_returns400_onInvalidAction() throws Exception {
         UUID findingId = UUID.randomUUID();
-        UUID prId = UUID.randomUUID();
+        ownedFinding(findingId);
 
-        PullRequestEntity pr = PullRequestEntity.builder()
-                .id(prId).repo(testRepo("o/r"))
-                .githubPrNumber(1).title("t").status("reviewed")
-                .build();
-
-        Finding existing = Finding.builder()
-                .id(findingId).pullRequest(pr)
-                .antiPattern("GodClass").category("structural")
-                .severity("high").confidence(new BigDecimal("0.9"))
-                .explanation("big").build();
-
-        when(findingRepository.findById(findingId)).thenReturn(Optional.of(existing));
-
-        String body = """
+        action("""
                 {"findingId":"%s","action":"delete_forever"}
-                """.formatted(findingId);
-
-        mockMvc.perform(post("/api/scan/action")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body)
-                        .accept(MediaType.APPLICATION_JSON))
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    void recordAction_returns404_whenCallerDoesNotOwnRepo() throws Exception {
-        UUID findingId = UUID.randomUUID();
-        UUID prId = UUID.randomUUID();
-
-        // Owner is a different user, not TEST_OWNER (the principal in the pass-through filter)
-        User otherOwner = User.builder()
-                .id(UUID.fromString("00000000-0000-0000-0000-000000000002"))
-                .githubUsername("attacker")
-                .accessToken("dummy")
-                .build();
-        Repository otherRepo = Repository.builder()
-                .fullName("o/r")
-                .owner(otherOwner)
-                .build();
-
-        PullRequestEntity pr = PullRequestEntity.builder()
-                .id(prId).repo(otherRepo)
-                .githubPrNumber(1).title("t").status("reviewed")
-                .build();
-
-        Finding existing = Finding.builder()
-                .id(findingId).pullRequest(pr)
-                .antiPattern("GodClass").category("structural")
-                .severity("high").confidence(new BigDecimal("0.9"))
-                .explanation("big").build();
-
-        when(findingRepository.findById(findingId)).thenReturn(Optional.of(existing));
-
-        String body = """
-                {"findingId":"%s","action":"dismiss"}
-                """.formatted(findingId);
-
-        mockMvc.perform(post("/api/scan/action")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body)
-                        .accept(MediaType.APPLICATION_JSON))
-                .andExpect(status().isNotFound());   // 404, not 403, to avoid leaking existence
+                """.formatted(findingId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"));
+        org.mockito.Mockito.verify(findingRepository, org.mockito.Mockito.never()).save(any());
     }
 }

@@ -222,6 +222,24 @@ class RepoControllerTest {
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("already connected")));
     }
 
+    @Test
+    void connect_webhookInstallFailure_reportsOnlyTheUpstreamStatus() throws Exception {
+        org.mockito.Mockito.when(gitHubService.getRepository(eq(GH_TOKEN), anyString(), anyString()))
+                .thenReturn(Map.of("id", 4711L, "full_name", "alice/hooked", "private", false));
+        org.mockito.Mockito.when(gitHubService.installWebhook(eq(GH_TOKEN), anyString(), anyString(), anyString()))
+                .thenThrow(new org.springframework.web.reactive.function.client.WebClientResponseException(
+                        "422 Unprocessable Entity from POST https://api.github.com/repos/alice/hooked/hooks",
+                        422, "Unprocessable Entity", null, null, null));
+
+        mockMvc.perform(connectRepo("""
+                {"fullName":"alice/hooked"}
+                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("CONNECT_REPO_FAILED"))
+                .andExpect(jsonPath("$.message").value("Failed to install webhook on GitHub (HTTP 422)"));
+        org.assertj.core.api.Assertions.assertThat(repositoryRepository.findByGithubId(4711L)).isEmpty();
+    }
+
     // --- GET /api/repos ---------------------------------------------------
 
     @Test
